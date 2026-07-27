@@ -1,6 +1,8 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { appSupportDir, configFile, expandHome } from './paths.js';
+import { recommendModelForRam } from './modelAdvisor.js';
 
 export type PausableStep = 'polling' | 'download' | 'transcribe' | 'summarise';
 
@@ -165,32 +167,31 @@ export function normaliseConfig(cfg: any): AppConfig {
   };
   return {
     version: cfg.version ?? 1,
-    ollama: cfg.ollama
-      ? {
-          ...cfg.ollama,
-          // One-time bump of contextWindow from the old 32k default to
-          // 64k, applied only when the on-disk value is exactly the old
-          // default. Manually-set values (e.g. 16384 or 131072) are
-          // preserved. Why bump: long meetings (~2h+) at qwen2.5:32b's
-          // typical token rate were brushing or exceeding 32k, causing
-          // Ollama to silently truncate the start of the input. 64k
-          // gives ~6h of conversational speech of headroom against the
-          // model's 131k native context. Costs ~4-6GB more unified
-          // memory while the model is resident.
-          contextWindow: cfg.ollama.contextWindow === 32768 ? 65536 : cfg.ollama.contextWindow,
-        }
-      : {
-          host: 'http://localhost:11434',
-          model: 'qwen2.5:32b',
-          contextWindow: 65536,
-          temperature: 0.3,
-          // 5 minutes: long enough that back-to-back summaries reuse the
-          // loaded model, short enough that idle daytime hours get the
-          // ~20GB of unified memory back. See BACKLOG "Performance under
-          // load" for the broader story; this default is the lowest-cost
-          // single change for the laggy-laptop-during-processing problem.
-          keepAlive: '5m',
-        },
+    ollama: {
+      host: cfg.ollama?.host ?? 'http://localhost:11434',
+      // Fresh installs get a model sized to this Mac's unified memory
+      // (48GB → 35B, 24GB → 27B, 16GB → 9B, below → 4B). A model already
+      // written in config.json always wins — this only fills the gap.
+      model: cfg.ollama?.model ?? recommendModelForRam(os.totalmem()).model,
+      // One-time bump of contextWindow from the old 32k default to
+      // 64k, applied only when the on-disk value is exactly the old
+      // default. Manually-set values (e.g. 16384 or 131072) are
+      // preserved. Why bump: long meetings (~2h+) at a 27B model's
+      // typical token rate were brushing or exceeding 32k, causing
+      // Ollama to silently truncate the start of the input. 64k
+      // gives ~6h of conversational speech of headroom against the
+      // model's native context. Costs ~4-6GB more unified memory
+      // while the model is resident.
+      contextWindow:
+        cfg.ollama?.contextWindow === 32768 ? 65536 : (cfg.ollama?.contextWindow ?? 65536),
+      temperature: cfg.ollama?.temperature ?? 0.3,
+      // 5 minutes: long enough that back-to-back summaries reuse the
+      // loaded model, short enough that idle daytime hours get the
+      // ~20GB of unified memory back. See BACKLOG "Performance under
+      // load" for the broader story; this default is the lowest-cost
+      // single change for the laggy-laptop-during-processing problem.
+      keepAlive: cfg.ollama?.keepAlive ?? '5m',
+    },
     pollIntervalMinutes: cfg.pollIntervalMinutes ?? 5,
     paused: normalisePause(cfg.paused),
     whisperModel: cfg.whisperModel ?? 'mlx-community/whisper-large-v3-mlx',

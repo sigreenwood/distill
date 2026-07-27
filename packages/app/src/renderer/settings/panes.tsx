@@ -2,10 +2,12 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   GeneralDTO,
   MeetingTypeDTO,
+  ModelSuggestionDTO,
   OutputsDTO,
   PerformanceDTO,
   PlaudStatusDTO,
   SourcesDTO,
+  SystemInfoDTO,
   VocabularyFileDTO,
   VocabularyScopeDTO,
 } from '../shared/api.js';
@@ -1255,6 +1257,7 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
 export function PerformancePane(props: {
   initial: PerformanceDTO;
   onSaved: (next: PerformanceDTO) => void;
+  suggestion?: ModelSuggestionDTO | null;
 }) {
   const [draft, setDraft] = useState<PerformanceDTO>(props.initial);
   const [models, setModels] = useState<{ name: string; sizeBytes?: number }[] | null>(null);
@@ -1315,6 +1318,12 @@ export function PerformancePane(props: {
           Pipeline model choices. In-flight steps keep the values they started with; changes here
           apply to subsequent runs.
         </p>
+        {props.suggestion && (
+          <ModelSuggestionBanner
+            suggestion={props.suggestion}
+            onPulled={() => void refreshModels()}
+          />
+        )}
         <section
           style={{
             border: '1px solid var(--border)',
@@ -1480,9 +1489,118 @@ export function PerformancePane(props: {
   );
 }
 
+/**
+ * Banner shown when the weekly background check found a newer generation
+ * of the configured model family. Download happens only on explicit
+ * click, streaming progress from Ollama; after a successful pull the
+ * model list refreshes so the user can select it and Save.
+ */
+function ModelSuggestionBanner(props: { suggestion: ModelSuggestionDTO; onPulled: () => void }) {
+  const s = props.suggestion;
+  const [dismissed, setDismissed] = useState(false);
+  const [pulling, setPulling] = useState(false);
+  const [pullStatus, setPullStatus] = useState<string | null>(null);
+  const [pullPercent, setPullPercent] = useState<number | null>(null);
+  const [pullError, setPullError] = useState<string | null>(null);
+  const [pulledOk, setPulledOk] = useState(false);
+
+  useEffect(() => {
+    return window.distill.onModelPullProgress((p) => {
+      if (p.model !== s.suggestedModel) return;
+      setPullStatus(p.status);
+      setPullPercent(p.percent);
+    });
+  }, [s.suggestedModel]);
+
+  const onDismiss = useCallback(() => {
+    setDismissed(true);
+    void window.distill.settings.dismissModelSuggestion();
+  }, []);
+
+  const onDownload = useCallback(async () => {
+    setPulling(true);
+    setPullError(null);
+    setPullStatus('starting…');
+    try {
+      const result = await window.distill.settings.pullModel(s.suggestedModel);
+      if (result.ok) {
+        setPulledOk(true);
+        props.onPulled();
+      } else {
+        setPullError(result.error);
+      }
+    } catch (e) {
+      setPullError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPulling(false);
+    }
+  }, [s.suggestedModel, props]);
+
+  if (dismissed) return null;
+
+  return (
+    <section style={{ ...infoBoxStyle, marginTop: 0, marginBottom: 12 }} role="status">
+      <div style={{ fontWeight: 500, marginBottom: 4 }}>
+        {s.newFamily} is available — a newer generation of your summarisation model
+      </div>
+      <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
+        You're on <code>{s.currentModel}</code>. <code>{s.suggestedModel}</code> keeps the same size
+        tier on this Mac. Downloading doesn't switch anything — after the pull finishes, pick it in
+        the list below and Save. Your current model stays installed for easy rollback.
+      </div>
+      {pulledOk ? (
+        <div style={{ fontSize: 12 }}>
+          Downloaded. Select <strong>{s.suggestedModel}</strong> in the model list below and press
+          Save to switch.
+        </div>
+      ) : pulling ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+          <span className="muted" style={{ minWidth: 140 }}>
+            {pullStatus ?? 'Downloading…'}
+            {pullPercent !== null ? ` ${pullPercent}%` : ''}
+          </span>
+          <div
+            style={{
+              flex: 1,
+              height: 4,
+              borderRadius: 2,
+              overflow: 'hidden',
+              background: 'var(--border)',
+            }}
+          >
+            <div
+              style={{
+                width: pullPercent === null ? '100%' : `${pullPercent}%`,
+                height: '100%',
+                background: 'var(--accent)',
+                opacity: pullPercent === null ? 0.6 : 1,
+                transition: 'width 300ms linear',
+              }}
+            />
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="primary" onClick={() => void onDownload()} style={{ fontSize: 12 }}>
+            Download {s.suggestedModel}
+          </button>
+          <button onClick={onDismiss} style={{ fontSize: 12 }} title="Hide this suggestion for this model generation">
+            Not now
+          </button>
+        </div>
+      )}
+      {pullError && (
+        <div role="alert" style={{ ...errorBoxStyle, marginTop: 8 }}>
+          {pullError}
+        </div>
+      )}
+    </section>
+  );
+}
+
 // --- About -----------------------------------------------------------------
 
-export function AboutPane() {
+export function AboutPane(props: { system?: SystemInfoDTO }) {
   return (
     <div style={paneStyle}>
       <main style={{ ...paneBodyStyle, maxWidth: 720 }}>
@@ -1540,6 +1658,28 @@ export function AboutPane() {
             </li>
           </ul>
         </section>
+        {props.system && (
+          <section style={aboutSectionStyle}>
+            <h3 style={aboutSubheadingStyle}>Choosing a local model</h3>
+            <p className="muted" style={{ ...aboutSmallTextStyle, marginBottom: 8 }}>
+              The summarisation model shares this Mac's unified memory with macOS and the
+              transcriber, so the right choice depends on RAM. This Mac has{' '}
+              <strong>{props.system.totalRamGb}GB</strong> — recommended:{' '}
+              <code>{props.system.recommendedModel}</code>. {props.system.recommendedReason}
+            </p>
+            <ul style={aboutUnorderedListStyle}>
+              {props.system.recommendationTable.map((row) => (
+                <li key={row.ram}>
+                  <strong>{row.ram}</strong> — <code>{row.model}</code>
+                </li>
+              ))}
+            </ul>
+            <p className="muted" style={{ ...aboutSmallTextStyle, marginTop: 8 }}>
+              distill checks weekly for a newer generation of your model family and suggests it in
+              Settings → Performance. Nothing downloads or switches without your say-so.
+            </p>
+          </section>
+        )}
         <section style={aboutSectionStyle}>
           <h3 style={aboutSubheadingStyle}>Built on</h3>
           <p className="muted" style={aboutSmallTextStyle}>

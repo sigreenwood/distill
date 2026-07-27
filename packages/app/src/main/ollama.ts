@@ -188,6 +188,79 @@ export class OllamaClient {
   }
 }
 
+export interface PullProgress {
+  status: string;
+  completed?: number;
+  total?: number;
+  /** 0–100 when total is known, null for indeterminate phases */
+  percent: number | null;
+}
+
+/**
+ * Pull a model via Ollama's /api/pull, streaming NDJSON progress. Used by
+ * the Settings → Performance "Download" action after the user approves a
+ * suggested model. Long-running (tens of GB); pass an AbortSignal to let
+ * the user cancel.
+ */
+export async function pullModel(
+  host: string,
+  model: string,
+  onProgress: (p: PullProgress) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${host}/api/pull`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, stream: true }),
+    signal,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Ollama pull ${res.status}: ${body.slice(0, 300)}`);
+  }
+  if (!res.body) throw new Error('Ollama pull response had no body');
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let parsed: any;
+        try {
+          parsed = JSON.parse(trimmed);
+        } catch {
+          continue;
+        }
+        if (parsed.error) throw new Error(`Ollama pull error: ${parsed.error}`);
+        const total: number | undefined = parsed.total;
+        const completed: number | undefined = parsed.completed;
+        onProgress({
+          status: parsed.status ?? '',
+          completed,
+          total,
+          percent:
+            typeof total === 'number' && total > 0 && typeof completed === 'number'
+              ? Math.min(100, Math.floor((completed / total) * 100))
+              : null,
+        });
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // stream already closed
+    }
+  }
+}
+
 export function preflightMessage(r: Exclude<PreflightResult, { ok: true }>): string {
   if (r.reason === 'unreachable') {
     return `Ollama is not reachable (${r.detail}). Start the Ollama app or run: ollama serve`;

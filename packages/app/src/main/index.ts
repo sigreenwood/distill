@@ -36,6 +36,7 @@ import { getInstallationStatus } from './pythonEnv.js';
 import { importLocalFile, LocalImportError } from './localImport.js';
 import { migrateScopeRenames, migrateVocabularyToUserDir } from './vocabulary.js';
 import { startSweepSchedule, sweepStateFor, nodeFs } from './audioRetention.js';
+import { startModelUpdateCheck } from './modelUpdateCheck.js';
 
 app.dock?.hide();
 
@@ -49,6 +50,7 @@ let poller: Poller | null = null;
 let worker: Worker | null = null;
 let logger: Logger | null = null;
 let stopAudioSweep: (() => void) | null = null;
+let stopModelCheck: (() => void) | null = null;
 let plaudStore: KeychainCredentialStore | null = null;
 
 // macOS delivers open-file (dock drop / "Open With") before whenReady on a
@@ -390,6 +392,23 @@ app.whenReady().then(async () => {
       logger: localLogger,
     });
 
+    // Weekly check for a newer generation of the summarisation model
+    // (qwen3.6 → qwen3.7 → qwen4 …). Suggestion-only: it notifies and
+    // surfaces a banner in Settings → Performance; the user decides
+    // whether to download.
+    stopModelCheck = startModelUpdateCheck({
+      state: localState,
+      logger: localLogger,
+      getCurrentModel: () => cfg.ollama.model,
+      onSuggestion: (s) => {
+        notify({
+          title: 'distill — newer model available',
+          body: `${s.newFamily} has been released — a newer generation of your summarisation model (${s.currentModel}). Tap to review in Settings.`,
+          onClick: () => openSettings({ initialTab: 'performance' }),
+        });
+      },
+    });
+
     appReady = true;
     if (pendingFileDrops.length > 0) {
       localLogger.info({ count: pendingFileDrops.length }, 'processing deferred file drops');
@@ -406,6 +425,7 @@ app.on('before-quit', () => {
   worker?.stop();
   poller?.stop();
   stopAudioSweep?.();
+  stopModelCheck?.();
   trayHandle?.destroy();
   state?.close();
 });

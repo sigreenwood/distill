@@ -17,7 +17,10 @@ import {
   type VocabularyFile,
   type VocabularyReplacement,
 } from './vocabulary.js';
-import { OllamaClient } from './ollama.js';
+import { OllamaClient, pullModel } from './ollama.js';
+import { recommendModelForRam, recommendationTable } from './modelAdvisor.js';
+import { readModelSuggestion, dismissModelSuggestion } from './modelUpdateCheck.js';
+import os from 'node:os';
 import { getPlaudAccountStatus, signInPlaud, signOutPlaud } from './plaudAccount.js';
 import { readTipJarStatus, dismissBanner, TIP_JAR_URL } from './tipJar.js';
 import {
@@ -245,6 +248,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(Channels.SettingsLoad, () => {
     const cfg = ctx.getConfig();
+    const totalRam = os.totalmem();
+    const rec = recommendModelForRam(totalRam);
     return {
       outputs: {
         markdown: { ...cfg.outputs.markdown },
@@ -256,7 +261,40 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       general: toGeneralDTO(cfg),
       performance: toPerformanceDTO(cfg),
       sources: toSourcesDTO(ctx),
+      system: {
+        totalRamGb: Math.round(totalRam / (1024 * 1024 * 1024)),
+        recommendedModel: rec.model,
+        recommendedReason: rec.reason,
+        recommendationTable: recommendationTable(),
+      },
+      modelSuggestion: readModelSuggestion(ctx.state),
     };
+  });
+
+  ipcMain.handle(Channels.SettingsDismissModelSuggestion, () => {
+    dismissModelSuggestion(ctx.state);
+    ctx.logger.info('model upgrade suggestion dismissed');
+  });
+
+  ipcMain.handle(Channels.SettingsPullModel, async (_evt, model) => {
+    if (typeof model !== 'string' || model.trim().length === 0) {
+      throw new Error('model must be a non-empty string');
+    }
+    const cfg = ctx.getConfig();
+    ctx.logger.info({ model }, 'pulling Ollama model at user request');
+    try {
+      await pullModel(cfg.ollama.host, model, (p) => {
+        broadcastModelPullProgress({ model, ...p });
+      });
+      ctx.logger.info({ model }, 'model pull complete');
+      broadcastModelPullProgress({ model, status: 'success', percent: 100 });
+      return { ok: true as const };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      ctx.logger.warn({ model, err: msg }, 'model pull failed');
+      broadcastModelPullProgress({ model, status: `error: ${msg}`, percent: null });
+      return { ok: false as const, error: msg };
+    }
   });
 
   ipcMain.handle(Channels.SettingsSaveOutputs, (_evt, payload) => {
@@ -780,6 +818,20 @@ export function broadcastFocusRecording(recordingId: string): void {
 export function broadcastLocalImportProgress(p: LocalImportProgress): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(Channels.PushLocalImportProgress, p);
+  }
+}
+
+export interface ModelPullProgressBroadcast {
+  model: string;
+  status: string;
+  completed?: number;
+  total?: number;
+  percent: number | null;
+}
+
+export function broadcastModelPullProgress(p: ModelPullProgressBroadcast): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(Channels.PushModelPullProgress, p);
   }
 }
 

@@ -2,7 +2,6 @@
   "version": 1,
   "ollama": {
     "host": "http://localhost:11434",
-    "model": "qwen2.5:32b",
     "contextWindow": 65536,
     "temperature": 0.3,
     "keepAlive": "5m"

@@ -113,6 +113,28 @@ export interface SourcesDTO {
   plaud: PlaudStatusDTO;
 }
 
+export interface SystemInfoDTO {
+  totalRamGb: number;
+  recommendedModel: string;
+  recommendedReason: string;
+  recommendationTable: { ram: string; model: string }[];
+}
+
+export interface ModelSuggestionDTO {
+  newFamily: string;
+  suggestedModel: string;
+  currentModel: string;
+  checkedAt: number;
+}
+
+export interface ModelPullProgressDTO {
+  model: string;
+  status: string;
+  completed?: number;
+  total?: number;
+  percent: number | null;
+}
+
 export interface SettingsDTO {
   outputs: OutputsDTO;
   prompts: MeetingTypeDTO[];
@@ -120,6 +142,8 @@ export interface SettingsDTO {
   general: GeneralDTO;
   performance: PerformanceDTO;
   sources: SourcesDTO;
+  system: SystemInfoDTO;
+  modelSuggestion: ModelSuggestionDTO | null;
 }
 
 export type OllamaModelsDTO =
@@ -202,6 +226,8 @@ export interface DistillApi {
     savePerformance(payload: PerformanceDTO): Promise<void>;
     listOllamaModels(): Promise<OllamaModelsDTO>;
     browseFolder(currentPath?: string): Promise<string | null>;
+    dismissModelSuggestion(): Promise<void>;
+    pullModel(model: string): Promise<{ ok: true } | { ok: false; error: string }>;
   };
   sources: {
     signInPlaud(payload: { email: string; password: string; region: string }): Promise<PlaudStatusDTO>;
@@ -223,6 +249,7 @@ export interface DistillApi {
   onFocusRecording(handler: (id: string) => void): () => void;
   onLocalImportProgress(handler: (p: LocalImportProgressDTO) => void): () => void;
   onSetupProgress(handler: (e: SetupProgressDTO) => void): () => void;
+  onModelPullProgress(handler: (p: ModelPullProgressDTO) => void): () => void;
 }
 
 declare global {

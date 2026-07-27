@@ -3,9 +3,11 @@ import { createRoot } from 'react-dom/client';
 import type {
   GeneralDTO,
   MeetingTypeDTO,
+  ModelSuggestionDTO,
   OutputsDTO,
   PerformanceDTO,
   SourcesDTO,
+  SystemInfoDTO,
   VocabularyScopeDTO,
 } from '../shared/api.js';
 import { TabButton, headerStyle, readTabFromHash, shellStyle, tabBarStyle } from './ui.jsx';
@@ -27,6 +29,8 @@ function Settings() {
   const [general, setGeneral] = useState<GeneralDTO | null>(null);
   const [performance, setPerformance] = useState<PerformanceDTO | null>(null);
   const [sources, setSources] = useState<SourcesDTO | null>(null);
+  const [system, setSystem] = useState<SystemInfoDTO | null>(null);
+  const [modelSuggestion, setModelSuggestion] = useState<ModelSuggestionDTO | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -39,6 +43,8 @@ function Settings() {
         setGeneral(s.general);
         setPerformance(s.performance);
         setSources(s.sources);
+        setSystem(s.system);
+        setModelSuggestion(s.modelSuggestion);
       } catch (e) {
         setLoadError(e instanceof Error ? e.message : String(e));
       }
@@ -116,10 +122,14 @@ function Settings() {
         <GeneralPane initial={general} onSaved={(next) => setGeneral(next)} />
       </div>
       <div style={{ display: tab === 'performance' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
-        <PerformancePane initial={performance} onSaved={(next) => setPerformance(next)} />
+        <PerformancePane
+          initial={performance}
+          onSaved={(next) => setPerformance(next)}
+          suggestion={modelSuggestion}
+        />
       </div>
       <div style={{ display: tab === 'about' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
-        <AboutPane />
+        <AboutPane system={system ?? undefined} />
       </div>
     </div>
   );
