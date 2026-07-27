@@ -229,4 +229,6 @@ declare global {
   interface Window {
     distill: DistillApi;
   }
+  /** Injected at build time by electron.vite.config.ts (Vite define). */
+  const __APP_VERSION__: string;
 }
