@@ -233,14 +233,19 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(Channels.LocalImportPickFiles, async () => {
     const result = await dialog.showOpenDialog({
-      title: 'Import audio or video',
+      title: 'Import audio, video, or an existing transcript',
       buttonLabel: 'Import',
       properties: ['openFile', 'multiSelections'],
       filters: [
         {
-          name: 'Audio and video',
-          extensions: ['mp3', 'm4a', 'wav', 'aac', 'ogg', 'flac', 'opus', 'mp4', 'mov', 'm4v', 'mkv', 'webm'],
+          name: 'Audio, video and transcripts',
+          extensions: [
+            'mp3', 'm4a', 'wav', 'aac', 'ogg', 'flac', 'opus',
+            'mp4', 'mov', 'm4v', 'mkv', 'webm',
+            'md', 'markdown', 'txt',
+          ],
         },
+        { name: 'Transcripts only', extensions: ['md', 'markdown', 'txt'] },
         { name: 'All files', extensions: ['*'] },
       ],
     });

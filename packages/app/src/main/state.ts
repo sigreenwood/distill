@@ -92,8 +92,14 @@ export type DeleteMeetingTypeResult =
   | { kind: 'builtin' };
 
 export function nextNeededStep(row: RecordingRow): PipelineStep {
-  if (!row.audio_path) return 'download';
-  if (!row.transcript_text) return 'transcribe';
+  // Transcript first: a row that already has text needs no audio at all.
+  // Imported transcripts (from a previous Markdown output or a .txt) have
+  // transcript_text set and audio_path null, and must start at summarise
+  // rather than trying to download audio that doesn't exist.
+  if (!row.transcript_text) {
+    if (!row.audio_path) return 'download';
+    return 'transcribe';
+  }
   if (!row.summary_text) return 'summarise';
   return 'write';
 }

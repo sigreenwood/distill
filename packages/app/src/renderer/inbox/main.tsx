@@ -514,7 +514,10 @@ function Shell(props: ShellProps) {
         <div className="muted" style={{ marginLeft: 'auto', fontSize: 11 }}>
           {props.total > 0 ? `${props.total} total` : ''}
         </div>
-        <HeaderButton title="Import audio or video…" onClick={() => void props.onPickAndImport()}>
+        <HeaderButton
+          title="Import audio, video, or an existing transcript (.md / .txt) to re-summarise"
+          onClick={() => void props.onPickAndImport()}
+        >
           +
         </HeaderButton>
         <HeaderButton title="Refresh (⌘R)" onClick={() => void props.onRefresh()} disabled={props.refreshing}>
@@ -569,6 +572,8 @@ function Shell(props: ShellProps) {
               Audio: mp3 m4a wav aac ogg flac opus
               <br />
               Video: mp4 mov m4v mkv webm (needs ffmpeg)
+              <br />
+              Transcript: md txt — re-summarises without re-transcribing
             </div>
           </div>
         </div>

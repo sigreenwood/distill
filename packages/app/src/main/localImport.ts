@@ -3,13 +3,20 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { audioDir } from './paths.js';
+import { parseTranscriptFile, TranscriptImportError } from './transcriptImport.js';
 import type { Logger } from './logger.js';
 import type { State } from './state.js';
 
 const AUDIO_EXTS = new Set(['.mp3', '.m4a', '.wav', '.aac', '.ogg', '.flac', '.opus']);
 const VIDEO_EXTS = new Set(['.mp4', '.mov', '.m4v', '.mkv', '.webm']);
+/** Existing transcripts — distill's own Markdown output, or plain text. */
+const TRANSCRIPT_EXTS = new Set(['.md', '.markdown', '.txt']);
 
-export type LocalImportKind = 'audio-passthrough' | 'video-extract-audio' | 'unsupported';
+export type LocalImportKind =
+  | 'audio-passthrough'
+  | 'video-extract-audio'
+  | 'transcript'
+  | 'unsupported';
 
 export type LocalImportPhase = 'probe' | 'copy' | 'extract' | 'finalise';
 
@@ -47,6 +54,7 @@ export function classifyPath(p: string): LocalImportKind {
   const ext = path.extname(p).toLowerCase();
   if (AUDIO_EXTS.has(ext)) return 'audio-passthrough';
   if (VIDEO_EXTS.has(ext)) return 'video-extract-audio';
+  if (TRANSCRIPT_EXTS.has(ext)) return 'transcript';
   return 'unsupported';
 }
 
@@ -60,8 +68,12 @@ export async function importLocalFile(
   const kind = classifyPath(srcPath);
   if (kind === 'unsupported') {
     throw new LocalImportError(
-      `Unsupported file type: ${path.extname(srcPath) || '(no extension)'}. Accepted formats: ${[...AUDIO_EXTS, ...VIDEO_EXTS].sort().join(', ')}.`,
+      `Unsupported file type: ${path.extname(srcPath) || '(no extension)'}. Accepted formats: ${[...AUDIO_EXTS, ...VIDEO_EXTS, ...TRANSCRIPT_EXTS].sort().join(', ')}.`,
     );
+  }
+
+  if (kind === 'transcript') {
+    return importTranscript(srcPath, deps);
   }
   const dir = audioDir();
   fs.mkdirSync(dir, { recursive: true });
@@ -141,6 +153,108 @@ export async function importLocalFile(
     'local file imported',
   );
   return { recordingId: id, kind, audioPath: dest, durationSeconds };
+}
+
+/**
+ * Import an existing transcript (distill's own Markdown output, or a
+ * plain .txt) as a recording that needs only summarising.
+ *
+ * No audio is involved: the row is created with transcript_text already
+ * populated and audio_path null, so the pipeline starts at summarise.
+ * Tag it with a different meeting type — or run it after switching
+ * model — to get a fresh summary over identical input.
+ */
+async function importTranscript(
+  srcPath: string,
+  deps: LocalImportDeps,
+): Promise<LocalImportResult> {
+  const originalName = path.basename(srcPath);
+  const emit = (phase: LocalImportPhase, percent: number | null) => {
+    if (!deps.onProgress) return;
+    try {
+      deps.onProgress({ sourcePath: srcPath, phase, percent });
+    } catch (e) {
+      deps.logger.warn({ err: String(e) }, 'progress callback threw — ignoring');
+    }
+  };
+
+  emit('probe', null);
+  let raw: string;
+  try {
+    raw = fs.readFileSync(srcPath, 'utf-8');
+  } catch (e) {
+    throw new LocalImportError(
+      `Could not read ${originalName}: ${e instanceof Error ? e.message : String(e)}`,
+      e,
+    );
+  }
+
+  let parsed;
+  try {
+    parsed = parseTranscriptFile(raw, originalName);
+  } catch (e) {
+    if (e instanceof TranscriptImportError) throw new LocalImportError(e.userMessage, e);
+    throw e;
+  }
+
+  emit('finalise', null);
+  const id = `transcript-${crypto.randomUUID().slice(0, 12)}`;
+  const now = Date.now();
+  const displayName = parsed.title?.trim() || originalName;
+
+  deps.state.insertRecording({
+    id,
+    filename: displayName,
+    // Nothing reliable to derive a duration from — the audio is long gone.
+    duration_seconds: null,
+    start_time: fileMtime(srcPath) ?? now,
+    filesize_bytes: Buffer.byteLength(raw, 'utf-8'),
+    synced_at: now,
+    status: 'inbox',
+    client_id: null,
+    meeting_type_id: null,
+    audio_path: null,
+    transcript_text: parsed.transcript,
+    summary_text: null,
+    markdown_path: null,
+    error: null,
+    is_auth_error: 0,
+    last_step: null,
+    prompt_snapshot: null,
+    model_snapshot: null,
+    // Carry the original Whisper model through so the new output records
+    // how the text was actually produced, not a guess.
+    whisper_snapshot: parsed.whisperModel,
+    vocabulary_sources: null,
+    // Vocabulary replacements were applied when this transcript was first
+    // produced; re-running them here would double-correct.
+    vocabulary_rules_applied: null,
+    source: 'local',
+    html_path: null,
+    apple_note_id: null,
+    markdown_written_at: null,
+    html_written_at: null,
+    apple_note_written_at: null,
+    truncation_warning: 0,
+    estimated_input_tokens: null,
+    context_window_at_submit: null,
+    processed_externally: 0,
+  });
+
+  deps.logger.info(
+    {
+      id,
+      originalName,
+      chars: parsed.transcript.length,
+      fromDistillOutput: parsed.fromDistillOutput,
+      originalClient: parsed.clientName,
+      originalMeetingType: parsed.meetingTypeName,
+      sourceRecordingId: parsed.sourceRecordingId,
+    },
+    'transcript imported — will start at summarise once tagged',
+  );
+
+  return { recordingId: id, kind: 'transcript', audioPath: '', durationSeconds: null };
 }
 
 async function streamingCopyWithProgress(

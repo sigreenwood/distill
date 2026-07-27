@@ -157,7 +157,11 @@ export class Worker {
   private async runPipelineForId(id: string, signal: AbortSignal): Promise<void> {
     const afterClaim = this.ctx.state.getRecording(id);
     if (!afterClaim) return;
-    if (!afterClaim.audio_path) {
+    // A row that already carries a transcript (imported from a previous
+    // output file) needs neither audio nor Whisper — go straight to
+    // summarise. Guarding on transcript_text rather than audio_path also
+    // stops a recovered row re-downloading audio it no longer needs.
+    if (!afterClaim.transcript_text && !afterClaim.audio_path) {
       if (!shouldRunStep(this.ctx.getConfig().paused, 'download')) {
         this.ctx.state.setStatus(id, 'tagged');
         return;
