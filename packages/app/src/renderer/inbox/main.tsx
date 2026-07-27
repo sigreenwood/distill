@@ -1,0 +1,1130 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import type {
+  InboxItemDTO,
+  LocalImportProgressDTO,
+  PipelineStep,
+  TipJarStatusDTO,
+} from '../shared/api.js';
+
+function formatDuration(seconds: number | null): string {
+  if (seconds == null) return '—';
+  const s = Math.round(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  if (h > 0) return `${h}h${m.toString().padStart(2, '0')}m`;
+  if (m > 0) return `${m}m${r.toString().padStart(2, '0')}s`;
+  return `${r}s`;
+}
+
+function formatWhen(startTimeMs: number | null, fallbackEpochMs: number): string {
+  const ms = startTimeMs != null ? startTimeMs : fallbackEpochMs;
+  const d = new Date(ms);
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const isYesterday =
+    d.getFullYear() === yesterday.getFullYear() &&
+    d.getMonth() === yesterday.getMonth() &&
+    d.getDate() === yesterday.getDate();
+  const hm = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+  if (sameDay) return `Today ${hm}`;
+  if (isYesterday) return `Yesterday ${hm}`;
+  const weekday = d.toLocaleDateString(undefined, { weekday: 'short' });
+  const day = d.getDate();
+  const month = d.toLocaleDateString(undefined, { month: 'short' });
+  return `${weekday} ${day} ${month} ${hm}`;
+}
+
+type InboxState =
+  | { kind: 'loading' }
+  | { kind: 'ready'; recordings: InboxItemDTO[] }
+  | { kind: 'error'; message: string };
+
+interface ImportQueueEntry {
+  sourcePath: string;
+  status: 'queued' | 'active' | 'error';
+  phase: LocalImportProgressDTO['phase'] | null;
+  percent: number | null;
+  error: string | null;
+}
+
+function Inbox() {
+  const [state, setState] = useState<InboxState>({ kind: 'loading' });
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [importQueue, setImportQueue] = useState<ImportQueueEntry[]>([]);
+  const importQueueRef = useRef<ImportQueueEntry[]>([]);
+  const importLoopRunningRef = useRef(false);
+  const [tipJar, setTipJar] = useState<TipJarStatusDTO | null>(null);
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const list = await window.distill.inbox.list();
+      setState({ kind: 'ready', recordings: list });
+    } catch (e) {
+      setState({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+    const off = window.distill.onInboxChanged(() => {
+      void refresh();
+    });
+    return off;
+  }, [refresh]);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const status = await window.distill.app.getTipJarStatus();
+        setTipJar(status);
+      } catch (e) {
+        console.warn('failed to read tip-jar status', e);
+      }
+    };
+    void load();
+    const off = window.distill.onInboxChanged(() => {
+      void load();
+    });
+    return off;
+  }, []);
+
+  const onDismissTipJar = useCallback(async () => {
+    setTipJar((prev) => (prev ? { ...prev, bannerDismissed: true, shouldShowBanner: false } : prev));
+    try {
+      await window.distill.app.dismissTipJarBanner();
+    } catch (e) {
+      console.warn('failed to dismiss tip-jar banner', e);
+    }
+  }, []);
+
+  const onOpenTipJar = useCallback(() => {
+    void window.distill.app.openTipJar();
+  }, []);
+
+  useEffect(() => {
+    return window.distill.onFocusRecording((id) => {
+      setFocusedId(id);
+      requestAnimationFrame(() => {
+        document
+          .getElementById(`recording-${id}`)
+          ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+    });
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') window.close();
+      if ((e.metaKey || e.ctrlKey) && e.key === 'r') {
+        e.preventDefault();
+        void refresh();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [refresh]);
+
+  const onSkip = useCallback(async (id: string) => {
+    try {
+      await window.distill.inbox.skip(id);
+      setState((prev) =>
+        prev.kind === 'ready'
+          ? { kind: 'ready', recordings: prev.recordings.filter((r) => r.id !== id) }
+          : prev,
+      );
+    } catch (e) {
+      alert(`Could not skip: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, []);
+
+  const onTag = useCallback((id: string) => {
+    void window.distill.tag.open(id).catch((e) => alert(`Could not open tag sheet: ${String(e)}`));
+  }, []);
+
+  const onCancel = useCallback((id: string) => {
+    void window.distill.pipeline.cancel(id).catch((e) => alert(`Could not cancel: ${String(e)}`));
+  }, []);
+
+  const onRetry = useCallback((id: string) => {
+    void window.distill.pipeline.retry(id).catch((e) => alert(`Could not retry: ${String(e)}`));
+  }, []);
+
+  const onReveal = useCallback((id: string) => {
+    void window.distill.inbox.revealInFinder(id).catch((e) => alert(`Could not reveal: ${String(e)}`));
+  }, []);
+
+  const onOpenSources = useCallback(() => {
+    void window.distill.app
+      .openSettings({ tab: 'sources' })
+      .catch((e) => alert(`Could not open Settings: ${String(e)}`));
+  }, []);
+
+  const runImportLoop = useCallback(async () => {
+    if (importLoopRunningRef.current) return;
+    importLoopRunningRef.current = true;
+    try {
+      while (true) {
+        const next = importQueueRef.current.find((e) => e.status === 'queued');
+        if (!next) break;
+        importQueueRef.current = importQueueRef.current.map((e) =>
+          e.sourcePath === next.sourcePath && e.status === 'queued' ? { ...e, status: 'active' } : e,
+        );
+        setImportQueue(importQueueRef.current);
+        try {
+          const { recordingId } = await window.distill.localImport.importPath(next.sourcePath);
+          setFocusedId(recordingId);
+          importQueueRef.current = importQueueRef.current.filter(
+            (e) => e.sourcePath !== next.sourcePath,
+          );
+          setImportQueue(importQueueRef.current);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          importQueueRef.current = importQueueRef.current.map((entry) =>
+            entry.sourcePath === next.sourcePath ? { ...entry, status: 'error', error: msg } : entry,
+          );
+          setImportQueue(importQueueRef.current);
+        }
+      }
+    } finally {
+      importLoopRunningRef.current = false;
+    }
+  }, []);
+
+  const enqueueImports = useCallback(
+    (paths: string[]) => {
+      if (paths.length === 0) return;
+      const newEntries: ImportQueueEntry[] = paths.map((p) => ({
+        sourcePath: p,
+        status: 'queued',
+        phase: null,
+        percent: null,
+        error: null,
+      }));
+      setImportQueue((prev) => {
+        const next = [...prev, ...newEntries];
+        importQueueRef.current = next;
+        return next;
+      });
+      void runImportLoop();
+    },
+    [runImportLoop],
+  );
+
+  const dismissQueueEntry = useCallback((sourcePath: string) => {
+    importQueueRef.current = importQueueRef.current.filter((e) => e.sourcePath !== sourcePath);
+    setImportQueue(importQueueRef.current);
+  }, []);
+
+  const onPickAndImport = useCallback(async () => {
+    let paths: string[];
+    try {
+      paths = await window.distill.localImport.pickFiles();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setImportQueue((prev) => [
+        ...prev,
+        {
+          sourcePath: '(picker)',
+          status: 'error',
+          phase: null,
+          percent: null,
+          error: `Could not open picker: ${msg}`,
+        },
+      ]);
+      return;
+    }
+    enqueueImports(paths);
+  }, [enqueueImports]);
+
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      setDragOver(true);
+    }
+  }, []);
+
+  const onDragLeave = useCallback((e: React.DragEvent) => {
+    if (!e.relatedTarget) setDragOver(false);
+  }, []);
+
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragOver(false);
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length === 0) return;
+      const paths: string[] = [];
+      const failed: string[] = [];
+      for (const f of files) {
+        const p = window.distill.localImport.getPathForFile(f);
+        if (p) paths.push(p);
+        else failed.push(f.name);
+      }
+      if (failed.length > 0) {
+        setImportQueue((prev) => [
+          ...prev,
+          {
+            sourcePath: `(drop) ${failed.join(', ')}`,
+            status: 'error',
+            phase: null,
+            percent: null,
+            error: `Could not resolve ${failed.length} file(s) to a path. This usually means they came from a sandboxed source. Try the + button instead.`,
+          },
+        ]);
+      }
+      enqueueImports(paths);
+    },
+    [enqueueImports],
+  );
+
+  useEffect(() => {
+    return window.distill.onLocalImportProgress((p) => {
+      importQueueRef.current = importQueueRef.current.map((e) =>
+        e.sourcePath === p.sourcePath && e.status === 'active'
+          ? { ...e, phase: p.phase, percent: p.percent }
+          : e,
+      );
+      setImportQueue(importQueueRef.current);
+    });
+  }, []);
+
+  const sections = useMemo(() => bucket(state), [state]);
+
+  const shellProps = {
+    refreshing,
+    onRefresh: refresh,
+    dragOver,
+    importQueue,
+    dismissQueueEntry,
+    onPickAndImport,
+    onDragOver,
+    onDragLeave,
+    onDrop,
+    tipJar,
+    onDismissTipJar,
+    onOpenTipJar,
+  };
+
+  if (state.kind === 'loading') {
+    return (
+      <Shell {...shellProps} total={0}>
+        <div style={{ padding: 24, color: 'var(--fg-muted)', textAlign: 'center' }}>Loading…</div>
+      </Shell>
+    );
+  }
+  if (state.kind === 'error') {
+    return (
+      <Shell {...shellProps} total={0}>
+        <div style={{ padding: 24 }}>
+          <div style={{ marginBottom: 12 }}>Could not load the inbox.</div>
+          <div className="muted" style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11 }}>
+            {state.message}
+          </div>
+          <button style={{ marginTop: 12 }} onClick={() => void refresh()}>
+            Retry
+          </button>
+        </div>
+      </Shell>
+    );
+  }
+
+  const headerCount =
+    sections.processing.length +
+    sections.waiting.length +
+    sections.errored.length +
+    sections.cancelled.length;
+  const total = state.recordings.length;
+  if (total === 0) {
+    return (
+      <Shell {...shellProps} total={0}>
+        <div
+          style={{
+            padding: 32,
+            color: 'var(--fg-muted)',
+            textAlign: 'center',
+            fontSize: 12,
+          }}
+        >
+          Nothing here.
+          <br />
+          New recordings will show up as Plaud syncs.
+          <br />
+          <span style={{ fontStyle: 'italic' }}>Or drop an mp3/mp4 here to import.</span>
+        </div>
+      </Shell>
+    );
+  }
+
+  return (
+    <Shell {...shellProps} total={headerCount}>
+      {sections.processing.length > 0 && (
+        <Section title="Processing" count={sections.processing.length}>
+          {sections.processing.map((r) => (
+            <ProcessingRow key={r.id} r={r} focused={focusedId === r.id} onCancel={onCancel} />
+          ))}
+        </Section>
+      )}
+      {sections.waiting.length > 0 && (
+        <Section title="Waiting to tag" count={sections.waiting.length}>
+          {sections.waiting.map((r) => (
+            <WaitingRow key={r.id} r={r} focused={focusedId === r.id} onTag={onTag} onSkip={onSkip} />
+          ))}
+        </Section>
+      )}
+      {sections.errored.length > 0 && (
+        <Section title="Errors" count={sections.errored.length}>
+          {sections.errored.map((r) => (
+            <ErrorRow
+              key={r.id}
+              r={r}
+              focused={focusedId === r.id}
+              onRetry={onRetry}
+              onSkip={onSkip}
+              onOpenSources={onOpenSources}
+            />
+          ))}
+        </Section>
+      )}
+      {sections.cancelled.length > 0 && (
+        <Section title="Cancelled" count={sections.cancelled.length}>
+          {sections.cancelled.map((r) => (
+            <CancelledRow key={r.id} r={r} focused={focusedId === r.id} onRetry={onRetry} onSkip={onSkip} />
+          ))}
+        </Section>
+      )}
+      {sections.complete.length > 0 && (
+        <Section title="Recent" count={sections.complete.length} defaultCollapsed>
+          {sections.complete.map((r) => (
+            <CompleteRow key={r.id} r={r} focused={focusedId === r.id} onReveal={onReveal} onSkip={onSkip} />
+          ))}
+        </Section>
+      )}
+    </Shell>
+  );
+}
+
+interface Buckets {
+  processing: InboxItemDTO[];
+  waiting: InboxItemDTO[];
+  errored: InboxItemDTO[];
+  cancelled: InboxItemDTO[];
+  complete: InboxItemDTO[];
+}
+
+function bucket(state: InboxState): Buckets {
+  const out: Buckets = {
+    processing: [],
+    waiting: [],
+    errored: [],
+    cancelled: [],
+    complete: [],
+  };
+  if (state.kind !== 'ready') return out;
+  for (const r of state.recordings) {
+    switch (r.status) {
+      case 'tagged':
+      case 'downloading':
+      case 'transcribing':
+      case 'summarising':
+      case 'writing':
+        out.processing.push(r);
+        break;
+      case 'inbox':
+        out.waiting.push(r);
+        break;
+      case 'error':
+        out.errored.push(r);
+        break;
+      case 'cancelled':
+        out.cancelled.push(r);
+        break;
+      case 'complete':
+        out.complete.push(r);
+        break;
+    }
+  }
+  return out;
+}
+
+interface ShellProps {
+  refreshing: boolean;
+  onRefresh: () => Promise<void>;
+  total: number;
+  dragOver: boolean;
+  importQueue: ImportQueueEntry[];
+  dismissQueueEntry: (sourcePath: string) => void;
+  onPickAndImport: () => Promise<void>;
+  onDragOver: (e: React.DragEvent) => void;
+  onDragLeave: (e: React.DragEvent) => void;
+  onDrop: (e: React.DragEvent) => void;
+  tipJar: TipJarStatusDTO | null;
+  onDismissTipJar: () => Promise<void>;
+  onOpenTipJar: () => void;
+  children: React.ReactNode;
+}
+
+function Shell(props: ShellProps) {
+  const activeOrQueued = props.importQueue.filter(
+    (e) => e.status === 'queued' || e.status === 'active',
+  ).length;
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        position: 'relative',
+      }}
+      onDragOver={props.onDragOver}
+      onDragLeave={props.onDragLeave}
+      onDrop={(e) => void props.onDrop(e)}
+    >
+      <header
+        style={{
+          padding: '10px 14px',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}
+      >
+        <div style={{ fontWeight: 600 }}>Inbox</div>
+        <div className="muted" style={{ marginLeft: 'auto', fontSize: 11 }}>
+          {props.total > 0 ? `${props.total} total` : ''}
+        </div>
+        <HeaderButton title="Import audio or video…" onClick={() => void props.onPickAndImport()}>
+          +
+        </HeaderButton>
+        <HeaderButton title="Refresh (⌘R)" onClick={() => void props.onRefresh()} disabled={props.refreshing}>
+          {props.refreshing ? '⋯' : '↻'}
+        </HeaderButton>
+        <HeaderButton title="Close (Esc)" onClick={() => window.close()}>
+          ×
+        </HeaderButton>
+      </header>
+      {props.tipJar && props.tipJar.shouldShowBanner && (
+        <TipJarBanner
+          status={props.tipJar}
+          onDismiss={() => void props.onDismissTipJar()}
+          onOpen={props.onOpenTipJar}
+        />
+      )}
+      {props.importQueue.length > 0 && (
+        <ImportQueuePanel
+          entries={props.importQueue}
+          onDismiss={props.dismissQueueEntry}
+          activeOrQueued={activeOrQueued}
+        />
+      )}
+      <main style={{ flexGrow: 1, overflowY: 'auto' }}>{props.children}</main>
+      {props.dragOver && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            pointerEvents: 'none',
+            border: '3px dashed var(--accent)',
+            background: 'rgba(59, 130, 246, 0.08)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10,
+          }}
+        >
+          <div
+            style={{
+              padding: '16px 24px',
+              background: 'var(--bg)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              textAlign: 'center',
+              fontSize: 13,
+              fontWeight: 500,
+            }}
+          >
+            Drop to import
+            <div className="muted" style={{ fontSize: 11, fontWeight: 400, marginTop: 4 }}>
+              Audio: mp3 m4a wav aac ogg flac opus
+              <br />
+              Video: mp4 mov m4v mkv webm (needs ffmpeg)
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Section(props: {
+  title: string;
+  count: number;
+  defaultCollapsed?: boolean;
+  children: React.ReactNode;
+}) {
+  const [collapsed, setCollapsed] = useState(props.defaultCollapsed ?? false);
+  return (
+    <section>
+      <button
+        type="button"
+        onClick={() => setCollapsed((c) => !c)}
+        style={{
+          // Style the header as a clickable banner. We previously used
+          // `all: 'unset'` here as a one-line reset, but that interacted
+          // badly with the surrounding styles in some browser versions
+          // (the click target became unreliable for the Recent section
+          // specifically). Spelling out the resets we want avoids that
+          // and keeps the visual identical.
+          appearance: 'none',
+          WebkitAppearance: 'none',
+          border: 'none',
+          margin: 0,
+          textAlign: 'left',
+          font: 'inherit',
+          display: 'block',
+          width: '100%',
+          boxSizing: 'border-box',
+          cursor: 'pointer',
+          padding: '8px 14px 4px',
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: '0.05em',
+          textTransform: 'uppercase',
+          color: 'var(--fg-muted)',
+          borderTop: '1px solid var(--border)',
+          background: 'var(--row-hover)',
+        }}
+        aria-expanded={!collapsed}
+      >
+        <span
+          aria-hidden="true"
+          style={{
+            display: 'inline-block',
+            width: 10,
+            marginRight: 4,
+            // Rotated triangle, no font dependency. Plain ASCII chevron
+            // would also work but the triangle scales nicely with font size.
+            transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)',
+            transition: 'transform 120ms',
+          }}
+        >
+          ▸
+        </span>
+        {props.title} <span style={{ fontWeight: 400 }}>· {props.count}</span>
+      </button>
+      {!collapsed && <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>{props.children}</ul>}
+    </section>
+  );
+}
+
+function Row(props: { id: string; focused: boolean; children: React.ReactNode }) {
+  return (
+    <li
+      id={`recording-${props.id}`}
+      style={{
+        padding: '10px 14px',
+        borderBottom: '1px solid var(--border)',
+        background: props.focused ? 'var(--row-hover)' : 'transparent',
+      }}
+    >
+      {props.children}
+    </li>
+  );
+}
+
+function Title({ r }: { r: InboxItemDTO }) {
+  return (
+    <div className="ellipsis" style={{ fontWeight: 500, marginBottom: 2 }}>
+      {r.filename}
+    </div>
+  );
+}
+
+function MetaLine({ r }: { r: InboxItemDTO }) {
+  const tag = r.clientName && r.meetingTypeName ? `${r.clientName} · ${r.meetingTypeName}` : null;
+  return (
+    <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
+      {formatWhen(r.start_time, r.synced_at)} · {formatDuration(r.duration_seconds)}
+      {tag ? ` · ${tag}` : ''}
+    </div>
+  );
+}
+
+function ProcessingRow(props: { r: InboxItemDTO; focused: boolean; onCancel: (id: string) => void }) {
+  const { r } = props;
+  const stepLabel = r.status === 'tagged' ? 'Queued' : humanStep(r.currentStep) + '…';
+  return (
+    <Row id={r.id} focused={props.focused}>
+      <Title r={r} />
+      <MetaLine r={r} />
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          fontSize: 11,
+          color: 'var(--accent)',
+          marginBottom: 8,
+        }}
+      >
+        <Spinner />
+        <span>{stepLabel}</span>
+      </div>
+      <div className="row">
+        <button onClick={() => props.onCancel(r.id)}>Cancel</button>
+      </div>
+    </Row>
+  );
+}
+
+function WaitingRow(props: {
+  r: InboxItemDTO;
+  focused: boolean;
+  onTag: (id: string) => void;
+  onSkip: (id: string) => Promise<void>;
+}) {
+  const lengthHint = describeDurationRisk(props.r.duration_seconds);
+  return (
+    <Row id={props.r.id} focused={props.focused}>
+      <Title r={props.r} />
+      <MetaLine r={props.r} />
+      {lengthHint && (
+        <div
+          style={{
+            fontSize: 11,
+            marginBottom: 8,
+            color: lengthHint.severity === 'red' ? 'var(--danger)' : 'var(--warning, #b58900)',
+          }}
+          title={lengthHint.tooltip}
+        >
+          ⚠ {lengthHint.message}
+        </div>
+      )}
+      <div className="row">
+        <button className="primary" onClick={() => props.onTag(props.r.id)}>
+          Tag &amp; process
+        </button>
+        <button onClick={() => void props.onSkip(props.r.id)}>Skip</button>
+      </div>
+    </Row>
+  );
+}
+
+function ErrorRow(props: {
+  r: InboxItemDTO;
+  focused: boolean;
+  onRetry: (id: string) => void;
+  onSkip: (id: string) => Promise<void>;
+  onOpenSources: () => void;
+}) {
+  return (
+    <Row id={props.r.id} focused={props.focused}>
+      <Title r={props.r} />
+      <MetaLine r={props.r} />
+      {props.r.error && (
+        <div
+          style={{
+            fontSize: 11,
+            color: 'var(--danger)',
+            marginBottom: 8,
+            fontFamily: 'ui-monospace, Menlo, monospace',
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {props.r.error}
+        </div>
+      )}
+      <div className="row">
+        {props.r.isAuthError ? (
+          <button className="primary" onClick={props.onOpenSources}>
+            Sign in again
+          </button>
+        ) : (
+          <button className="primary" onClick={() => props.onRetry(props.r.id)}>
+            Retry
+          </button>
+        )}
+        {props.r.isAuthError && <button onClick={() => props.onRetry(props.r.id)}>Retry</button>}
+        <button onClick={() => void props.onSkip(props.r.id)}>Skip</button>
+      </div>
+    </Row>
+  );
+}
+
+function CancelledRow(props: {
+  r: InboxItemDTO;
+  focused: boolean;
+  onRetry: (id: string) => void;
+  onSkip: (id: string) => Promise<void>;
+}) {
+  return (
+    <Row id={props.r.id} focused={props.focused}>
+      <Title r={props.r} />
+      <MetaLine r={props.r} />
+      <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
+        Cancelled
+      </div>
+      <div className="row">
+        <button className="primary" onClick={() => props.onRetry(props.r.id)}>
+          Resume
+        </button>
+        <button onClick={() => void props.onSkip(props.r.id)}>Dismiss</button>
+      </div>
+    </Row>
+  );
+}
+
+function CompleteRow(props: {
+  r: InboxItemDTO;
+  focused: boolean;
+  onReveal: (id: string) => void;
+  onSkip: (id: string) => Promise<void>;
+}) {
+  const { r } = props;
+  const vocabLine =
+    r.vocabularyRulesApplied != null && r.vocabularyRulesApplied > 0
+      ? `${r.vocabularyRulesApplied} correction${r.vocabularyRulesApplied === 1 ? '' : 's'} applied${
+          r.vocabularySources ? ` · ${r.vocabularySources.split(',').join(' + ')}` : ''
+        }`
+      : null;
+  const truncationTooltip =
+    r.estimatedInputTokens !== null && r.contextWindowAtSubmit !== null
+      ? `Estimated input ${r.estimatedInputTokens.toLocaleString()} tokens against a ${r.contextWindowAtSubmit.toLocaleString()}-token context window. The model silently truncates the start of the input when this happens, so the early part of the meeting may be missing from the summary.`
+      : 'Input was likely larger than the model context window; the summary may be missing detail from the start of the meeting.';
+  const externalLabel = r.modelSnapshot
+    ? `Processed on another machine (summary by ${r.modelSnapshot})`
+    : 'Processed on another machine';
+  const externalTooltip =
+    'This recording was processed on another Mac and its Markdown output was found via iCloud Drive. The pipeline did not run on this machine, so the summary reflects whatever model the other machine used. To re-run on this machine, delete the Markdown file and tag the recording again on the next poll.';
+  return (
+    <Row id={r.id} focused={props.focused}>
+      <Title r={r} />
+      <MetaLine r={r} />
+      {r.processedExternally && (
+        <div
+          style={{
+            fontSize: 11,
+            marginBottom: 8,
+            color: 'var(--fg-muted)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+          title={externalTooltip}
+        >
+          📁 {externalLabel}
+        </div>
+      )}
+      {r.truncationWarning && (
+        <div
+          style={{
+            fontSize: 11,
+            marginBottom: 8,
+            color: 'var(--warning, #b58900)',
+          }}
+          title={truncationTooltip}
+        >
+          ⚠ Long meeting — summary may be missing detail from the start.
+        </div>
+      )}
+      {vocabLine && (
+        <div
+          className="muted"
+          style={{ fontSize: 11, marginBottom: 8, fontStyle: 'italic' }}
+          title="Vocabulary corrections applied during transcription"
+        >
+          {vocabLine}
+        </div>
+      )}
+      <div className="row">
+        <button className="primary" onClick={() => props.onReveal(r.id)}>
+          Reveal in Finder
+        </button>
+        <button onClick={() => void props.onSkip(r.id)}>Dismiss</button>
+      </div>
+    </Row>
+  );
+}
+
+function TipJarBanner(props: { status: TipJarStatusDTO; onDismiss: () => void; onOpen: () => void }) {
+  return (
+    <div
+      role="region"
+      aria-label="Support development"
+      style={{
+        padding: '10px 14px',
+        borderBottom: '1px solid var(--border)',
+        background: 'rgba(245, 158, 11, 0.08)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+      }}
+    >
+      <div style={{ flex: 1, fontSize: 12, lineHeight: 1.4 }}>
+        <div style={{ fontWeight: 500, marginBottom: 2 }}>
+          {props.status.completionCount} summaries done — nice work
+        </div>
+        <div className="muted" style={{ fontSize: 11 }}>
+          Glad distill is earning its keep. If you'd like to support development, you can keep me
+          caffeinated.
+        </div>
+      </div>
+      <button
+        className="primary"
+        onClick={props.onOpen}
+        style={{ fontSize: 12 }}
+        title={`Opens ${props.status.url} in your default browser`}
+      >
+        Buy me a coffee
+      </button>
+      <button
+        onClick={props.onDismiss}
+        style={{
+          fontSize: 11,
+          background: 'transparent',
+          border: 'none',
+          color: 'var(--fg-muted)',
+          cursor: 'pointer',
+          padding: '4px 6px',
+        }}
+        title="Hide this banner. It won't come back."
+      >
+        Not now
+      </button>
+    </div>
+  );
+}
+
+function describeDurationRisk(
+  durationSeconds: number | null,
+): { severity: 'red' | 'yellow'; message: string; tooltip: string } | null {
+  if (durationSeconds == null) return null;
+  if (durationSeconds >= 10_800) {
+    return {
+      severity: 'red',
+      message: 'Very long meeting — summary likely to lose detail.',
+      tooltip:
+        'Meetings over 3 hours often exceed the model’s context window after transcription. The model will silently truncate the start of the input and the summary may be missing earlier topics.',
+    };
+  }
+  if (durationSeconds >= 5400) {
+    return {
+      severity: 'yellow',
+      message: 'Long meeting — summary quality may suffer.',
+      tooltip:
+        'Long meetings produce long transcripts. The model can still summarise them, but its attention spreads more thinly so finer points are easier to miss. Worth re-reading against the source if anything seems off.',
+    };
+  }
+  return null;
+}
+
+function humanStep(step: PipelineStep | null): string {
+  switch (step) {
+    case 'download':
+      return 'Downloading';
+    case 'transcribe':
+      return 'Transcribing';
+    case 'summarise':
+      return 'Summarising';
+    case 'write':
+      return 'Writing markdown';
+    default:
+      return 'Processing';
+  }
+}
+
+function Spinner() {
+  return (
+    <span
+      style={{
+        display: 'inline-block',
+        width: 10,
+        height: 10,
+        border: '2px solid var(--accent)',
+        borderRightColor: 'transparent',
+        borderRadius: '50%',
+        animation: 'plaud-spin 0.7s linear infinite',
+      }}
+    />
+  );
+}
+
+function HeaderButton(props: {
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      title={props.title}
+      onClick={props.onClick}
+      disabled={props.disabled}
+      style={{
+        padding: '2px 8px',
+        fontSize: 14,
+        lineHeight: 1,
+        minWidth: 24,
+      }}
+    >
+      {props.children}
+    </button>
+  );
+}
+
+function ImportQueuePanel(props: {
+  entries: ImportQueueEntry[];
+  onDismiss: (sourcePath: string) => void;
+  activeOrQueued: number;
+}) {
+  return (
+    <div
+      role="region"
+      aria-label="Imports in progress"
+      style={{
+        borderBottom: '1px solid var(--border)',
+        background: 'var(--row-hover)',
+      }}
+    >
+      <div
+        style={{
+          padding: '6px 14px',
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: '0.05em',
+          textTransform: 'uppercase',
+          color: 'var(--fg-muted)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+        }}
+      >
+        <span>Imports</span>
+        <span style={{ fontWeight: 400 }}>
+          · {props.entries.length}
+          {props.activeOrQueued > 0 && ` (${props.activeOrQueued} pending)`}
+        </span>
+      </div>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        {props.entries.map((e) => (
+          <ImportQueueRow key={e.sourcePath} entry={e} onDismiss={() => props.onDismiss(e.sourcePath)} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function ImportQueueRow(props: { entry: ImportQueueEntry; onDismiss: () => void }) {
+  const e = props.entry;
+  const lastSlash = Math.max(e.sourcePath.lastIndexOf('/'), e.sourcePath.lastIndexOf('\\'));
+  const basename = lastSlash >= 0 ? e.sourcePath.slice(lastSlash + 1) : e.sourcePath;
+  return (
+    <li
+      title={e.sourcePath}
+      style={{
+        padding: '8px 14px',
+        borderTop: '1px solid var(--border)',
+        fontSize: 12,
+      }}
+    >
+      <div className="ellipsis" style={{ fontWeight: 500, marginBottom: 4 }}>
+        {basename}
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          fontSize: 11,
+          color: e.status === 'error' ? 'var(--danger)' : 'var(--fg-muted)',
+        }}
+      >
+        <span>{describeImportStatus(e)}</span>
+        {e.status === 'active' && <ImportProgressBar percent={e.percent} />}
+        {e.status === 'error' && (
+          <button onClick={props.onDismiss} style={{ marginLeft: 'auto', fontSize: 11 }}>
+            Dismiss
+          </button>
+        )}
+      </div>
+      {e.error && (
+        <div
+          style={{
+            marginTop: 6,
+            color: 'var(--danger)',
+            fontFamily: 'ui-monospace, Menlo, monospace',
+            fontSize: 11,
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {e.error}
+        </div>
+      )}
+    </li>
+  );
+}
+
+function ImportProgressBar(props: { percent: number | null }) {
+  const p = props.percent;
+  return (
+    <div
+      style={{
+        flex: 1,
+        height: 4,
+        borderRadius: 2,
+        overflow: 'hidden',
+        background: 'var(--border)',
+        position: 'relative',
+      }}
+    >
+      <div
+        style={{
+          width: p === null ? '100%' : `${p}%`,
+          height: '100%',
+          background: 'var(--accent)',
+          // Indeterminate: gentle pulse via opacity. Keeps the CSS
+          // surface here tiny; if we ever want a sliding stripe we
+          // can move this into shared/styles.css.
+          opacity: p === null ? 0.6 : 1,
+          transition: 'width 200ms linear',
+        }}
+      />
+    </div>
+  );
+}
+
+function describeImportStatus(e: ImportQueueEntry): string {
+  if (e.status === 'queued') return 'Queued';
+  if (e.status === 'error') return 'Failed';
+  switch (e.phase) {
+    case 'probe':
+      return 'Reading file…';
+    case 'copy':
+      return e.percent !== null ? `Copying audio… ${e.percent}%` : 'Copying audio…';
+    case 'extract':
+      return e.percent !== null ? `Extracting audio… ${e.percent}%` : 'Extracting audio…';
+    case 'finalise':
+      return 'Finalising…';
+    default:
+      return 'Importing…';
+  }
+}
+
+const root = createRoot(document.getElementById('root')!);
+root.render(
+  <React.StrictMode>
+    <Inbox />
+  </React.StrictMode>,
+);
