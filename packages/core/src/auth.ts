@@ -2,7 +2,12 @@ import { PlaudConfig } from './config.js';
 import { BASE_URLS, fetchRequester } from './types.js';
 import type { PlaudTokenData, Requester } from './types.js';
 
-const TOKEN_REFRESH_BUFFER_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+/** Upper bound on how early we refresh, for long-lived tokens. */
+const MAX_TOKEN_REFRESH_BUFFER_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+/** Refresh once this share of the token's own lifetime remains. */
+const TOKEN_REFRESH_FRACTION = 0.1;
+/** Fallback when the token carries no usable issued-at claim. */
+const FALLBACK_REFRESH_BUFFER_MS = 24 * 60 * 60 * 1000; // 1 day
 
 export class PlaudAuth {
   private config: PlaudConfig;
@@ -80,8 +85,26 @@ export class PlaudAuth {
     return data.access_token;
   }
 
+  /**
+   * Whether the token is close enough to expiry to be worth re-minting.
+   *
+   * The buffer scales with the token's own lifetime rather than being a
+   * flat 30 days. Plaud historically issued ~300-day tokens, for which a
+   * flat 30-day buffer was sensible; as of Jul 2026 it issues *30-day*
+   * tokens, and a flat 30-day buffer marks those as stale the instant
+   * they're minted — so every single API call triggered a full
+   * email+password re-login instead of reusing the cached token.
+   *
+   * Refresh in the last 10% of the token's life, capped at 30 days so
+   * long-lived tokens keep the original behaviour.
+   */
   private isExpiringSoon(token: PlaudTokenData): boolean {
-    return Date.now() + TOKEN_REFRESH_BUFFER_MS > token.expiresAt;
+    const lifetime = token.expiresAt - token.issuedAt;
+    const buffer =
+      Number.isFinite(lifetime) && lifetime > 0
+        ? Math.min(MAX_TOKEN_REFRESH_BUFFER_MS, lifetime * TOKEN_REFRESH_FRACTION)
+        : FALLBACK_REFRESH_BUFFER_MS;
+    return Date.now() + buffer > token.expiresAt;
   }
 
   private decodeJwtExpiry(jwt: string): { iat: number; exp: number } {

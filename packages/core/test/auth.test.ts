@@ -107,3 +107,61 @@ describe('PlaudAuth', () => {
     await expect(auth.getToken()).rejects.toThrow('wrong account or password');
   });
 });
+
+describe('PlaudAuth token refresh buffer', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  function makeAuth(tmpDir: string, lifetimeDays: number, ageDays: number) {
+    const config = new PlaudConfig(tmpDir);
+    const issuedAt = Date.now() - ageDays * DAY;
+    config.saveCredentials({ email: 't@t.com', password: 'p', region: 'eu' });
+    config.saveToken({
+      accessToken: 'cached-token',
+      tokenType: 'Bearer',
+      issuedAt,
+      expiresAt: issuedAt + lifetimeDays * DAY,
+    });
+    return new PlaudAuth(config);
+  }
+
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'plaud-buffer-'));
+    mockFetch.mockReset();
+  });
+  afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+
+  it('reuses a freshly issued 30-day token instead of re-logging in', async () => {
+    // Regression: a flat 30-day buffer made every 30-day token look stale
+    // the moment it was minted, forcing a full login on every call.
+    const auth = makeAuth(tmpDir, 30, 0);
+    const token = await auth.getToken();
+    expect(token).toBe('cached-token');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('refreshes a 30-day token in its final tenth', async () => {
+    const auth = makeAuth(tmpDir, 30, 28);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        status: 0,
+        access_token: `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(
+          JSON.stringify({
+            exp: Math.floor(Date.now() / 1000) + 30 * 86400,
+            iat: Math.floor(Date.now() / 1000),
+          }),
+        ).toString('base64url')}.sig`,
+        token_type: 'Bearer',
+      }),
+    });
+    await auth.getToken();
+    expect(mockFetch).toHaveBeenCalled();
+  });
+
+  it('still reuses a long-lived token well before expiry', async () => {
+    const auth = makeAuth(tmpDir, 300, 100);
+    expect(await auth.getToken()).toBe('cached-token');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
