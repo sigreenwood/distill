@@ -6,11 +6,14 @@
 # What we ship inside the .app bundle:
 #   - out/                       Electron main + preload + renderers, built by
 #                                electron-vite into packages/app/out/
-#   - python/transcribe.py       The transcription script. Stays small (~5kB),
+#   - python/transcribe.py       The transcription script. Stays small (~12kB),
 #                                runs against the user-installed venv.
+#   - python/silero_vad.onnx     Silero VAD v5 weights (~2.3MB, MIT) used to
+#                                drop non-speech before Whisper sees it.
 #   - python/requirements.txt    Pip dependency list. Read at first launch by
-#                                the setup flow to install mlx-whisper into
-#                                ~/Library/Application Support/Plaud Local/venv.
+#                                the setup flow to install mlx-whisper and
+#                                onnxruntime into
+#                                ~/Library/Application Support/distill/venv.
 #   - resources/                 Vocabulary JSON files, PROMPTS.md seed data,
 #                                tray icons.
 #   - node_modules               Production deps only. better-sqlite3 and keytar
@@ -70,6 +73,12 @@ extraResources:
     to: python/transcribe.py
   - from: python/requirements.txt
     to: python/requirements.txt
+  # Silero VAD weights (~2.3MB, MIT). transcribe.py loads this from its
+  # own directory to gate out non-speech before Whisper runs. Without it
+  # transcription still works (VAD degrades to off with a warning), but
+  # you lose the hallucination suppression and the speed win.
+  - from: python/silero_vad.onnx
+    to: python/silero_vad.onnx
   # Resources OTHER than vocabulary. We can't use a single `from:
   # resources, to: resources` rule any more because that would bundle
   # the dev-tree vocabulary directory into the .pkg, which is exactly
