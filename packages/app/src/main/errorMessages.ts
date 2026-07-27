@@ -128,6 +128,16 @@ const RULES: Rule[] = [
       return 'mlx_whisper is not installed in the Python venv. Run: cd packages/app/python && uv pip install -r requirements.txt';
     },
   },
+  // --- Apple Notes ---------------------------------------------------------
+  {
+    // -1712 is the AppleEvent timeout. Notes.app is often still working
+    // (and may create the note anyway) when this fires, so the honest
+    // message says so rather than implying the write definitely failed.
+    pattern: /AppleEvent timed out|-1712/i,
+    build: () =>
+      'Notes.app took too long to accept the note. It may still have been created — check the folder in Notes before retrying, or turn Apple Notes off in Settings → Outputs if it keeps timing out. Markdown and HTML are unaffected.',
+  },
+
   // --- Filesystem ----------------------------------------------------------
   {
     pattern: /ENOSPC|no\s+space\s+left\s+on\s+device/i,

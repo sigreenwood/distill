@@ -259,6 +259,14 @@ export function escapeHtml(s: string): string {
 
 // --- apple notes -----------------------------------------------------------
 
+/**
+ * How long to let Notes.app take before giving up. Ten minutes is
+ * generous, but the alternative — the 60-second AppleEvent default —
+ * fails on ordinary meeting summaries, and a slow note is much better
+ * than a spurious error.
+ */
+const APPLE_NOTES_TIMEOUT_SECONDS = 600;
+
 export class AppleNotesError extends Error {
   userMessage: string;
 
@@ -293,25 +301,34 @@ function buildAppleScript(args: { parentFolder: string; clientFolder: string; bo
   const parent = escapeForAppleScript(args.parentFolder);
   const child = escapeForAppleScript(args.clientFolder);
   const body = escapeForAppleScript(args.body);
+  // `with timeout` is load-bearing: AppleEvents default to 60 seconds,
+  // and Notes.app routinely takes longer than that to accept a note
+  // whose body is a full meeting summary (worse again with the
+  // transcript embedded, and worse still when Notes is syncing to
+  // iCloud). Without it the pipeline reports "AppleEvent timed out
+  // (-1712)" while Notes is still working — and may well go on to
+  // create the note anyway, leaving a failure that isn't one.
   return `
 on run
-  tell application "Notes"
-    set acct to default account
-    tell acct
-      if not (exists folder "${parent}") then
-        make new folder with properties {name:"${parent}"}
-      end if
-      tell folder "${parent}"
-        if not (exists folder "${child}") then
-          make new folder with properties {name:"${child}"}
+  with timeout of ${APPLE_NOTES_TIMEOUT_SECONDS} seconds
+    tell application "Notes"
+      set acct to default account
+      tell acct
+        if not (exists folder "${parent}") then
+          make new folder with properties {name:"${parent}"}
         end if
-        tell folder "${child}"
-          set newNote to make new note with properties {body:"${body}"}
-          return id of newNote
+        tell folder "${parent}"
+          if not (exists folder "${child}") then
+            make new folder with properties {name:"${child}"}
+          end if
+          tell folder "${child}"
+            set newNote to make new note with properties {body:"${body}"}
+            return id of newNote
+          end tell
         end tell
       end tell
     end tell
-  end tell
+  end timeout
 end run
 `;
 }
