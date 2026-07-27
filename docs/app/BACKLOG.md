@@ -32,9 +32,18 @@ Suggestions for what to watch for:
   what you'd actually send? Does the training prompt produce something
   worth keeping? Does the committee meeting type need diarisation enough to promote it from
   v1.2 to v1.1?
-- **Model choice.** `qwen2.5:32b` on the M4 — is it slow enough to be
-  annoying for back-to-back meetings, or fine? Is `qwen3:14b` on the M5
-  noticeably worse, or close enough that the speed wins?
+- **Model choice.** *(Updated Jul 2026 — the app now picks a default
+  sized to the Mac's RAM and checks weekly for newer generations; see
+  appendix.)* Current tiers: `qwen3.6:35b` on the 48GB M4, `qwen3.6:27b`
+  on the 24GB M5. Watch whether the 27b is slow enough on the M5 to be
+  annoying for back-to-back meetings, and whether `qwen3.5:9b` is close
+  enough that the speed wins for routine types.
+- **Reconstruction parity.** *(Jul 2026)* The entire `packages/app`
+  source was rebuilt from the compiled v0.0.1 bundle after the iCloud
+  incident. It typechecks, builds to near-identical bundle sizes, and
+  boots against the real state.db — but the first few real meetings
+  through the rebuilt pipeline double as a parity check. Watch for any
+  behaviour that differs from what v0.0.1 did.
 - **Notifications.** Are the "Summary ready" toasts useful or noise?
   Consider batching (one toast per hour) if they pile up.
 - **First-poll catch-up.** Next install on the M5 — does the "skip all
@@ -127,10 +136,13 @@ Pause is one lever (shipped); reducing the Ollama keepAlive default
 from `24h` to `5m` shipped too. Other levers worth considering as
 separate follow-up work, ranked by lowest cost first:
 
-**1. Smaller Ollama model option.** `qwen2.5:14b` uses ~9GB instead of
-~20GB. Quality is real but acceptable for most summaries. Configurable
-globally today via `config.ollama.model` or via the Performance pane;
-a "low-RAM mode" preset would surface the choice more directly.
+**1. Smaller Ollama model option.** ~~`qwen2.5:14b` uses ~9GB instead of
+~20GB.~~ *Shipped Jul 2026 as hardware-aware recommendations:* fresh
+installs default to a model sized to the Mac's unified memory
+(`modelAdvisor.ts` tiers: 48GB→35b, 24GB→27b, 16GB→9b), and
+Settings → About documents the tier table for manual switching. What
+remains of this lever is surfacing a one-click "low-RAM mode" preset
+for existing installs; low priority now the guidance is in-app.
 
 **2. Per-meeting-type model override.** New optional column on
 `meeting_types` (`ollama_model_override` or similar). Falls back to
@@ -182,37 +194,16 @@ action becomes cheap UI work:
 
 ---
 
-## Settings editor writes in packaged builds
+## ~~Settings editor writes in packaged builds~~ — resolved
 
-*Known limitation, flagged Apr 2026 alongside the Vocabulary pane work.*
-
-The Vocabulary pane writes to `resources/vocabulary/<scope>.json`. In
-dev this is the repo's working copy; in a signed `.app` bundle it's
-inside the code-signed package and `writeFileSync` will throw EACCES.
-The Prompts pane reads `docs/app/PROMPTS.md` for revert-to-default;
-read-only access to the bundle is fine, but worth flagging the
-asymmetry. Outputs/General/Performance/Sources all write to
-`config.json` or Keychain, both of which live outside the bundle and
-are unaffected.
-
-**Options for v1.1 when we ship the `.pkg`:**
-
-1. **Copy-on-first-run.** On first launch, if `Application Support/distill/vocabulary/`
-   doesn't exist, copy bundled `resources/vocabulary/` into it.
-   Loader + saver switch to the user-local path. Clean but loses
-   the "edits show up as git diffs" property the current
-   JSON-files-in-repo approach gives the contributor in dev.
-2. **Dev-only editor.** Gate the Vocabulary pane behind
-   `!app.isPackaged` and show a "read-only in this build" banner
-   otherwise. Simplest. Matches the "vocab is curated content in
-   git" spirit from [DECISIONS.md §2](./DECISIONS.md). The contributor
-   still edits JSON files by hand on dev, ships a refreshed `.pkg`,
-   done.
-3. **Hybrid.** Built-in packs read-only (bundled); per-client vocab
-   goes to Application Support. In-app editor works for per-client
-   edits but built-in edits are dev-only. Best UX, most code.
-
-Decide at packaging time. For dev, nothing to do.
+*Flagged Apr 2026; confirmed resolved Jul 2026 during the source
+reconstruction.* Option 1 (copy-on-first-run) is what actually shipped
+in v0.0.1: `migrateVocabularyToUserDir` copies bundled
+`resources/vocabulary/` into `Application Support/distill/vocabulary/`
+on launch (never overwriting), and both the loader and the Vocabulary
+pane read/write the user-local path via `userVocabularyDir()`. Packaged
+builds are safe. The "edits show up as git diffs" dev property was
+traded away, as the option 1 write-up predicted.
 
 ---
 
@@ -300,7 +291,11 @@ Already planned, kept here as a pointer:
 
 - **v1.1**: `.pkg` installer; Launch on Login
 - **v1.2**: Diarisation; thumbs-up/down rating
-- **v2**: Self-updating models/prompts; Plaud device USB pulldown fallback
+- **v2**: Self-updating models/prompts; Plaud device USB pulldown fallback.
+  *Partially landed early (Jul 2026):* the model half shipped — weekly
+  registry check for newer generations of the configured family, with
+  notification + Settings → Performance banner and user-approved
+  download. Prompt reflection and the USB fallback remain v2.
 
 ---
 
@@ -333,10 +328,19 @@ Worth documenting so we don't rediscover them:
   re-run `plaud login` from a terminal.
 - Plaud's API uses HTTP 200 with `status: -302` to signal region
   mismatches, not a real HTTP redirect. `PlaudClient.request` handles
-  the redirect; `PlaudClient.getMp3Url` previously swallowed every
-  non-2xx into `null` (the recording-deleted path), which masked
-  auth failures and other real errors. Now distinguishes 404 (returns
-  null) from everything else (re-throws). See commit `c11d418`.
+  the redirect (bounded to one retry since the Jul 2026 review);
+  `PlaudClient.getMp3Url` previously swallowed every non-2xx into
+  `null` (the recording-deleted path), which masked auth failures and
+  other real errors. Now distinguishes 404 (returns null) from
+  everything else (re-throws). Originally commit `c11d418` (lost in
+  the iCloud incident); behaviour recovered into `@plaud/core` during
+  the salvage.
+- **Never keep this repo in iCloud Drive.** The original working copy
+  lived in `~/Library/Mobile Documents/...`; iCloud destroyed
+  `.git/objects` and deleted most tracked files (Jul 2026). The app's
+  TypeScript source only survived because the installed v0.0.1 bundle
+  was unminified. Work from `~/dev/distill`, push early and often to
+  `github.com/sigreenwood/distill`.
 
 ---
 
@@ -371,6 +375,38 @@ Compact log of completed work, kept so future-me can see what
 landed without scrolling through obsolete designs. Items are roughly
 chronological within each grouping. Commit hashes where I have them;
 git log fills in the rest.
+
+> **Note on pre-Jul-2026 hashes:** the original repo's history was
+> destroyed in the iCloud incident, so hashes older than the salvage
+> (e.g. `c11d418`, `8b80e9a`) no longer resolve. They're kept as
+> historical markers; the behaviour they describe was recovered into
+> the reconstructed source.
+
+### Salvage + rebuild session (Jul 2026)
+
+- **Repo salvage after iCloud destroyed the working copy.** `.git`
+  objects and most tracked files lost; toolkit packages restored from
+  the public GitHub remote, `python/` + `resources/` recovered from
+  the installed v0.0.1 bundle, docs survived locally. New private
+  home: `github.com/sigreenwood/distill`, working copy `~/dev/distill`.
+  (`e46043f`)
+- **Toolkit review hardening.** Bounded the `-302` region-redirect
+  retry, `res.ok` check + fallback on temp-URL downloads, YAML title
+  escaping in `sync`, masked password input at `plaud login`. Tests
+  added. (`08b1e3f`)
+- **Full `packages/app` source reconstruction** from the unminified
+  compiled bundle: main process, preload, and all four renderer
+  windows as typed TS/TSX. Typechecks clean; build output matches
+  v0.0.1 bundle sizes; dev run boots against the production state.db
+  with zero migration drift. `@plaud/core` gained the CredentialStore
+  abstraction back (it had only existed in the lost repo).
+  (`5b43b9d`..`f6bda98`)
+- **Hardware-aware model defaults + weekly upgrade suggestions.**
+  `modelAdvisor.ts` RAM tiers drive fresh-install defaults and a
+  "Choosing a local model" section in About; weekly registry probe
+  suggests newer model generations (qwen3.7, qwen4, …) via
+  notification + Performance-pane banner with user-approved streaming
+  download. Suggestion-only throughout. 14 unit tests. (`481e2ec`)
 
 ### Sources / Plaud sign-in (this session, Apr 2026)
 
