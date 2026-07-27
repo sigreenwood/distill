@@ -33,6 +33,7 @@ describe('PlaudAuth', () => {
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
+      ok: true,
       json: async () => ({ status: 0, access_token: fakeToken, token_type: 'bearer' }),
     });
 
@@ -78,6 +79,7 @@ describe('PlaudAuth', () => {
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
+      ok: true,
       json: async () => ({ status: 0, access_token: newToken, token_type: 'bearer' }),
     });
 
@@ -97,6 +99,7 @@ describe('PlaudAuth', () => {
 
   it('throws on wrong credentials', async () => {
     mockFetch.mockResolvedValueOnce({
+      ok: true,
       ok: true,
       json: async () => ({ status: -2, msg: 'wrong account or password', access_token: '' }),
     });

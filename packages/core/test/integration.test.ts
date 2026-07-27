@@ -4,7 +4,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-const HAS_CREDS = fs.existsSync(path.join(os.homedir(), '.plaud', 'config.json'));
+// Gate on usable auth material, not mere file existence — the Electron
+// app creates ~/.plaud/config.json even before a successful sign-in
+// (and keeps the password in Keychain, which the file store can't see).
+const HAS_CREDS = (() => {
+  try {
+    const raw = fs.readFileSync(path.join(os.homedir(), '.plaud', 'config.json'), 'utf-8');
+    const parsed = JSON.parse(raw);
+    return Boolean(parsed?.credentials?.password || parsed?.token?.accessToken);
+  } catch {
+    return false;
+  }
+})();
 
 describe.skipIf(!HAS_CREDS)('integration (live API)', () => {
   const config = new PlaudConfig();
