@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { appSupportDir, configFile, expandHome } from './paths.js';
-import { recommendModelForRam } from './modelAdvisor.js';
+import { recommendModelForRam, recommendContextWindow } from './modelAdvisor.js';
 
 export type PausableStep = 'polling' | 'download' | 'transcribe' | 'summarise';
 
@@ -183,17 +183,7 @@ export function normaliseConfig(cfg: any): AppConfig {
       // (48GB → 35B, 24GB → 27B, 16GB → 9B, below → 4B). A model already
       // written in config.json always wins — this only fills the gap.
       model: cfg.ollama?.model ?? recommendModelForRam(os.totalmem()).model,
-      // One-time bump of contextWindow from the old 32k default to
-      // 64k, applied only when the on-disk value is exactly the old
-      // default. Manually-set values (e.g. 16384 or 131072) are
-      // preserved. Why bump: long meetings (~2h+) at a 27B model's
-      // typical token rate were brushing or exceeding 32k, causing
-      // Ollama to silently truncate the start of the input. 64k
-      // gives ~6h of conversational speech of headroom against the
-      // model's native context. Costs ~4-6GB more unified memory
-      // while the model is resident.
-      contextWindow:
-        cfg.ollama?.contextWindow === 32768 ? 65536 : (cfg.ollama?.contextWindow ?? 65536),
+      contextWindow: resolveContextWindow(cfg.ollama?.contextWindow, os.totalmem()),
       temperature: cfg.ollama?.temperature ?? 0.3,
       // 5 minutes: long enough that back-to-back summaries reuse the
       // loaded model, short enough that idle daytime hours get the
@@ -212,6 +202,31 @@ export function normaliseConfig(cfg: any): AppConfig {
     initialPollInboxCount: normaliseInitialPollInboxCount(cfg.initialPollInboxCount),
     logLevel: cfg.logLevel ?? 'info',
   };
+}
+
+/**
+ * Resolve the Ollama context window, honouring an explicit setting but
+ * defaulting to what this Mac's memory can actually sustain.
+ *
+ * History: an early version bumped any config carrying the old 32k
+ * default up to 64k, because long meetings were exceeding 32k and being
+ * silently truncated. That was written on a 48GB M4 and is right there.
+ * On a 24GB Mac it is actively harmful — a 27B model's weights plus a
+ * 64k KV cache exceed unified memory, and Ollama dies mid-request with
+ * a bare "fetch failed". Worse, because the bump keyed on the exact
+ * value 32768, setting 32k by hand silently became 64k again: the
+ * setting could not be fixed by the user.
+ *
+ * The bump now applies only where the memory supports it. Any other
+ * explicit value is passed through untouched — a small model with a
+ * large context is a perfectly reasonable combination we shouldn't
+ * second-guess.
+ */
+export function resolveContextWindow(raw: unknown, totalRamBytes: number): number {
+  const recommended = recommendContextWindow(totalRamBytes);
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return recommended;
+  if (raw === 32768 && recommended > 32768) return 65536;
+  return raw;
 }
 
 function normaliseInitialPollInboxCount(raw: unknown): number {

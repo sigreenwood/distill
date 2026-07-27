@@ -46,6 +46,25 @@ const RULES: Rule[] = [
     pattern: /Ollama\s+response\s+had\s+no\s+body|Ollama\s+stream\s+ended\s+without/i,
     build: () => 'Ollama closed the connection before finishing. If this repeats, restart the Ollama app.',
   },
+  {
+    // Node's undici reports a socket that died mid-request as a bare
+    // "fetch failed", with no cause worth surfacing. During summarise
+    // that almost always means Ollama was killed allocating memory:
+    // the KV cache is charged on top of the model weights and scales
+    // with num_ctx, so a large context on a memory-tight Mac fails
+    // even on a one-word prompt. Measured: 27B model + 64k context
+    // needs ~28GB and dies on a 24GB machine; 32k is stable.
+    pattern: /^fetch failed$|fetch failed/i,
+    build: (_m, ctx) => {
+      const model = ctx.ollamaModel ?? 'the configured model';
+      return (
+        `Lost the connection to Ollama while summarising with "${model}". ` +
+        'This usually means Ollama ran out of memory allocating its context. ' +
+        'Lower contextWindow in config.json (32768 is a safe value on a 24GB Mac), ' +
+        'or switch to a smaller model in Settings → Performance, then Retry.'
+      );
+    },
+  },
   // --- Plaud download ------------------------------------------------------
   {
     pattern: /getMp3Url\s+returned\s+null|Plaud\s+did\s+not\s+return\s+a\s+download\s+URL/i,

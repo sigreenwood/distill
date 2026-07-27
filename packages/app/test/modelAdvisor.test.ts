@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import { resolveContextWindow } from '../src/main/config.js';
 import {
   recommendModelForRam,
   parseModelName,
   successorCandidates,
   checkForNewerGeneration,
+  recommendContextWindow,
 } from '../src/main/modelAdvisor.js';
 
 const GB = 1024 * 1024 * 1024;
@@ -88,5 +90,44 @@ describe('checkForNewerGeneration', () => {
       throw new Error('offline');
     });
     expect(s).toBeNull();
+  });
+});
+
+describe('recommendContextWindow', () => {
+  it('allows 64k only where memory supports it', () => {
+    expect(recommendContextWindow(48 * GB)).toBe(65536);
+    expect(recommendContextWindow(64 * GB)).toBe(65536);
+  });
+
+  it('caps a 24GB Mac at 32k (64k killed Ollama in practice)', () => {
+    expect(recommendContextWindow(24 * GB)).toBe(32768);
+  });
+
+  it('scales down further on smaller machines', () => {
+    expect(recommendContextWindow(16 * GB)).toBe(16384);
+    expect(recommendContextWindow(8 * GB)).toBe(8192);
+  });
+});
+
+describe('resolveContextWindow', () => {
+  it('defaults to the memory-appropriate window', () => {
+    expect(resolveContextWindow(undefined, 24 * GB)).toBe(32768);
+    expect(resolveContextWindow(undefined, 48 * GB)).toBe(65536);
+  });
+
+  it('keeps 32k on a 24GB Mac instead of bumping it to 64k', () => {
+    // Regression: the legacy bump keyed on the exact value 32768, so a
+    // user setting 32k by hand had it silently restored to 64k — the
+    // very config that kills Ollama on this hardware.
+    expect(resolveContextWindow(32768, 24 * GB)).toBe(32768);
+  });
+
+  it('still applies the legacy 32k→64k bump where memory allows', () => {
+    expect(resolveContextWindow(32768, 48 * GB)).toBe(65536);
+  });
+
+  it('passes through any other explicit value untouched', () => {
+    expect(resolveContextWindow(16384, 24 * GB)).toBe(16384);
+    expect(resolveContextWindow(131072, 48 * GB)).toBe(131072);
   });
 });

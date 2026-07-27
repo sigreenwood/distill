@@ -60,6 +60,24 @@ export function recommendModelForRam(totalRamBytes: number): ModelRecommendation
   return { model: last.model, reason: last.reason };
 }
 
+/**
+ * Largest Ollama context window this much unified memory can sustain
+ * alongside the recommended model for the same tier.
+ *
+ * The KV cache is charged *on top of* the model weights and scales with
+ * num_ctx — roughly 100MB per 1k tokens for a 27B-class model. Measured
+ * on a 24GB M5 with qwen3.5:27b resident at 21.6GB: num_ctx 65536 kills
+ * the Ollama connection outright ("fetch failed" mid-request), while
+ * 32768 is stable. Hence 32k, not 64k, for the 24GB tier.
+ */
+export function recommendContextWindow(totalRamBytes: number): number {
+  const gb = totalRamBytes / (1024 * 1024 * 1024);
+  if (gb >= 44) return 65536;
+  if (gb >= 22) return 32768;
+  if (gb >= 14) return 16384;
+  return 8192;
+}
+
 /** All tiers, for rendering the "Choosing a local model" table in About. */
 export function recommendationTable(): { ram: string; model: string }[] {
   return [
