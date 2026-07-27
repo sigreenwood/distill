@@ -182,7 +182,31 @@ export function prettifyError(
       };
     }
   }
-  const firstLine = msg.split('\n')[0] ?? msg;
-  const trimmed = firstLine.length > 200 ? firstLine.slice(0, 197) + '…' : firstLine;
-  return { message: trimmed, isAuthError: false };
+  return { message: summariseUnmatched(msg), isAuthError: false };
+}
+
+/**
+ * Fallback for errors no rule matched.
+ *
+ * This used to return only the first line, which produced messages that
+ * stopped before saying anything useful — a real example from the write
+ * step:
+ *
+ *   "Partial output failure (2/3 attempted succeeded this run).
+ *    appleNotes: osascript failed (exit 1):"
+ *
+ * The line ends on a colon because the actual reason ("AppleEvent timed
+ * out") was on the next line. Nested tool output (osascript, python,
+ * ffmpeg) routinely puts the cause on a later line, so take the first
+ * few non-empty lines, flatten them into one sentence, and only then
+ * truncate.
+ */
+function summariseUnmatched(msg: string): string {
+  const lines = msg
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  if (lines.length === 0) return 'Unknown error';
+  const joined = lines.slice(0, 3).join(' ').replace(/\s+/g, ' ').trim();
+  return joined.length > 240 ? joined.slice(0, 237) + '…' : joined;
 }

@@ -200,6 +200,20 @@ app.whenReady().then(async () => {
         openInbox(bounds);
         broadcastInboxChanged();
       },
+      onOpenErrors: (bounds) => {
+        // Focus the first errored row so the user lands on the thing the
+        // ⚠ is actually about, rather than the top of the list.
+        const [firstErrored] = localState.listErroredIds();
+        openInbox(bounds, firstErrored);
+        broadcastInboxChanged();
+        if (firstErrored) broadcastFocusRecording(firstErrored);
+      },
+      onDismissErrors: () => {
+        const cleared = localState.dismissAllErrors();
+        localLogger.info({ cleared }, 'errors dismissed from tray');
+        trayHandle?.refresh();
+        broadcastInboxChanged();
+      },
       onOpenSettings: () => openSettings(),
       onPauseChange: (nextPause) => {
         const updated = applyConfigUpdate({ paused: nextPause });
@@ -271,6 +285,25 @@ app.whenReady().then(async () => {
           onStateChanged: () => {
             trayHandle?.refresh();
             broadcastInboxChanged();
+          },
+          onError: (id, message) => {
+            const row = localState.getRecordingJoined(id);
+            const label = row
+              ? (row.client_name && row.meeting_type_name
+                  ? `${row.client_name} — ${row.meeting_type_name}`
+                  : row.filename)
+              : id;
+            notify({
+              title: 'distill — summary failed',
+              // The friendly message from errorMessages says what to do
+              // about it; putting it in the notification means the user
+              // doesn't have to go hunting for why the tray went amber.
+              body: `${label}\n${message}`,
+              onClick: () => {
+                openInbox(undefined, id);
+                broadcastFocusRecording(id);
+              },
+            });
           },
           onComplete: (id) => {
             const row = localState.getRecordingJoined(id);

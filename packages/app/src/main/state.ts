@@ -791,6 +791,26 @@ export class State {
     return row?.n ?? 0;
   }
 
+  /** Ids of every errored recording, newest failure first. */
+  listErroredIds(): string[] {
+    return (
+      this.db
+        .prepare("SELECT id FROM recordings WHERE status = 'error' ORDER BY updated_at DESC")
+        .all() as { id: string }[]
+    ).map((r) => r.id);
+  }
+
+  /**
+   * Mark every errored recording as skipped, clearing the tray warning.
+   * Returns how many rows changed. Deliberately does not touch audio or
+   * written outputs — a dismissed row can be re-tagged from Plaud later.
+   */
+  dismissAllErrors(): number {
+    return this.db
+      .prepare("UPDATE recordings SET status = 'skipped', updated_at = ? WHERE status = 'error'")
+      .run(Date.now()).changes;
+  }
+
   errorCount(): number {
     const row = this.db
       .prepare("SELECT COUNT(*) as n FROM recordings WHERE status = 'error'")

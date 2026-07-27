@@ -26,6 +26,10 @@ export interface TrayContext {
   resourcesDir: string;
   getConfig: () => AppConfig;
   onOpenInbox: (trayBounds: Rectangle) => void;
+  /** Open the inbox focused on the first errored recording. */
+  onOpenErrors: (trayBounds: Rectangle) => void;
+  /** Clear every errored recording (marks them skipped). */
+  onDismissErrors?: () => void;
   onOpenSettings: () => void;
   onSyncNow: () => Promise<void> | void;
   onPauseChange: (next: PauseConfig) => void;
@@ -99,6 +103,25 @@ export function createTray(ctx: TrayContext): TrayHandle {
         label: `Inbox${inbox > 0 ? ` (${inbox})` : ''}…`,
         click: () => ctx.onOpenInbox(tray.getBounds()),
       },
+    );
+    // The ⚠ in the menu bar has to lead somewhere. Without this the only
+    // route to the rows that clear it was Inbox → scroll, and the icon
+    // looked like it was stuck for good.
+    if (errors > 0) {
+      template.push({
+        label: `Review ${errors} error${errors === 1 ? '' : 's'}…`,
+        click: () => ctx.onOpenErrors(tray.getBounds()),
+      });
+      if (ctx.onDismissErrors) {
+        template.push({
+          label: `Dismiss ${errors === 1 ? 'this error' : 'all errors'}`,
+          toolTip:
+            'Marks the failed recordings as skipped and clears the warning. They can be re-tagged from Plaud later.',
+          click: () => ctx.onDismissErrors?.(),
+        });
+      }
+    }
+    template.push(
       { type: 'separator' },
       {
         label: 'Sync now',

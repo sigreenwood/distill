@@ -11,6 +11,12 @@ export interface WorkerCallbacks {
   onStateChanged: () => void;
   /** Fired when a recording reaches 'complete'. */
   onComplete: (id: string) => void;
+  /**
+   * Fired when a recording lands in 'error', with the user-facing
+   * message. Success was always announced; failure only changed the
+   * tray icon, so a run could fail silently and sit there unexplained.
+   */
+  onError?: (id: string, message: string) => void;
 }
 
 /**
@@ -135,6 +141,7 @@ export class Worker {
               error: friendly.message,
               is_auth_error: friendly.isAuthError ? 1 : 0,
             });
+            this.cb.onError?.(claimed.id, friendly.message);
           }
         } finally {
           this.currentId = null;
