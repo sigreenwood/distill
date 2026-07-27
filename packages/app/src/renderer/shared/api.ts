@@ -113,6 +113,17 @@ export interface SourcesDTO {
   plaud: PlaudStatusDTO;
 }
 
+export interface OutputDirStatusDTO {
+  resolvedPath: string;
+  exists: boolean;
+  writable: boolean;
+  willBeCreated: boolean;
+  inICloudDrive: boolean;
+  existingSummaries: number;
+  problem: string | null;
+  note: string | null;
+}
+
 export interface SystemInfoDTO {
   totalRamGb: number;
   recommendedModel: string;
@@ -226,6 +237,8 @@ export interface DistillApi {
     savePerformance(payload: PerformanceDTO): Promise<void>;
     listOllamaModels(): Promise<OllamaModelsDTO>;
     browseFolder(currentPath?: string): Promise<string | null>;
+    inspectOutputDir(dir: string): Promise<OutputDirStatusDTO>;
+    revealPath(dir: string): Promise<void>;
     dismissModelSuggestion(): Promise<void>;
     pullModel(model: string): Promise<{ ok: true } | { ok: false; error: string }>;
   };

@@ -1,4 +1,5 @@
 import React from 'react';
+import type { OutputDirStatusDTO } from '../shared/api.js';
 
 /** Ollama keep_alive presets — must mirror shared/ipcChannels.ts. */
 export const KEEPALIVE_PRESETS = [
@@ -127,6 +128,28 @@ export function FolderField(props: {
   onChange: (v: string) => void;
   onBrowse: () => void;
 }) {
+  const [status, setStatus] = React.useState<OutputDirStatusDTO | null>(null);
+
+  // Re-inspect as the user types, debounced — the check touches the
+  // filesystem and the path is half-written on most keystrokes.
+  React.useEffect(() => {
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      void window.distill.settings
+        .inspectOutputDir(props.value)
+        .then((s) => {
+          if (!cancelled) setStatus(s);
+        })
+        .catch(() => {
+          if (!cancelled) setStatus(null);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [props.value]);
+
   return (
     <div style={{ marginTop: 10 }}>
       <label style={fieldLabelStyle}>{props.label}</label>
@@ -139,7 +162,38 @@ export function FolderField(props: {
           placeholder="~/Documents/distill"
         />
         <button onClick={props.onBrowse}>Browse…</button>
+        <button
+          onClick={() => void window.distill.settings.revealPath(props.value)}
+          title="Show this folder in Finder (opens the parent if it doesn't exist yet)"
+          disabled={!status || status.problem !== null}
+        >
+          Reveal
+        </button>
       </div>
+      {status && <OutputDirStatusLine status={status} />}
+    </div>
+  );
+}
+
+function OutputDirStatusLine({ status }: { status: OutputDirStatusDTO }) {
+  if (status.problem) {
+    return (
+      <div style={{ ...hintStyle, color: 'var(--danger)', fontStyle: 'normal' }} role="alert">
+        ⚠ {status.problem}
+      </div>
+    );
+  }
+  const summary = status.exists
+    ? status.existingSummaries > 0
+      ? `Folder exists · ${status.existingSummaries} summar${status.existingSummaries === 1 ? 'y' : 'ies'} here`
+      : 'Folder exists · empty so far'
+    : 'Folder will be created on the first summary';
+  return (
+    <div className="muted" style={{ ...hintStyle, fontStyle: 'normal' }}>
+      <span title={status.resolvedPath}>
+        {status.exists ? '✓' : '·'} {summary}
+      </span>
+      {status.note && <div style={{ marginTop: 2 }}>{status.note}</div>}
     </div>
   );
 }

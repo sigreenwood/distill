@@ -1,5 +1,7 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import crypto from 'node:crypto';
+import { inspectOutputDir } from './outputDirStatus.js';
 import { app, dialog, ipcMain, shell, BrowserWindow } from 'electron';
 import { Channels, KEEPALIVE_PRESETS, WHISPER_MODEL_PRESETS } from '../shared/ipcChannels.js';
 import { userVocabularyDir } from './paths.js';
@@ -662,6 +664,22 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0] ?? null;
+  });
+
+  ipcMain.handle(Channels.SettingsInspectOutputDir, (_evt, dir) => {
+    if (typeof dir !== 'string') throw new Error('dir must be a string');
+    return inspectOutputDir(dir);
+  });
+
+  ipcMain.handle(Channels.SettingsRevealPath, (_evt, dir) => {
+    if (typeof dir !== 'string') throw new Error('dir must be a string');
+    const status = inspectOutputDir(dir);
+    // Reveal the folder itself when it exists, otherwise the nearest
+    // place the user can actually look.
+    const target = status.exists ? status.resolvedPath : path.dirname(status.resolvedPath);
+    void shell.openPath(target).catch((e) =>
+      ctx.logger.warn({ err: String(e), target }, 'failed to reveal output folder'),
+    );
   });
 
   ipcMain.handle(Channels.SourcesPlaudSignIn, async (_evt, payload) => {

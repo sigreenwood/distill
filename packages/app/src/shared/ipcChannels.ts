@@ -32,6 +32,8 @@ export const Channels = {
   SettingsSavePerformance: 'settings.savePerformance',
   SettingsListOllamaModels: 'settings.listOllamaModels',
   SettingsBrowseFolder: 'settings.browseFolder',
+  SettingsInspectOutputDir: 'settings.inspectOutputDir',
+  SettingsRevealPath: 'settings.revealPath',
   SettingsDismissModelSuggestion: 'settings.dismissModelSuggestion',
   SettingsPullModel: 'settings.pullModel',
   PushModelPullProgress: 'push:model-pull-progress',

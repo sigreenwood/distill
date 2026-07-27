@@ -69,6 +69,8 @@ const api = {
     listOllamaModels: () => ipcRenderer.invoke(Channels.SettingsListOllamaModels),
     browseFolder: (currentPath?: string) =>
       ipcRenderer.invoke(Channels.SettingsBrowseFolder, currentPath),
+    inspectOutputDir: (dir: string) => ipcRenderer.invoke(Channels.SettingsInspectOutputDir, dir),
+    revealPath: (dir: string) => ipcRenderer.invoke(Channels.SettingsRevealPath, dir),
     dismissModelSuggestion: () => ipcRenderer.invoke(Channels.SettingsDismissModelSuggestion),
     pullModel: (model: string) => ipcRenderer.invoke(Channels.SettingsPullModel, model),
   },
