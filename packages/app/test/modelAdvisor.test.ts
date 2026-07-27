@@ -11,22 +11,28 @@ import {
 const GB = 1024 * 1024 * 1024;
 
 describe('recommendModelForRam', () => {
-  it('recommends the 35B flagship at 48GB and above', () => {
-    expect(recommendModelForRam(48 * GB).model).toBe('qwen3.6:35b');
+  it('recommends the 35B flagship only with real headroom', () => {
+    expect(recommendModelForRam(64 * GB).model).toBe('qwen3.6:35b');
     expect(recommendModelForRam(128 * GB).model).toBe('qwen3.6:35b');
   });
 
-  it('recommends the 27B dense model for 24-36GB', () => {
-    expect(recommendModelForRam(24 * GB).model).toBe('qwen3.6:27b');
+  it('recommends the 27B dense model from 36GB up', () => {
     expect(recommendModelForRam(36 * GB).model).toBe('qwen3.6:27b');
+    expect(recommendModelForRam(48 * GB).model).toBe('qwen3.6:27b');
   });
 
-  it('recommends the 9B model at 16GB', () => {
-    expect(recommendModelForRam(16 * GB).model).toBe('qwen3.5:9b');
+  it('does NOT recommend a 27B on a 24GB Mac', () => {
+    // Regression: the tiers used to ask "do the weights fit?" and put a
+    // 27B here. Measured on that hardware it swapped to 9.4GB and
+    // generated at 0.57 tok/s — it fits and is unusable.
+    const rec = recommendModelForRam(24 * GB);
+    expect(rec.model).toBe('qwen3.5:9b');
+    expect(rec.model).not.toMatch(/27b|35b/);
   });
 
-  it('recommends the 4B model below 16GB', () => {
-    expect(recommendModelForRam(8 * GB).model).toBe('qwen3.5:4b');
+  it('steps down further on smaller machines', () => {
+    expect(recommendModelForRam(16 * GB).model).toBe('qwen3.5:4b');
+    expect(recommendModelForRam(8 * GB).model).toBe('qwen3.5:2b');
   });
 });
 

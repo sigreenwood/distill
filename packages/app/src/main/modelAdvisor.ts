@@ -19,9 +19,20 @@ export interface ModelRecommendation {
 }
 
 /**
- * Tiers assume the model shares unified memory with macOS, Electron, and
- * MLX Whisper. Rule of thumb: keep resident weights under ~70% of RAM so
- * a 64k-token KV cache and the rest of the system still fit.
+ * Model tiers by unified memory.
+ *
+ * These were originally set by asking "do the weights fit?", which is
+ * the wrong question and produced a badly wrong recommendation. Measured
+ * on a 24GB M5 running qwen3.5:27b (17.4GB weights + ~3.2GB KV at 32k):
+ * it *fits*, reports no error, and generates at **0.57 tokens/sec** —
+ * roughly 35x slower than the same model should manage — with 9.4GB of
+ * swap in use. A 7,400-token summary took 33 minutes.
+ *
+ * The binding constraint is headroom, not capacity. macOS, Electron, the
+ * MLX Whisper model and the page cache need something like 8-9GB between
+ * them; once weights + KV cross what's left, everything pages to disk and
+ * throughput collapses. So each tier now leaves ~8GB clear after weights
+ * and a full-size KV cache.
  *
  * Sizes as of July 2026 (Ollama library):
  *   qwen3.6:35b ≈ 24GB · qwen3.6:27b ≈ 17GB · qwen3.5:9b ≈ 6.6GB ·
@@ -29,24 +40,30 @@ export interface ModelRecommendation {
  */
 const RAM_TIERS: { minGb: number; model: string; reason: string }[] = [
   {
-    minGb: 48,
+    minGb: 60,
     model: 'qwen3.6:35b',
-    reason: '48GB+ unified memory fits the 35B flagship (~24GB resident) with headroom.',
+    reason: '60GB+ runs the 35B flagship (~24GB resident) with room to spare.',
   },
   {
-    minGb: 24,
+    minGb: 36,
     model: 'qwen3.6:27b',
-    reason: '24–36GB fits the 27B dense model (~17GB resident); best quality that leaves room for the system.',
+    reason: '36GB+ runs the 27B dense model (~17GB resident) at full speed with headroom for the system.',
   },
   {
-    minGb: 16,
+    minGb: 20,
     model: 'qwen3.5:9b',
-    reason: '16GB fits the 9B model (~7GB resident) while keeping the Mac responsive during processing.',
+    reason:
+      '20–36GB: the 9B model (~7GB resident) keeps the Mac responsive and generates fast. A 27B technically fits here but swaps hard — measured at 0.57 tokens/sec on a 24GB Mac, some 35x slower than it should be.',
+  },
+  {
+    minGb: 12,
+    model: 'qwen3.5:4b',
+    reason: '12–20GB: the 4B model is the largest that runs without paging.',
   },
   {
     minGb: 0,
-    model: 'qwen3.5:4b',
-    reason: 'Under 16GB, the 4B model is the largest that runs comfortably.',
+    model: 'qwen3.5:2b',
+    reason: 'Under 12GB, the 2B model is the practical ceiling.',
   },
 ];
 
