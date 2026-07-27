@@ -1,6 +1,6 @@
 import type { State } from './state.js';
 
-const TIP_JAR_URL = 'https://buymeacoffee.com/distill';
+export const TIP_JAR_URL = 'https://buymeacoffee.com/distill';
 const TIP_JAR_THRESHOLD = 50;
 const KEY_COUNT = 'tip_jar_completion_count';
 const KEY_BANNER_DISMISSED = 'tip_jar_banner_dismissed';

@@ -2,27 +2,33 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as keytar from 'keytar';
-import type {
-  CredentialStore,
-  PlaudConfig as PlaudConfigData,
-  PlaudCredentials,
-  PlaudTokenData,
-} from '@plaud/core';
+import type { CredentialStore, PlaudCredentials, PlaudTokenData } from '@plaud/core';
 
 const KEYCHAIN_SERVICE = 'distill.plaud';
 const PLAUD_DIR = path.join(os.homedir(), '.plaud');
 const CONFIG_FILE = path.join(PLAUD_DIR, 'config.json');
 
-function readFile(): PlaudConfigData {
+/**
+ * Shape of ~/.plaud/config.json as this store uses it. Unlike the core
+ * PlaudCredentials, `password` is optional here — keychain-mode writes
+ * deliberately omit it from the file (it lives in the Keychain), and it
+ * only appears for legacy installs that haven't migrated yet.
+ */
+interface PlaudFileData {
+  credentials?: Omit<PlaudCredentials, 'password'> & { password?: string };
+  token?: PlaudTokenData;
+}
+
+function readFile(): PlaudFileData {
   try {
     const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
-    return JSON.parse(raw) as PlaudConfigData;
+    return JSON.parse(raw) as PlaudFileData;
   } catch {
     return {};
   }
 }
 
-function writeFile(data: PlaudConfigData): void {
+function writeFile(data: PlaudFileData): void {
   fs.mkdirSync(PLAUD_DIR, { recursive: true, mode: 0o700 });
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
 }

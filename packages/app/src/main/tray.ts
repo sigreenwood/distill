@@ -11,6 +11,7 @@ import {
 import { logsDir } from './paths.js';
 import type { Logger } from './logger.js';
 import type { ProcessingSummary, RecordingStatus, State } from './state.js';
+import { TIP_JAR_URL } from './tipJar.js';
 
 export type TrayState = 'idle' | 'processing' | 'paused' | 'error';
 
@@ -47,8 +48,6 @@ export function computeTrayState(inputs: {
   if (inputs.errorCount > 0) return 'error';
   return 'idle';
 }
-
-const TIP_JAR_URL = 'https://buymeacoffee.com/distill';
 
 export function createTray(ctx: TrayContext): TrayHandle {
   const iconCache = new Map<TrayState, NativeImage>();
