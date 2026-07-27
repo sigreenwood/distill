@@ -64,6 +64,10 @@ export const KEEPALIVE_PRESETS = [
 /** MLX Whisper model presets offered in Settings → Performance. */
 export const WHISPER_MODEL_PRESETS = [
   { value: 'mlx-community/whisper-large-v3-mlx', label: 'Large v3 (best quality, slowest)' },
+  {
+    value: 'mlx-community/whisper-large-v3-turbo',
+    label: 'Large v3 Turbo (near-large quality, much faster)',
+  },
   { value: 'mlx-community/whisper-medium-mlx', label: 'Medium' },
   { value: 'mlx-community/whisper-small-mlx', label: 'Small' },
   { value: 'mlx-community/whisper-base-mlx', label: 'Base' },

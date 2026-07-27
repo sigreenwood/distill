@@ -176,6 +176,48 @@ Real usage will tell which levers are worth pulling.
 
 ---
 
+## Transcription quality — staged plan (Jul 2026)
+
+Agreed after reviewing a proposed
+`DeepFilterNet → Silero VAD → whisper → pyannote → …` pipeline.
+
+**Stage 1 — shipped Jul 2026.** Silero VAD speech gating in
+`transcribe.py` (bundled `silero_vad.onnx` via onnxruntime — torch-free
+on purpose). Non-speech is dropped before Whisper sees it, which
+attacks hallucinations at the cause (the TS-side repetition cleaner
+stays as second line of defence) and cuts transcription time roughly
+in proportion to silence removed. Conservative tuning: 0.35 threshold
+with hysteresis, 200ms padding, 500ms merge gap; join silence capped
+at 2s so paragraph-break logic still works. Falls back to no-VAD with
+a stderr warning if onnxruntime is missing, so old venvs keep working.
+`vad` stats (speech ratio, segments, removed seconds) flow to the app
+log. Also added the `whisper-large-v3-turbo` preset (~5-6× faster,
+small accuracy cost mostly on rare names — the vocabulary system's
+job anyway). VAD + turbo together is the biggest available cut to the
+laggy-laptop problem.
+
+**Eval harness.** `python/ab_compare.py` runs transcribe.py with and
+without VAD over real recordings and reports timing, speech stats,
+and word-level similarity — run it on a few real meetings before
+trusting any transcription change (shakedown-first, as ever).
+
+**Stage 2 — DeepFilterNet, parked until pyannote (v1.2).** Denoising
+before Whisper is *not* a free win: large-v3 is trained on noisy
+audio, and denoiser artifacts can make already-clean (Teams/Zoom)
+recordings transcribe worse. Design when built: `denoise: "auto" |
+"on" | "off"` with a cheap SNR probe deciding "auto"; denoise to a
+temp file (never touch `audio_path`); DFN runs at 48kHz *before* the
+16kHz downsample. Bundle with pyannote because (a) diarisation
+embeddings degrade in noise much faster than Whisper does — DFN's
+real beneficiary — and (b) they share the torch dependency, keeping
+today's venv light.
+
+**Rejected: faster-whisper backend.** CTranslate2 is CPU-only on
+Apple Silicon; MLX keeps the Metal GPU path. Revisit only if MLX
+Whisper stalls as a project.
+
+---
+
 ## Regenerate outputs for a completed recording
 
 Follow-on to the fan-out idempotency work (see [`DECISIONS.md` §1](./DECISIONS.md)).

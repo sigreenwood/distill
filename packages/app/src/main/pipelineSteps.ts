@@ -71,6 +71,14 @@ interface TranscribeOutput {
   text: string;
   model: string;
   language?: string;
+  vad?: {
+    enabled: boolean;
+    total_seconds: number;
+    speech_seconds: number;
+    speech_ratio: number;
+    segments: number;
+    removed_seconds: number;
+  };
 }
 
 export async function doTranscribe(id: string, signal: AbortSignal, ctx: PipelineContext): Promise<void> {
@@ -153,7 +161,10 @@ export async function doTranscribe(id: string, signal: AbortSignal, ctx: Pipelin
     vocabulary_sources: vocab.sources.join(','),
     vocabulary_rules_applied: applied,
   });
-  ctx.logger.info({ id, chars: corrected.length, language: parsed.language }, 'transcription complete');
+  ctx.logger.info(
+    { id, chars: corrected.length, language: parsed.language, vad: parsed.vad ?? null },
+    'transcription complete',
+  );
 }
 
 export function resolvePythonBinary(packageDir: string): string {
