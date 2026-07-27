@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "ollama": {
+    "host": "http://localhost:11434",
+    "model": "qwen2.5:32b",
+    "contextWindow": 65536,
+    "temperature": 0.3,
+    "keepAlive": "5m"
+  },
+  "pollIntervalMinutes": 5,
+  "paused": {
+    "all": false,
+    "polling": false,
+    "download": false,
+    "transcribe": false,
+    "summarise": false
+  },
+  "whisperModel": "mlx-community/whisper-large-v3-mlx",
+  "outputs": {
+    "markdown": {
+      "enabled": true,
+      "dir": "~/Documents/distill",
+      "includeTranscript": true
+    },
+    "html": {
+      "enabled": false,
+      "dir": "~/Documents/distill",
+      "includeTranscript": true
+    },
+    "appleNotes": {
+      "enabled": false,
+      "parentFolder": "distill",
+      "includeTranscript": false
+    }
+  },
+  "audioRetentionDays": 14,
+  "autoDismissCompleteMinutes": 10,
+  "logLevel": "info"
+}

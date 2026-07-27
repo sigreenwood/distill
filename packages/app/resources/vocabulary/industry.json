@@ -1,0 +1,6 @@
+{
+  "$description": "Industry / domain vocabulary applied to every transcription. Use for terms common in your professional field (technical jargon, standards, frameworks). Empty by default; populate via Settings -> Vocabulary or import a JSON file.",
+  "$version": 1,
+  "whisperHints": [],
+  "replacements": []
+}

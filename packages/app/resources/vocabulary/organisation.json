@@ -1,0 +1,6 @@
+{
+  "$description": "Organisation-wide vocabulary applied to every transcription. Use for terms specific to your company (product names, internal acronyms, colleague names). Empty by default; populate via Settings -> Vocabulary or import a JSON file.",
+  "$version": 1,
+  "whisperHints": [],
+  "replacements": []
+}

@@ -1,0 +1,176 @@
+/**
+ * Shared renderer styles. Kept intentionally spare — native-looking panels,
+ * no framework, no CSS-in-JS. This one file is imported from both entry
+ * point HTML files.
+ */
+
+:root {
+  color-scheme: light dark;
+  --bg: #ffffffee;
+  --fg: #1c1c1e;
+  --fg-muted: #6d6d70;
+  --border: #d2d2d7;
+  --accent: #0a84ff;
+  --accent-hover: #0060df;
+  --danger: #ff453a;
+  /* Yellow-amber for non-blocking warnings (e.g. duration-risk hints,
+     truncation badge). Distinct from --danger which is reserved for
+     errors and destructive actions. */
+  --warning: #b58900;
+  --row-hover: #00000008;
+  --panel: #ffffff;
+  --chip: #f0f0f3;
+  --chip-text: #1c1c1e;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #2c2c2eee;
+    --fg: #f5f5f7;
+    --fg-muted: #98989d;
+    --border: #3a3a3c;
+    /* Slightly lighter amber in dark mode so the warning text reads
+       comfortably against a darker background. */
+    --warning: #d6a900;
+    --row-hover: #ffffff08;
+    --panel: #1c1c1e;
+    --chip: #3a3a3c;
+    --chip-text: #f5f5f7;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+/* Buttons, inputs, interactive elements must not participate in window drag. */
+button,
+input,
+select,
+textarea,
+.no-drag,
+[role='button'] {
+  -webkit-app-region: no-drag;
+}
+
+button {
+  font: inherit;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--fg);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+button:hover:not(:disabled) {
+  background: var(--row-hover);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  color: white;
+  border-color: transparent;
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+button.danger {
+  color: var(--danger);
+}
+
+input[type='text'],
+textarea,
+select {
+  font: inherit;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--fg);
+  border-radius: 6px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+input[type='text']:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--accent);
+}
+
+textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  resize: vertical;
+  min-height: 120px;
+}
+
+label {
+  display: block;
+  font-size: 11px;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0;
+}
+
+.muted {
+  color: var(--fg-muted);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.grow {
+  flex-grow: 1;
+  min-width: 0;
+}
+
+.ellipsis {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Spinner animation used by the Inbox processing rows. */
+@keyframes plaud-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

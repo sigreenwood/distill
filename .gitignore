@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.DS_Store
+*.tsbuildinfo
+
+# Private files: real terms, real prompts, real client lists kept locally
+# but never committed. See private/README.md for what goes here and how
+# to re-import on fresh installs.
+private/

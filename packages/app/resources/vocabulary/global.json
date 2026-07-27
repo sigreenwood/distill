@@ -1,0 +1,6 @@
+{
+  "$description": "Global vocabulary applied to every transcription. Add domain-agnostic terms (names, places, products, acronyms) here. See VOCABULARY_GENERATION_PROMPT.md in the docs for a way to generate these from your own notes via an external LLM, then import them via Settings -> Vocabulary -> Import.",
+  "$version": 1,
+  "whisperHints": [],
+  "replacements": []
+}

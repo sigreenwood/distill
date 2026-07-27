@@ -1,0 +1,147 @@
+# electron-builder config for distill.
+#
+# Targets pkg only. Unsigned (this is an internal build for Apple Silicon
+# Macs with 48GB+ RAM, no Apple Developer ID involved).
+#
+# What we ship inside the .app bundle:
+#   - out/                       Electron main + preload + renderers, built by
+#                                electron-vite into packages/app/out/
+#   - python/transcribe.py       The transcription script. Stays small (~5kB),
+#                                runs against the user-installed venv.
+#   - python/requirements.txt    Pip dependency list. Read at first launch by
+#                                the setup flow to install mlx-whisper into
+#                                ~/Library/Application Support/Plaud Local/venv.
+#   - resources/                 Vocabulary JSON files, PROMPTS.md seed data,
+#                                tray icons.
+#   - node_modules               Production deps only. better-sqlite3 and keytar
+#                                are native and need to be rebuilt against
+#                                Electron's ABI before packaging - that's what
+#                                the prepackage script handles.
+#
+# What we deliberately do NOT ship:
+#   - python/.venv/              ~840MB. Each user gets their own venv created
+#                                at first launch. See pythonSetup.ts (commit 2+3
+#                                in this packaging arc).
+#   - python/__pycache__         not user-relevant
+#   - tests, dev configs, source maps
+#
+# Output lands in packages/app/dist/distill-<version>.pkg.
+
+productName: distill
+appId: com.distill.app
+
+# Where the .pkg files land. dist/ is already gitignored.
+directories:
+  output: dist
+  buildResources: build
+
+# What goes inside the app bundle. electron-builder treats node_modules
+# carefully on its own (production deps only); we add the bundled
+# renderer/main output via the explicit out/** path.
+#
+# IMPORTANT: @plaud/core is a workspace dep that ships as raw TypeScript
+# and is bundled INTO out/main/index.js by electron-vite (see the
+# `bundledWorkspacePkgs` array in electron.vite.config.ts). It must NOT
+# be included in the .pkg files list because:
+#   1. The bundled JS already contains its compiled output, so including
+#      it would double up.
+#   2. It's a npm workspace symlink pointing OUT of packages/app/, which
+#      electron-builder's asar packager rejects ('must be under') because
+#      asar requires every file to be physically inside the packaged
+#      directory.
+# The `!node_modules/@plaud` exclusion below handles this. Wildcards
+# need the negation to come AFTER the broader matcher.
+files:
+  - 'out/**/*'
+  - 'package.json'
+  # Native modules need their build artefacts. The default file matcher
+  # ships them but be explicit since we rely on them at runtime.
+  - 'node_modules/better-sqlite3/**/*'
+  - 'node_modules/keytar/**/*'
+  # Exclude the @plaud/core workspace symlink. It's bundled inline by
+  # electron-vite (see comment above) and the symlink would break asar.
+  - '!node_modules/@plaud/**/*'
+
+# Resources that need to live alongside the app bundle, not inside the
+# JS bundle. These are read at runtime via process.resourcesPath
+# (electron-builder convention).
+extraResources:
+  - from: python/transcribe.py
+    to: python/transcribe.py
+  - from: python/requirements.txt
+    to: python/requirements.txt
+  # Resources OTHER than vocabulary. We can't use a single `from:
+  # resources, to: resources` rule any more because that would bundle
+  # the dev-tree vocabulary directory into the .pkg, which is exactly
+  # what we're trying to stop — colleagues should not get the
+  # contributor's populated client/scope vocab on a fresh install.
+  # Listing the other subdirectories explicitly here. If you add a
+  # new resources subdirectory, add it here too.
+  - from: resources/prompts
+    to: resources/prompts
+  - from: resources/icons
+    to: resources/icons
+  - from: resources/example.config.json
+    to: resources/example.config.json
+  # Vocabulary: ship the EMPTY-template files at the path the
+  # runtime expects (resources/vocabulary/). Populated dev-tree
+  # files at packages/app/resources/vocabulary/ are NOT bundled —
+  # they only matter in `npm run dev` mode where they get migrated
+  # into the dev user's appSupportDir on first launch. Fresh
+  # packaged installs get the empty templates instead.
+  - from: resources/vocabulary-template
+    to: resources/vocabulary
+  # PROMPTS.md is intentionally NOT bundled into the .pkg. It's a
+  # contributor-only seed file for whoever ran an older app version
+  # that did seed meeting types from it. Fresh installs should be
+  # blank — no built-in prompts, no "Revert to default" button —
+  # so a colleague gets a neutral environment. A contributor's
+  # existing populated DB still has the prompts and the revert
+  # button still works, but only because PROMPTS.md is at
+  # <repoRoot>/docs/app/ in their dev tree (see findPromptsMarkdown's
+  # dev fallback).
+  #
+  # The vocabulary-generation prompt doc IS bundled — it's a
+  # generic guide colleagues can use to generate their own JSON
+  # vocabulary files via an external LLM, then import via Settings.
+  - from: ../../docs/app/VOCABULARY_GENERATION_PROMPT.md
+    to: resources/VOCABULARY_GENERATION_PROMPT.md
+
+# Native modules need to live OUTSIDE the asar archive. better-sqlite3
+# loads a .node binary via dlopen which doesn't work from inside asar.
+# keytar similarly loads native code. Everything else stays inside asar
+# for the usual size/performance benefits.
+asar: true
+asarUnpack:
+  - node_modules/better-sqlite3/**/*
+  - node_modules/keytar/**/*
+
+mac:
+  # Target one format - pkg-only (single distribution target). Single arch
+  # (arm64) since mlx-whisper is Apple-Silicon-only anyway; an Intel build
+  # would fail at the first transcribe regardless of how clean the install
+  # was.
+  target:
+    - target: pkg
+      arch: arm64
+
+  # Unsigned. Colleagues will need to right-click-Open the first time,
+  # or run `xattr -cr /Applications/distill.app` to clear the quarantine.
+  # If/when this goes wider we'll re-revisit Apple Developer ID.
+  identity: null
+
+  # category for the installer UI
+  category: public.app-category.productivity
+
+  # We don't ship a custom icon yet. electron-builder uses Electron's
+  # default if `icon` is unset. May want to set this later but it's
+  # not blocking.
+
+# .pkg-specific settings.
+pkg:
+  # Install path - the standard Applications folder (rather than per-user
+  # ~/Applications, which most users don't even know exists).
+  installLocation: /Applications
+
+  # No license / readme / welcome screens - keep the installer wizard
+  # short. The user can find help in the app itself.
