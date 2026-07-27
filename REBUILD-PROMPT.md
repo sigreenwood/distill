@@ -84,8 +84,10 @@ After parity is reached, optimise — as suggestions first, applied only when ag
 - Self-maintaining features are suggestion-only, never auto-applied.
 - Mac-only, Apple Silicon. No mic recording, no multi-user, no search UI.
 - **This repo must not live in iCloud Drive.** First step of any new work: confirm the
-  working copy is at a local path (e.g. `~/dev/distill`) with GitHub as the sync/backup,
-  and push early and often — the docs in `docs/app/` currently exist nowhere else.
+  working copy is at a local path (e.g. `~/dev/distill`) with GitHub as the sync/backup
+  (`https://github.com/sigreenwood/distill`, private), and push early and often.
+  Note: `private/` is gitignored — copy `private/MY-VOCAB.md` over manually if starting
+  from a fresh clone.
 
 ## Verification
 
