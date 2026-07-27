@@ -102,8 +102,13 @@ export class PlaudClient {
     try {
       const data = await this.request(`/file/temp-url/${id}?is_opus=false`);
       return data?.url ?? data?.data?.url ?? data?.data ?? data?.temp_url ?? null;
-    } catch {
-      return null;
+    } catch (e) {
+      // 404 = no MP3 rendition exists for this recording; that's an
+      // expected "not available" answer. Anything else (auth, network,
+      // 5xx) is a real failure the caller needs to see.
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/Plaud API error:\s*404\b/i.test(msg)) return null;
+      throw e;
     }
   }
 }
