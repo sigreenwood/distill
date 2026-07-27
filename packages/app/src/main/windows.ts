@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { BrowserWindow, screen, type Rectangle } from 'electron';
-import { Channels } from './ipcChannels.js';
+import { Channels } from '../shared/ipcChannels.js';
 
 export interface WindowsContext {
   preloadPath: string;

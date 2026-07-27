@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { app, dialog, ipcMain, shell, BrowserWindow } from 'electron';
-import { Channels, KEEPALIVE_PRESETS, WHISPER_MODEL_PRESETS } from './ipcChannels.js';
+import { Channels, KEEPALIVE_PRESETS, WHISPER_MODEL_PRESETS } from '../shared/ipcChannels.js';
 import { userVocabularyDir } from './paths.js';
 import { saveConfig, type AppConfig, type OutputsConfig } from './config.js';
 import { hashPrompt, parsePromptsMarkdownDetailed, readSeedPrompt } from './seed.js';

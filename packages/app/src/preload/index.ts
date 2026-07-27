@@ -1,0 +1,114 @@
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
+import { Channels } from '../shared/ipcChannels.js';
+
+/**
+ * The renderer-facing API, exposed as `window.distill`. Every call maps
+ * 1:1 onto an IPC channel; the preload adds no logic beyond argument
+ * plumbing so the contract lives entirely in main/ipc.ts.
+ */
+const api = {
+  inbox: {
+    list: () => ipcRenderer.invoke(Channels.InboxList),
+    skip: (recordingId: string) => ipcRenderer.invoke(Channels.InboxSkip, recordingId),
+    revealInFinder: (recordingId: string) =>
+      ipcRenderer.invoke(Channels.InboxRevealInFinder, recordingId),
+  },
+  pipeline: {
+    cancel: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineCancel, recordingId),
+    retry: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineRetry, recordingId),
+  },
+  tag: {
+    open: (recordingId: string) => ipcRenderer.invoke(Channels.TagOpenSheet, recordingId),
+    save: (payload: { recordingId: string; clientId: string; meetingTypeId: string }) =>
+      ipcRenderer.invoke(Channels.TagSave, payload),
+    getSheetRecordingId: (): string | null => {
+      const arg = process.argv.find((a) => a.startsWith('--recording-id='));
+      return arg ? arg.slice('--recording-id='.length) : null;
+    },
+  },
+  clients: {
+    list: () => ipcRenderer.invoke(Channels.ClientsList),
+    add: (payload: { name: string }) => ipcRenderer.invoke(Channels.ClientsAdd, payload),
+  },
+  meetingTypes: {
+    list: () => ipcRenderer.invoke(Channels.MeetingTypesList),
+    add: (payload: { name: string; prompt: string }) =>
+      ipcRenderer.invoke(Channels.MeetingTypesAdd, payload),
+    delete: (id: string) => ipcRenderer.invoke(Channels.MeetingTypesDelete, id),
+  },
+  localImport: {
+    importPath: (path: string) => ipcRenderer.invoke(Channels.LocalImportPath, path),
+    pickFiles: () => ipcRenderer.invoke(Channels.LocalImportPickFiles),
+    getPathForFile: (file: File): string => {
+      try {
+        return webUtils.getPathForFile(file);
+      } catch {
+        return (file as File & { path?: string }).path ?? '';
+      }
+    },
+  },
+  settings: {
+    load: () => ipcRenderer.invoke(Channels.SettingsLoad),
+    saveOutputs: (payload: unknown) => ipcRenderer.invoke(Channels.SettingsSaveOutputs, payload),
+    savePrompt: (payload: { id: string; prompt: string; name?: string }) =>
+      ipcRenderer.invoke(Channels.SettingsSavePrompt, payload),
+    revertPromptToBuiltin: (id: string) =>
+      ipcRenderer.invoke(Channels.SettingsRevertPromptToBuiltin, id),
+    importPrompts: () => ipcRenderer.invoke(Channels.SettingsImportPrompts),
+    loadVocabulary: (scopeId: string) =>
+      ipcRenderer.invoke(Channels.SettingsLoadVocabulary, scopeId),
+    saveVocabulary: (payload: unknown) =>
+      ipcRenderer.invoke(Channels.SettingsSaveVocabulary, payload),
+    importVocabulary: (scopeId: string) =>
+      ipcRenderer.invoke(Channels.SettingsImportVocabulary, scopeId),
+    exportVocabulary: (scopeId: string) =>
+      ipcRenderer.invoke(Channels.SettingsExportVocabulary, scopeId),
+    saveGeneral: (payload: unknown) => ipcRenderer.invoke(Channels.SettingsSaveGeneral, payload),
+    savePerformance: (payload: unknown) =>
+      ipcRenderer.invoke(Channels.SettingsSavePerformance, payload),
+    listOllamaModels: () => ipcRenderer.invoke(Channels.SettingsListOllamaModels),
+    browseFolder: (currentPath?: string) =>
+      ipcRenderer.invoke(Channels.SettingsBrowseFolder, currentPath),
+  },
+  sources: {
+    signInPlaud: (payload: { email: string; password: string; region: string }) =>
+      ipcRenderer.invoke(Channels.SourcesPlaudSignIn, payload),
+    signOutPlaud: () => ipcRenderer.invoke(Channels.SourcesPlaudSignOut),
+    getPlaudStatus: () => ipcRenderer.invoke(Channels.SourcesPlaudStatus),
+  },
+  app: {
+    openSettings: (opts?: { tab?: string }) => ipcRenderer.invoke(Channels.AppOpenSettings, opts),
+    getTipJarStatus: () => ipcRenderer.invoke(Channels.AppGetTipJarStatus),
+    dismissTipJarBanner: () => ipcRenderer.invoke(Channels.AppDismissTipJarBanner),
+    openTipJar: () => ipcRenderer.invoke(Channels.AppOpenTipJar),
+  },
+  setup: {
+    getStatus: () => ipcRenderer.invoke(Channels.SetupGetStatus),
+    start: () => ipcRenderer.invoke(Channels.SetupStart),
+    quit: () => ipcRenderer.invoke(Channels.SetupQuit),
+  },
+  onInboxChanged: (handler: () => void) => {
+    const wrapped = () => handler();
+    ipcRenderer.on(Channels.PushInboxChanged, wrapped);
+    return () => ipcRenderer.off(Channels.PushInboxChanged, wrapped);
+  },
+  onFocusRecording: (handler: (id: string) => void) => {
+    const wrapped = (_evt: IpcRendererEvent, id: string) => handler(id);
+    ipcRenderer.on(Channels.PushFocusRecording, wrapped);
+    return () => ipcRenderer.off(Channels.PushFocusRecording, wrapped);
+  },
+  onLocalImportProgress: (handler: (p: unknown) => void) => {
+    const wrapped = (_evt: IpcRendererEvent, p: unknown) => handler(p);
+    ipcRenderer.on(Channels.PushLocalImportProgress, wrapped);
+    return () => ipcRenderer.off(Channels.PushLocalImportProgress, wrapped);
+  },
+  onSetupProgress: (handler: (e: unknown) => void) => {
+    const wrapped = (_evt: IpcRendererEvent, e: unknown) => handler(e);
+    ipcRenderer.on(Channels.PushSetupProgress, wrapped);
+    return () => ipcRenderer.off(Channels.PushSetupProgress, wrapped);
+  },
+};
+
+export type DistillApi = typeof api;
+
+contextBridge.exposeInMainWorld('distill', api);
