@@ -212,11 +212,14 @@ function Inbox() {
         percent: null,
         error: null,
       }));
-      setImportQueue((prev) => {
-        const next = [...prev, ...newEntries];
-        importQueueRef.current = next;
-        return next;
-      });
+      // The ref must be updated synchronously, before the loop starts.
+      // This previously assigned it inside a setImportQueue updater —
+      // but React runs updaters during the render phase, i.e. after this
+      // handler returns, so runImportLoop() read a stale ref, found
+      // nothing queued and exited immediately. The entry then sat at
+      // "queued · pending" forever with nothing to restart it.
+      importQueueRef.current = [...importQueueRef.current, ...newEntries];
+      setImportQueue(importQueueRef.current);
       void runImportLoop();
     },
     [runImportLoop],
@@ -226,6 +229,16 @@ function Inbox() {
     importQueueRef.current = importQueueRef.current.filter((e) => e.sourcePath !== sourcePath);
     setImportQueue(importQueueRef.current);
   }, []);
+
+  // Safety net for the same class of problem: if anything ever leaves an
+  // entry queued while the loop isn't running (a throw between enqueue
+  // and start, say), pick it back up rather than stranding it.
+  useEffect(() => {
+    if (importLoopRunningRef.current) return;
+    if (importQueue.some((e) => e.status === 'queued')) {
+      void runImportLoop();
+    }
+  }, [importQueue, runImportLoop]);
 
   const onPickAndImport = useCallback(async () => {
     let paths: string[];
