@@ -23,8 +23,14 @@ export async function downloadCommand(args: string[]): Promise<void> {
   if (mp3Url) {
     console.log('Downloading MP3...');
     const res = await fetch(mp3Url);
-    buffer = await res.arrayBuffer();
-    ext = 'mp3';
+    if (res.ok) {
+      buffer = await res.arrayBuffer();
+      ext = 'mp3';
+    } else {
+      // Temp URL expired or invalid — fall back rather than saving the error page as .mp3
+      console.log(`MP3 URL returned ${res.status}, falling back to direct download...`);
+      buffer = await client.downloadAudio(id);
+    }
   } else {
     console.log('Downloading audio...');
     buffer = await client.downloadAudio(id);

@@ -33,7 +33,7 @@ export async function syncCommand(args: string[]): Promise<void> {
     const content = [
       '---',
       `plaud_id: ${rec.id}`,
-      `title: "${rec.filename}"`,
+      `title: "${(rec.filename ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`,
       `date: ${date}`,
       `duration: ${Math.round(rec.duration / 60000)}m`,
       `source: plaud`,

@@ -136,4 +136,24 @@ describe('PlaudClient', () => {
     expect(recs).toHaveLength(1);
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
+
+  it('gives up after one region redirect instead of looping forever', async () => {
+    // Server keeps reporting a mismatch no matter which region we use
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: -302,
+        data: { domains: { api: 'api.plaud.ai' } },
+      }),
+    });
+
+    await expect(client.listRecordings()).rejects.toThrow(/region mismatch/i);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('throws with the HTTP status on non-ok responses', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 403, json: async () => ({}) });
+
+    await expect(client.listRecordings()).rejects.toThrow('403');
+  });
 });

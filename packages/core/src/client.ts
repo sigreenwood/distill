@@ -17,7 +17,7 @@ export class PlaudClient {
     return BASE_URLS[this.region] ?? BASE_URLS['us'];
   }
 
-  private async request(path: string, options?: { method?: string; headers?: Record<string, string>; body?: string }): Promise<any> {
+  private async request(path: string, options?: { method?: string; headers?: Record<string, string>; body?: string }, redirected = false): Promise<any> {
     const token = await this.auth.getToken();
     const url = `${this.baseUrl}${path}`;
     const res = await this.requester({
@@ -37,11 +37,15 @@ export class PlaudClient {
 
     const data = await res.json();
 
-    // Handle region mismatch
+    // Handle region mismatch. Retry at most once — if the server still
+    // reports a mismatch after switching, retrying again would loop forever.
     if (data?.status === -302 && data?.data?.domains?.api) {
+      if (redirected) {
+        throw new Error(`Plaud API region mismatch persists after redirect (region: ${this.region})`);
+      }
       const domain: string = data.data.domains.api;
       this.region = domain.includes('euc1') ? 'eu' : 'us';
-      return this.request(path, options);
+      return this.request(path, options, true);
     }
 
     return data;
