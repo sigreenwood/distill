@@ -34,5 +34,6 @@
   },
   "audioRetentionDays": 14,
   "autoDismissCompleteMinutes": 10,
+  "initialPollInboxCount": 10,
   "logLevel": "info"
 }

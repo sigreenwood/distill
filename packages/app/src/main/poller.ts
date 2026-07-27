@@ -27,6 +27,30 @@ export interface PollerOptions {
   shouldPause: () => boolean;
   onPoll: (result: PollResult, fresh: PlaudRecording[]) => void;
   loadProcessedElsewhere?: () => Promise<Map<string, ProcessedElsewhereEntry>>;
+  /**
+   * How many of the most recent recordings land in the inbox on the very
+   * first poll of a fresh install. The rest of the back catalogue is
+   * marked skipped. 0 reproduces the original "skip everything" default.
+   */
+  initialPollInboxCount?: () => number;
+}
+
+/**
+ * Pick which recordings go to the inbox on a first poll: the `count` most
+ * recent by start time. Exported for testing — the ordering matters, and
+ * Plaud does not guarantee the list arrives sorted.
+ */
+export function selectInitialInboxIds(
+  recordings: PlaudRecording[],
+  count: number,
+): Set<string> {
+  if (count <= 0) return new Set();
+  return new Set(
+    [...recordings]
+      .sort((a, b) => (b.start_time ?? 0) - (a.start_time ?? 0))
+      .slice(0, count)
+      .map((r) => r.id),
+  );
 }
 
 export class Poller {
@@ -108,15 +132,25 @@ export class Poller {
       }
 
       const isInitialPoll = this.opts.state.getAppState(INITIAL_POLL_KEY) !== 'true';
-      // The very first poll on a fresh install marks everything as skipped —
-      // the user's existing library shouldn't flood the inbox.
-      const initialStatus = isInitialPoll ? ('skipped' as const) : ('inbox' as const);
+      // On the very first poll the user's whole back catalogue arrives at
+      // once — often hundreds of recordings. Keep the most recent few in
+      // the inbox (enough to tag and try the pipeline) and skip the rest,
+      // rather than flooding a UI built for a handful of rows.
+      const initialInboxIds = isInitialPoll
+        ? selectInitialInboxIds(all, this.opts.initialPollInboxCount?.() ?? 0)
+        : null;
 
       const fresh: PlaudRecording[] = [];
       let processedExternallyCount = 0;
       for (const r of all) {
         if (this.opts.state.recordingExists(r.id)) continue;
         const durationSeconds = typeof r.duration === 'number' ? Math.round(r.duration / 1000) : null;
+        const initialStatus =
+          initialInboxIds === null
+            ? ('inbox' as const)
+            : initialInboxIds.has(r.id)
+              ? ('inbox' as const)
+              : ('skipped' as const);
         const elsewhere = initialStatus === 'inbox' ? processedElsewhere.get(r.id) : undefined;
         const rowStatus = elsewhere ? ('complete' as const) : initialStatus;
         if (elsewhere) processedExternallyCount += 1;
@@ -158,9 +192,14 @@ export class Poller {
 
       if (isInitialPoll) {
         this.opts.state.setAppState(INITIAL_POLL_KEY, 'true');
+        const keptInInbox = initialInboxIds?.size ?? 0;
         this.opts.logger.info(
-          { totalSeen: all.length, markedSkipped: all.length },
-          'initial poll complete — existing recordings marked as skipped',
+          {
+            totalSeen: all.length,
+            keptInInbox,
+            markedSkipped: Math.max(0, all.length - keptInInbox),
+          },
+          'initial poll complete — recent recordings kept, back catalogue skipped',
         );
       } else if (processedExternallyCount > 0) {
         this.opts.logger.info(

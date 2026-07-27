@@ -329,6 +329,7 @@ app.whenReady().then(async () => {
         // "don't start new work" signal and emits a `skipped-paused`
         // result without contacting Plaud.
         shouldPause: () => cfg.paused.all || cfg.paused.polling,
+        initialPollInboxCount: () => cfg.initialPollInboxCount,
         // Cross-machine completion lookup. Scans the configured Markdown
         // output dir for files whose frontmatter recording_id matches a
         // recording the poller is about to insert; matches are inserted

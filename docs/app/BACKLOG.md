@@ -46,9 +46,13 @@ Suggestions for what to watch for:
   behaviour that differs from what v0.0.1 did.
 - **Notifications.** Are the "Summary ready" toasts useful or noise?
   Consider batching (one toast per hour) if they pile up.
-- **First-poll catch-up.** Next install on the M5 — does the "skip all
-  existing" behaviour feel right, or do you actually want recent-N to land
-  in the inbox?
+- **First-poll catch-up.** *(Partly answered Jul 2026.)* Hit for real on
+  the M5: a 1000-recording Plaud library going back to Apr 2025 meant
+  "skip all existing" left the inbox stubbornly empty after sign-in.
+  Recent-N now ships as `initialPollInboxCount` (provisional default
+  **10**). **Still to decide before a wider release:** is 10 the right
+  number, and should it be surfaced in Settings rather than
+  config-file-only?
 - **Name / term accuracy.** How often does Whisper mangle
   participant names or industry-specific product names? If it's more
   than once per meeting, the vocabulary work needs another pass (see

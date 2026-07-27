@@ -57,6 +57,16 @@ export interface AppConfig {
   /** null = keep audio forever; otherwise days to keep downloaded audio */
   audioRetentionDays: number | null;
   autoDismissCompleteMinutes: number;
+  /**
+   * How many of the most recent recordings land in the inbox on the very
+   * first poll of a fresh install; the rest of the back catalogue is
+   * skipped. 0 = skip everything (the original behaviour).
+   *
+   * Provisional default of 10 — enough to tag and exercise the pipeline
+   * without drowning the inbox. See the "first-poll catch-up" question in
+   * BACKLOG; settle on a final value before a wider release.
+   */
+  initialPollInboxCount: number;
   logLevel: string;
 }
 
@@ -199,8 +209,14 @@ export function normaliseConfig(cfg: any): AppConfig {
     audioRetentionDays: normaliseAudioRetentionDays(cfg.audioRetentionDays),
     autoDismissCompleteMinutes:
       typeof cfg.autoDismissCompleteMinutes === 'number' ? cfg.autoDismissCompleteMinutes : 10,
+    initialPollInboxCount: normaliseInitialPollInboxCount(cfg.initialPollInboxCount),
     logLevel: cfg.logLevel ?? 'info',
   };
+}
+
+function normaliseInitialPollInboxCount(raw: unknown): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return 10;
+  return Math.floor(raw);
 }
 
 function normaliseAudioRetentionDays(raw: unknown): number | null {
