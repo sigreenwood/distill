@@ -40,12 +40,29 @@ export class PlaudAuth {
       body: body.toString(),
     });
 
-    const data = await res.json() as {
+    // Plaud sits behind Cloudflare, which serves an HTML block page (403)
+    // to requests it thinks are bots — e.g. anything with a default Node
+    // User-Agent. Surface that as a clear error instead of the JSON
+    // parser's "Unexpected token '<'".
+    if (!res.ok) {
+      throw new Error(
+        `Plaud login rejected before reaching the API (HTTP ${res.status}). ` +
+          'This is usually bot protection blocking the client — check the request User-Agent.',
+      );
+    }
+    let data: {
       status: number;
       msg?: string;
       access_token: string;
       token_type: string;
     };
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error(
+        'Plaud login returned a non-JSON response (likely an HTML block or error page).',
+      );
+    }
 
     if (data.status !== 0 || !data.access_token) {
       throw new Error(data.msg || `Login failed (status ${data.status})`);
