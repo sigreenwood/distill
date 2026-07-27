@@ -370,20 +370,15 @@ function Inbox() {
 
   return (
     <Shell {...shellProps} total={headerCount}>
-      {sections.processing.length > 0 && (
-        <Section title="Processing" count={sections.processing.length}>
-          {sections.processing.map((r) => (
-            <ProcessingRow key={r.id} r={r} focused={focusedId === r.id} onCancel={onCancel} />
-          ))}
-        </Section>
-      )}
-      {sections.waiting.length > 0 && (
-        <Section title="Waiting to tag" count={sections.waiting.length}>
-          {sections.waiting.map((r) => (
-            <WaitingRow key={r.id} r={r} focused={focusedId === r.id} onTag={onTag} onSkip={onSkip} />
-          ))}
-        </Section>
-      )}
+      {/*
+        Errors first, deliberately. The tray shows a ⚠ while any row is
+        errored, and the only controls that clear it (Retry / Skip) live
+        on the row itself. This window is a fixed 640px and not
+        resizable, so with a handful of waiting rows above them the
+        error rows fell below the fold — the warning had no reachable
+        way to clear. listActiveJoined already ranks errors first
+        (CASE r.status WHEN 'error' THEN 1); this matches that intent.
+      */}
       {sections.errored.length > 0 && (
         <Section title="Errors" count={sections.errored.length}>
           {sections.errored.map((r) => (
@@ -395,6 +390,20 @@ function Inbox() {
               onSkip={onSkip}
               onOpenSources={onOpenSources}
             />
+          ))}
+        </Section>
+      )}
+      {sections.processing.length > 0 && (
+        <Section title="Processing" count={sections.processing.length}>
+          {sections.processing.map((r) => (
+            <ProcessingRow key={r.id} r={r} focused={focusedId === r.id} onCancel={onCancel} />
+          ))}
+        </Section>
+      )}
+      {sections.waiting.length > 0 && (
+        <Section title="Waiting to tag" count={sections.waiting.length}>
+          {sections.waiting.map((r) => (
+            <WaitingRow key={r.id} r={r} focused={focusedId === r.id} onTag={onTag} onSkip={onSkip} />
           ))}
         </Section>
       )}
