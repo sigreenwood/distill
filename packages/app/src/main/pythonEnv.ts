@@ -57,7 +57,16 @@ export function detectVenv(): VenvStatus {
   if (!/^Python 3\.11\./.test(versionLine)) {
     return { kind: 'wrong-version', pythonPath: py, foundVersion: versionLine };
   }
-  const importResult = spawnSync(py, ['-c', 'import mlx_whisper'], {
+  // Check EVERY package the pipeline needs, not just mlx_whisper.
+  //
+  // This is the upgrade path: a venv created by an older build has
+  // mlx_whisper but not onnxruntime, and if we only tested the former
+  // we would report 'ready', skip setup, and leave VAD silently
+  // disabled — transcription still works, so nothing looks wrong, but
+  // the hallucination suppression and speed-up are quietly absent.
+  // Reporting 'incomplete' instead sends the user through the setup
+  // window, which pip-installs the current requirements.txt.
+  const importResult = spawnSync(py, ['-c', 'import mlx_whisper, onnxruntime'], {
     encoding: 'utf-8',
     timeout: 10_000,
   });
@@ -154,7 +163,7 @@ export async function installVenv(opts: InstallVenvOptions): Promise<InstallVenv
   logger?.info('verifying mlx_whisper import');
   const verifyResult = await spawnLineByLine(
     venvPython(),
-    ['-c', 'import mlx_whisper; print("ok")'],
+    ['-c', 'import mlx_whisper, onnxruntime; print("ok")'],
     { signal, onProgress, phase: 'verifying' },
   );
   if (verifyResult.kind === 'cancelled') return { kind: 'cancelled' };
@@ -162,7 +171,9 @@ export async function installVenv(opts: InstallVenvOptions): Promise<InstallVenv
     return {
       kind: 'failed',
       phase: 'verifying',
-      message: 'Install completed but `import mlx_whisper` still failed. ' + verifyResult.message,
+      message:
+        'Install completed but importing mlx_whisper / onnxruntime still failed. ' +
+        verifyResult.message,
     };
   }
   return { kind: 'success', pythonPath: venvPython() };
