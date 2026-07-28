@@ -4,7 +4,7 @@
     "host": "http://localhost:11434",
     "contextWindow": 65536,
     "temperature": 0,
-    "keepAlive": "5m"
+    "keepAlive": "30m"
   },
   "pollIntervalMinutes": 5,
   "paused": {

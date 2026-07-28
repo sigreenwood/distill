@@ -197,12 +197,14 @@ export function normaliseConfig(cfg: any): AppConfig {
       // Sampling was the entire source of that variance; the prompt was
       // never the problem. Raise this only if you actually want variety.
       temperature: cfg.ollama?.temperature ?? 0,
-      // 5 minutes: long enough that back-to-back summaries reuse the
-      // loaded model, short enough that idle daytime hours get the
-      // ~20GB of unified memory back. See BACKLOG "Performance under
-      // load" for the broader story; this default is the lowest-cost
-      // single change for the laggy-laptop-during-processing problem.
-      keepAlive: cfg.ollama?.keepAlive ?? '5m',
+      // 30 minutes. The old 5-minute default was calibrated for a ~20GB
+      // resident model, where holding it through idle daytime hours was
+      // the difference between a usable laptop and a swapping one. The
+      // recommended models are now sized to leave ~8GB clear (7GB on a
+      // 24GB Mac), so holding one costs little and reloading it on every
+      // meeting costs a chunk of each run. Lower this if you deliberately
+      // run a model too large for the machine.
+      keepAlive: cfg.ollama?.keepAlive ?? '30m',
     },
     pollIntervalMinutes: cfg.pollIntervalMinutes ?? 5,
     paused: normalisePause(cfg.paused),
