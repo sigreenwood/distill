@@ -60,6 +60,84 @@ Suggestions for what to watch for:
 
 ---
 
+## Silent degradation — the theme of the Jul 2026 shakedown
+
+*Logged Jul 2026 after a day of real use.* Almost every bug found that
+day had the same shape: **the app kept working and quietly did the
+wrong thing**. None threw an error the user could act on.
+
+- VAD was shipped but never enabled on an upgraded venv — transcription
+  still worked, so nothing looked wrong.
+- `temperature: 0.3` made four runs of one transcript agree on 18% of
+  named entities. Every individual summary looked fine.
+- A 27B model on 24GB ran at 0.57 tok/s (35x slow) with 9.4GB of swap.
+  No error, just 33-minute summaries.
+- A 64k context killed Ollama mid-request; the row said `fetch failed`.
+- Whisper produced lowercase, unpunctuated transcripts for a meeting's
+  opening because no `initial_prompt` was passed.
+- The Markdown output folder didn't exist, and there was no way to tell
+  whether that was normal or broken.
+
+Each is fixed, but the class isn't. **Proposal: a Health / Diagnostics
+pane in Settings** — one screen answering "what is actually happening?"
+
+- Ollama: reachable, model, resident size vs machine RAM, measured
+  tok/s from the last run, context window, temperature
+- Whisper: model, VAD enabled or not (and why not), last run's speech
+  ratio
+- Python venv: path, packages present or missing
+- Outputs: each destination's resolved path, exists/writable, iCloud or
+  not, count written
+- Plaud: signed in, token expiry, last poll result
+- A "copy diagnostics" button for pasting into a bug report
+
+Most of the underlying checks already exist (`inspectOutputDir`,
+`preflight`, `detectVenv`, `getPlaudAccountStatus`, the `vad` stats in
+the transcript JSON) — this is mostly a surface, not new logic. It
+would have caught five of the six bugs above in seconds.
+
+---
+
+## Live re-connect after a Plaud sign-in
+
+*Hit for real Jul 2026.* Signing in from Settings → Sources stores the
+credentials, then does nothing until the app is restarted: at startup
+`connect()` threw `PlaudNotAuthenticatedError`, so neither the poller
+nor the worker were ever constructed, and signing in later doesn't
+retroactively create them. The app shows a "restart to apply" toast,
+which works but is a poor first-run experience — the most likely moment
+for a new user to conclude the app is broken.
+
+Fix shape: after a successful sign-in, if `poller` is null, run the
+same bootstrap block that `continueBootstrap()` runs — build the Plaud
+client, worker and poller, then kick a poll. Needs care so a second
+sign-in doesn't create a duplicate poller.
+
+---
+
+## Config defaults never reach existing installs
+
+*Noticed Jul 2026 while planning the second-Mac install.* Every config
+value is `cfg.x ?? default`, so improving a default only helps fresh
+installs. A machine that has run distill before keeps `temperature:
+0.3` and `keepAlive: 5m` indefinitely, including the temperature value
+now known to cause 18% run-to-run agreement.
+
+Deliberately NOT auto-migrated: silently rewriting a value the user may
+have chosen is the same trap as the old 32768 -> 65536 context bump,
+which made the setting unfixable by hand.
+
+Options worth weighing:
+1. A `configVersion` field, plus migrations that run once and are
+   recorded, so a given migration can never re-apply.
+2. Surface it instead of changing it: Settings shows "this differs from
+   the recommended value (why)" with a one-click apply.
+
+Option 2 is more in keeping with the suggestion-only rule the project
+already follows for models and prompts.
+
+---
+
 ## Multi-user onboarding — Shape B (non-Plaud user)
 
 Shape A (another Plaud user) is shipped; see appendix.
@@ -224,6 +302,14 @@ Whisper stalls as a project.
 
 ## Regenerate outputs for a completed recording
 
+*Priority dropped Jul 2026:* transcript re-import now covers the common
+case — dragging a summary's `.md` back onto the inbox re-summarises the
+same transcript without re-transcribing, which is what "regenerate"
+was mostly wanted for. What re-import does NOT do is re-run outputs on
+the *same* row (e.g. after changing the output folder, or to re-write
+only Apple Notes after a failure), so this is still worth building —
+just no longer urgent.
+
 Follow-on to the fan-out idempotency work (see [`DECISIONS.md` §1](./DECISIONS.md)).
 Per-destination write timestamps already exist; a "Regenerate outputs"
 action becomes cheap UI work:
@@ -335,7 +421,10 @@ or stay where it is?).
 
 Already planned, kept here as a pointer:
 
-- **v1.1**: `.pkg` installer; Launch on Login
+- **v1.1**: ~~`.pkg` installer~~ (shipped Jul 2026, v0.0.2 onward);
+  **Launch on Login still outstanding** — and it is the one that makes
+  the difference between a menu-bar app that syncs and one that only
+  syncs when you remember to open it.
 - **v1.2**: Diarisation; thumbs-up/down rating
 - **v2**: Self-updating models/prompts; Plaud device USB pulldown fallback.
   *Partially landed early (Jul 2026):* the model half shipped — weekly
