@@ -26,6 +26,7 @@ These documents describe the target end state across all phases. They were writt
 | `04-pipeline.md` | v1.2+ | Full pipeline. The summarise step described there uses Anthropic; swap for Ollama. The Apple Notes + HTML conversion sections are still valid for v1.1. |
 | `05-ui.md` | v1.2+ | Full UI including Settings window, rating, suggestion windows |
 | `06-self-maintaining.md` | v2 | Model update checks + prompt improvement. Updaters now check Ollama registry, not Anthropic + HF. Cheaper reflection since local inference is free. |
+| `PROMPT_GENERATION_PROMPT.md` | any | Meta-prompt for generating meeting-type prompts via an external LLM. Encodes the filename-title contract and the temperature-0 findings. |
 | `07-install.md` | v1.1 | `.pkg` installer, LaunchAgent, first-run wizard — all still relevant |
 | `08-errors-testing.md` | v1.1+ | Error taxonomy, logging, full test strategy |
 

@@ -115,6 +115,10 @@ extraResources:
   # vocabulary files via an external LLM, then import via Settings.
   - from: ../../docs/app/VOCABULARY_GENERATION_PROMPT.md
     to: resources/VOCABULARY_GENERATION_PROMPT.md
+  # Same rationale: a generic, contributor-independent guide for
+  # producing meeting-type prompts via an external LLM.
+  - from: ../../docs/app/PROMPT_GENERATION_PROMPT.md
+    to: resources/PROMPT_GENERATION_PROMPT.md
 
 # Native modules need to live OUTSIDE the asar archive. better-sqlite3
 # loads a .node binary via dlopen which doesn't work from inside asar.
