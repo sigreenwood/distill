@@ -184,7 +184,19 @@ export function normaliseConfig(cfg: any): AppConfig {
       // written in config.json always wins — this only fills the gap.
       model: cfg.ollama?.model ?? recommendModelForRam(os.totalmem()).model,
       contextWindow: resolveContextWindow(cfg.ollama?.contextWindow, os.totalmem()),
-      temperature: cfg.ollama?.temperature ?? 0.3,
+      // Zero, deliberately. Summarising a meeting is an extraction task,
+      // not a creative one: the same transcript should give the same
+      // answer twice. Measured on a real 4,670-token meeting, same model,
+      // same prompt:
+      //   temperature 0.3 — 4 runs agreed on 18% of named entities, 58%
+      //                     appeared in exactly one run, length ranged
+      //                     464-638 words, and half the runs abandoned
+      //                     the prompt's section structure entirely.
+      //   temperature 0   — 3 runs byte-identical, all 8 prompt sections
+      //                     present, action and sentiment formats correct.
+      // Sampling was the entire source of that variance; the prompt was
+      // never the problem. Raise this only if you actually want variety.
+      temperature: cfg.ollama?.temperature ?? 0,
       // 5 minutes: long enough that back-to-back summaries reuse the
       // loaded model, short enough that idle daytime hours get the
       // ~20GB of unified memory back. See BACKLOG "Performance under

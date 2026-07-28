@@ -3,7 +3,7 @@
   "ollama": {
     "host": "http://localhost:11434",
     "contextWindow": 65536,
-    "temperature": 0.3,
+    "temperature": 0,
     "keepAlive": "5m"
   },
   "pollIntervalMinutes": 5,
