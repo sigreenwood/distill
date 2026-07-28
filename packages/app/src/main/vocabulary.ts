@@ -4,6 +4,34 @@ import type { Logger } from './logger.js';
 
 const WHISPER_PROMPT_CHAR_LIMIT = 800;
 
+/**
+ * Style anchor prepended to every transcription.
+ *
+ * Whisper's initial_prompt is not an instruction — the model *continues*
+ * from it, and so imitates its formatting. With no prompt at all, a
+ * crosstalk-heavy opening ("hi there / hi john / hi simon" over each
+ * other) leaves Whisper with nothing to pattern-match and it settles
+ * into lowercase, unpunctuated output for the first stretch of the
+ * meeting.
+ *
+ * Measured on a real call's first 90 seconds, large-v3-turbo:
+ *   no prompt      — 0.6% uppercase,  0 sentence marks
+ *                    "hi there hi john hi simon hi rs good afternoon"
+ *   style anchor   — 9.9% uppercase, 12 sentence marks
+ *                    "Hi there. Hi John. Hi Simon. Hi Aris. Good afternoon."
+ *   hints + anchor — 12.2% uppercase, 19 sentence marks
+ *
+ * Note "hi rs" became "Hi Aris": anchoring the style recovered a name
+ * outright, so this is an accuracy fix and not only a cosmetic one.
+ *
+ * Deliberately written AS well-formed meeting speech rather than as an
+ * instruction about formatting, because demonstration is what Whisper
+ * responds to. Kept short and generic so there is little for the model
+ * to echo into the transcript.
+ */
+const WHISPER_STYLE_ANCHOR =
+  "Good morning, everyone. Thanks for joining. Let's start with the agenda, then the technical items.";
+
 export interface VocabularyReplacement {
   from: string;
   to: string;
@@ -58,12 +86,18 @@ export function loadVocabulary(vocabularyDir: string, clientId?: string | null):
  * accuracy). Hints are dropped from the tail when over budget.
  */
 export function buildWhisperPrompt(hints: string[]): string {
-  if (hints.length === 0) return '';
-  const trailer = '. This is a business meeting.';
+  // Always return a prompt. Even with no vocabulary configured the style
+  // anchor earns its place — see WHISPER_STYLE_ANCHOR for the numbers.
+  const trailer = ` ${WHISPER_STYLE_ANCHOR}`;
+  if (hints.length === 0) return WHISPER_STYLE_ANCHOR;
+
   const hintList = hints.join(', ');
-  const full = `${hintList}${trailer}`;
+  const full = `${hintList}.${trailer}`;
   if (full.length <= WHISPER_PROMPT_CHAR_LIMIT) return full;
-  const budget = WHISPER_PROMPT_CHAR_LIMIT - trailer.length;
+
+  // Over budget: drop hints from the tail, never the anchor, since the
+  // anchor is what keeps the transcript readable.
+  const budget = WHISPER_PROMPT_CHAR_LIMIT - trailer.length - 1;
   const kept: string[] = [];
   let used = 0;
   for (const h of hints) {
@@ -72,14 +106,8 @@ export function buildWhisperPrompt(hints: string[]): string {
     kept.push(h);
     used += cost;
   }
-  if (kept.length === 0) {
-    return hints[0].slice(0, WHISPER_PROMPT_CHAR_LIMIT);
-  }
-  const list = kept.join(', ');
-  if (list.length + trailer.length <= WHISPER_PROMPT_CHAR_LIMIT) {
-    return `${list}${trailer}`;
-  }
-  return list;
+  if (kept.length === 0) return WHISPER_STYLE_ANCHOR;
+  return `${kept.join(', ')}.${trailer}`;
 }
 
 export function readVocabularyFile(vocabularyDir: string, scopeId: string): VocabularyFile {
