@@ -34,6 +34,7 @@ import {
 } from './pythonEnv.js';
 import type { KeychainCredentialStore } from './keychain.js';
 import type { Logger } from './logger.js';
+import { stepPlanFor } from './state.js';
 import type {
   ClientRow,
   JoinedRecordingRow,
@@ -98,6 +99,46 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       return;
     }
     throw new Error('No output written yet for this recording');
+  });
+
+  ipcMain.handle(Channels.InboxRevealOutput, (_evt, recordingId, kind) => {
+    if (typeof recordingId !== 'string') throw new Error('recordingId must be a string');
+    if (kind !== 'markdown' && kind !== 'html' && kind !== 'appleNote') {
+      throw new Error(`Unknown output kind: ${String(kind)}`);
+    }
+    const row = ctx.state.getRecording(recordingId);
+    if (!row) throw new Error(`No such recording: ${recordingId}`);
+    if (kind === 'appleNote') {
+      if (!row.apple_note_written_at) throw new Error('No Apple Note was written for this recording');
+      // Notes has no per-note URL scheme we can rely on across macOS
+      // versions, so open the app and let the user's folder do the rest.
+      void shell.openExternal('notes://');
+      return;
+    }
+    const p = kind === 'markdown' ? row.markdown_path : row.html_path;
+    const written = kind === 'markdown' ? row.markdown_written_at : row.html_written_at;
+    if (!p || !written) throw new Error(`No ${kind} file was written for this recording`);
+    if (!fs.existsSync(p)) {
+      throw new Error(`The ${kind} file is no longer at ${p} — it may have been moved or deleted.`);
+    }
+    shell.showItemInFolder(p);
+  });
+
+  ipcMain.handle(Channels.InboxListHidden, () => {
+    return {
+      total: ctx.state.hiddenCount(),
+      items: ctx.state.listHiddenJoined().map(toInboxDTO),
+    };
+  });
+
+  ipcMain.handle(Channels.InboxUnhide, (_evt, recordingId) => {
+    if (typeof recordingId !== 'string') throw new Error('recordingId must be a string');
+    const next = ctx.state.unhideRecording(recordingId);
+    if (!next) throw new Error('That recording is not hidden');
+    ctx.logger.info({ recordingId, status: next }, 'recording unhidden');
+    ctx.onStateChanged?.();
+    broadcastInboxChanged();
+    return { status: next };
   });
 
   ipcMain.handle(Channels.TagSave, (_evt, payload) => {
@@ -889,6 +930,9 @@ function describeVenvStatus(status: VenvStatus): string {
 // --- DTO mappers -----------------------------------------------------------
 
 export function toInboxDTO(r: JoinedRecordingRow) {
+  const currentStep = statusToStep(r.status);
+  const plan = stepPlanFor(r);
+  const idx = currentStep ? plan.indexOf(currentStep) : -1;
   return {
     id: r.id,
     filename: r.filename,
@@ -896,7 +940,19 @@ export function toInboxDTO(r: JoinedRecordingRow) {
     start_time: r.start_time,
     synced_at: r.synced_at,
     status: r.status,
-    currentStep: statusToStep(r.status),
+    currentStep,
+    // Progress as "2 of 4" rather than a bare step name. The total
+    // varies by source — an imported transcript really does only have
+    // two steps — so it is computed per row, not hardcoded.
+    stepIndex: idx >= 0 ? idx + 1 : null,
+    stepTotal: plan.length,
+    // Which destinations actually produced a file, so the row can offer
+    // a link per format and grey out the rest.
+    outputs: {
+      markdown: r.markdown_written_at !== null ? r.markdown_path : null,
+      html: r.html_written_at !== null ? r.html_path : null,
+      appleNote: r.apple_note_written_at !== null ? r.apple_note_id : null,
+    },
     clientName: r.client_name,
     meetingTypeName: r.meeting_type_name,
     error: r.error,

@@ -434,7 +434,145 @@ function Inbox() {
           ))}
         </Section>
       )}
+      <HiddenSection onChanged={() => void refresh()} />
     </Shell>
+  );
+}
+
+/**
+ * Hidden (skipped) recordings, collapsed by default and only loaded
+ * when opened — on a fresh install this contains the entire back
+ * catalogue the first poll skipped, which is hundreds of rows.
+ *
+ * Hiding used to be one-way, which made "Hide" a decision you couldn't
+ * revisit. Unhiding returns a recording to the inbox, or to Recent if
+ * it had already produced output.
+ */
+function HiddenSection({ onChanged }: { onChanged: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [state, setState] = useState<{ total: number; items: InboxItemDTO[] } | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setState(await window.distill.inbox.listHidden());
+    } catch (e) {
+      console.warn('failed to list hidden recordings', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (open && state === null) void load();
+  }, [open, state, load]);
+
+  const onUnhide = useCallback(
+    async (id: string) => {
+      setBusy(id);
+      try {
+        await window.distill.inbox.unhide(id);
+        await load();
+        onChanged();
+      } catch (e) {
+        alert(`Could not unhide: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        setBusy(null);
+      }
+    },
+    [load, onChanged],
+  );
+
+  return (
+    <section>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          appearance: 'none',
+          WebkitAppearance: 'none',
+          border: 'none',
+          margin: 0,
+          textAlign: 'left',
+          font: 'inherit',
+          display: 'block',
+          width: '100%',
+          boxSizing: 'border-box',
+          cursor: 'pointer',
+          padding: '8px 14px 4px',
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: '0.05em',
+          textTransform: 'uppercase',
+          color: 'var(--fg-muted)',
+          borderTop: '1px solid var(--border)',
+          background: 'var(--row-hover)',
+        }}
+        aria-expanded={open}
+      >
+        <span
+          aria-hidden="true"
+          style={{
+            display: 'inline-block',
+            width: 10,
+            marginRight: 4,
+            transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
+            transition: 'transform 120ms',
+          }}
+        >
+          ▸
+        </span>
+        Hidden {state && <span style={{ fontWeight: 400 }}>· {state.total}</span>}
+      </button>
+      {open && (
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+          {state === null && (
+            <li className="muted" style={{ padding: '10px 14px', fontSize: 11 }}>
+              Loading…
+            </li>
+          )}
+          {state?.items.length === 0 && (
+            <li className="muted" style={{ padding: '10px 14px', fontSize: 11 }}>
+              Nothing hidden.
+            </li>
+          )}
+          {state?.items.map((r) => (
+            <li
+              key={r.id}
+              style={{
+                padding: '8px 14px',
+                borderBottom: '1px solid var(--border)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="ellipsis" style={{ fontSize: 12 }}>
+                  {r.filename}
+                </div>
+                <div className="muted" style={{ fontSize: 10 }}>
+                  {formatWhen(r.start_time, r.synced_at)}
+                  {r.outputs.markdown || r.outputs.html || r.outputs.appleNote
+                    ? ' · already summarised'
+                    : ''}
+                </div>
+              </div>
+              <button
+                onClick={() => void onUnhide(r.id)}
+                disabled={busy === r.id}
+                style={{ fontSize: 11 }}
+              >
+                {busy === r.id ? 'Restoring…' : 'Unhide'}
+              </button>
+            </li>
+          ))}
+          {state && state.total > state.items.length && (
+            <li className="muted" style={{ padding: '8px 14px', fontSize: 10, fontStyle: 'italic' }}>
+              Showing the {state.items.length} most recent of {state.total}.
+            </li>
+          )}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -691,7 +829,13 @@ function MetaLine({ r }: { r: InboxItemDTO }) {
 
 function ProcessingRow(props: { r: InboxItemDTO; focused: boolean; onCancel: (id: string) => void }) {
   const { r } = props;
-  const stepLabel = r.status === 'tagged' ? 'Queued' : humanStep(r.currentStep) + '…';
+  // "2/4 Transcribing…" — the total comes from the row's own plan, so an
+  // imported transcript honestly reads "1/2 Summarising…" rather than
+  // pretending it skipped two steps.
+  const stepLabel =
+    r.status === 'tagged'
+      ? `Queued · ${r.stepTotal} step${r.stepTotal === 1 ? '' : 's'}`
+      : `${r.stepIndex ?? '?'}/${r.stepTotal} ${humanStep(r.currentStep)}…`;
   return (
     <Row id={r.id} focused={props.focused}>
       <Title r={r} />
@@ -741,9 +885,11 @@ function WaitingRow(props: {
       )}
       <div className="row">
         <button className="primary" onClick={() => props.onTag(props.r.id)}>
-          Tag &amp; process
+          Process…
         </button>
-        <button onClick={() => void props.onSkip(props.r.id)}>Skip</button>
+        <button onClick={() => void props.onSkip(props.r.id)} title="Hide this recording. You can bring it back from Hidden.">
+          Hide
+        </button>
       </div>
     </Row>
   );
@@ -784,7 +930,9 @@ function ErrorRow(props: {
           </button>
         )}
         {props.r.isAuthError && <button onClick={() => props.onRetry(props.r.id)}>Retry</button>}
-        <button onClick={() => void props.onSkip(props.r.id)}>Skip</button>
+        <button onClick={() => void props.onSkip(props.r.id)} title="Hide this recording. You can bring it back from Hidden.">
+          Hide
+        </button>
       </div>
     </Row>
   );
@@ -807,7 +955,9 @@ function CancelledRow(props: {
         <button className="primary" onClick={() => props.onRetry(props.r.id)}>
           Resume
         </button>
-        <button onClick={() => void props.onSkip(props.r.id)}>Dismiss</button>
+        <button onClick={() => void props.onSkip(props.r.id)} title="Hide this recording. You can bring it back from Hidden.">
+          Hide
+        </button>
       </div>
     </Row>
   );
@@ -875,13 +1025,65 @@ function CompleteRow(props: {
           {vocabLine}
         </div>
       )}
+      <OutputLinks r={r} />
       <div className="row">
-        <button className="primary" onClick={() => props.onReveal(r.id)}>
-          Reveal in Finder
+        <button onClick={() => void props.onSkip(r.id)} title="Hide this recording. You can bring it back from Hidden.">
+          Hide
         </button>
-        <button onClick={() => void props.onSkip(r.id)}>Dismiss</button>
       </div>
     </Row>
+  );
+}
+
+/**
+ * One control per output destination. Written destinations are
+ * clickable and open the file; unwritten ones stay visible but greyed,
+ * so you can tell at a glance that (say) Apple Notes was configured and
+ * did not land, rather than never having been asked for.
+ */
+function OutputLinks({ r }: { r: InboxItemDTO }) {
+  const items: { kind: 'markdown' | 'html' | 'appleNote'; label: string; value: string | null }[] = [
+    { kind: 'markdown', label: 'MD', value: r.outputs.markdown },
+    { kind: 'html', label: 'HTML', value: r.outputs.html },
+    { kind: 'appleNote', label: 'Notes', value: r.outputs.appleNote },
+  ];
+  return (
+    <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' }}>
+      {items.map(({ kind, label, value }) => {
+        const written = value !== null;
+        return (
+          <button
+            key={kind}
+            disabled={!written}
+            onClick={() =>
+              void window.distill.inbox
+                .revealOutput(r.id, kind)
+                .catch((e) => alert(String(e instanceof Error ? e.message : e)))
+            }
+            title={
+              written
+                ? kind === 'appleNote'
+                  ? 'Open Notes'
+                  : `Show in Finder: ${value}`
+                : `No ${label} output was written for this recording`
+            }
+            style={{
+              fontSize: 10,
+              padding: '2px 8px',
+              borderRadius: 3,
+              border: '1px solid var(--border)',
+              background: 'transparent',
+              color: written ? 'var(--accent, #3b82f6)' : 'var(--fg-muted)',
+              opacity: written ? 1 : 0.45,
+              cursor: written ? 'pointer' : 'default',
+            }}
+          >
+            {written ? '↗ ' : ''}
+            {label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

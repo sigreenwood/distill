@@ -276,7 +276,7 @@ function Tag() {
             saving || !selectedClientId || !selectedMeetingTypeId || addClient.open || addMeetingType.open
           }
         >
-          {saving ? 'Saving…' : 'Save & process'}
+          {saving ? 'Starting…' : 'Process'}
         </button>
       </div>
     </div>,
@@ -293,7 +293,7 @@ function wrap(children: React.ReactNode) {
           fontWeight: 600,
         }}
       >
-        Tag recording
+        Process recording
       </header>
       <main style={{ flexGrow: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
         {children}

@@ -91,6 +91,27 @@ export type DeleteMeetingTypeResult =
   | { kind: 'not-found' }
   | { kind: 'builtin' };
 
+/**
+ * The steps this recording has to go through, in order.
+ *
+ * Not every recording needs all four: a Plaud recording is downloaded
+ * then transcribed, a dragged-in audio file skips the download, and an
+ * imported transcript skips straight to summarising. The inbox uses
+ * this to show honest progress ("1/2 Summarising…" rather than
+ * "3/4"), so the count has to reflect the actual work.
+ */
+export function stepPlanFor(row: RecordingRow): PipelineStep[] {
+  const transcriptOnly =
+    row.source === 'local' && row.audio_path === null && row.transcript_text !== null;
+  const plan: PipelineStep[] = [];
+  if (!transcriptOnly) {
+    if (row.source === 'plaud') plan.push('download');
+    plan.push('transcribe');
+  }
+  plan.push('summarise', 'write');
+  return plan;
+}
+
 export function nextNeededStep(row: RecordingRow): PipelineStep {
   // Transcript first: a row that already has text needs no audio at all.
   // Imported transcripts (from a previous Markdown output or a .txt) have
@@ -795,6 +816,48 @@ export class State {
       .prepare("SELECT COUNT(*) as n FROM recordings WHERE status = 'inbox'")
       .get() as { n: number } | undefined;
     return row?.n ?? 0;
+  }
+
+  /**
+   * Hidden (skipped) recordings, newest first. Includes the back
+   * catalogue the first poll skipped, so it is limited by default —
+   * a thousand rows is a list nobody reads.
+   */
+  listHiddenJoined(limit = 50): JoinedRecordingRow[] {
+    return this.db
+      .prepare(`${this.joinSelect} WHERE r.status = 'skipped' ORDER BY r.updated_at DESC LIMIT ?`)
+      .all(limit) as JoinedRecordingRow[];
+  }
+
+  hiddenCount(): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) as n FROM recordings WHERE status = 'skipped'")
+      .get() as { n: number } | undefined;
+    return row?.n ?? 0;
+  }
+
+  /**
+   * Bring a hidden recording back. A row that already produced output
+   * returns to `complete` so its files stay reachable; anything else
+   * goes back to `inbox` to be processed. Returns the new status, or
+   * undefined if the row wasn't hidden.
+   */
+  unhideRecording(id: string): RecordingStatus | undefined {
+    return this.db.transaction((): RecordingStatus | undefined => {
+      const row = this.db
+        .prepare("SELECT * FROM recordings WHERE id = ? AND status = 'skipped'")
+        .get(id) as RecordingRow | undefined;
+      if (!row) return undefined;
+      const hasOutput =
+        row.markdown_written_at !== null ||
+        row.html_written_at !== null ||
+        row.apple_note_written_at !== null;
+      const next: RecordingStatus = hasOutput ? 'complete' : 'inbox';
+      this.db
+        .prepare('UPDATE recordings SET status = ?, updated_at = ? WHERE id = ?')
+        .run(next, Date.now(), id);
+      return next;
+    })();
   }
 
   /** Ids of every errored recording, newest failure first. */

@@ -27,6 +27,16 @@ export interface InboxItemDTO {
   synced_at: number;
   status: RecordingStatus;
   currentStep: PipelineStep | null;
+  /** 1-based position in this recording's own step plan, null when idle. */
+  stepIndex: number | null;
+  /** Total steps for this recording — 4 for Plaud, 2 for an imported transcript. */
+  stepTotal: number;
+  /** Path or id per destination; null where nothing was written. */
+  outputs: {
+    markdown: string | null;
+    html: string | null;
+    appleNote: string | null;
+  };
   clientName: string | null;
   meetingTypeName: string | null;
   error: string | null;
@@ -199,6 +209,9 @@ export interface DistillApi {
     list(): Promise<InboxItemDTO[]>;
     skip(recordingId: string): Promise<void>;
     revealInFinder(recordingId: string): Promise<void>;
+    revealOutput(recordingId: string, kind: 'markdown' | 'html' | 'appleNote'): Promise<void>;
+    listHidden(): Promise<{ total: number; items: InboxItemDTO[] }>;
+    unhide(recordingId: string): Promise<{ status: RecordingStatus }>;
   };
   pipeline: {
     cancel(recordingId: string): Promise<void>;

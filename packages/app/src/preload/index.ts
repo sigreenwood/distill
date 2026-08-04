@@ -12,6 +12,10 @@ const api = {
     skip: (recordingId: string) => ipcRenderer.invoke(Channels.InboxSkip, recordingId),
     revealInFinder: (recordingId: string) =>
       ipcRenderer.invoke(Channels.InboxRevealInFinder, recordingId),
+    revealOutput: (recordingId: string, kind: 'markdown' | 'html' | 'appleNote') =>
+      ipcRenderer.invoke(Channels.InboxRevealOutput, recordingId, kind),
+    listHidden: () => ipcRenderer.invoke(Channels.InboxListHidden),
+    unhide: (recordingId: string) => ipcRenderer.invoke(Channels.InboxUnhide, recordingId),
   },
   pipeline: {
     cancel: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineCancel, recordingId),

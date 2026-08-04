@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { selectInitialInboxIds } from '../src/main/poller.js';
+import { stepPlanFor } from '../src/main/state.js';
+import type { RecordingRow } from '../src/main/state.js';
 import type { PlaudRecording } from '@plaud/core';
 
 function rec(id: string, startTime: number): PlaudRecording {
@@ -40,5 +42,37 @@ describe('selectInitialInboxIds', () => {
     const input = [...recordings];
     selectInitialInboxIds(input, 3);
     expect(input.map((r) => r.id)).toEqual(recordings.map((r) => r.id));
+  });
+});
+
+describe('stepPlanFor', () => {
+  const base = { source: 'plaud', audio_path: null, transcript_text: null } as unknown as RecordingRow;
+
+  it('gives a Plaud recording all four steps', () => {
+    expect(stepPlanFor(base)).toEqual(['download', 'transcribe', 'summarise', 'write']);
+  });
+
+  it('skips download for a dragged-in audio file', () => {
+    const local = { ...base, source: 'local', audio_path: '/a.mp3' } as RecordingRow;
+    expect(stepPlanFor(local)).toEqual(['transcribe', 'summarise', 'write']);
+  });
+
+  it('gives an imported transcript only two steps', () => {
+    // The whole point of transcript re-import is skipping the expensive
+    // half; the progress counter should say so rather than claiming 4.
+    const imported = {
+      ...base,
+      source: 'local',
+      audio_path: null,
+      transcript_text: 'words',
+    } as RecordingRow;
+    expect(stepPlanFor(imported)).toEqual(['summarise', 'write']);
+  });
+
+  it('keeps download in the plan for a Plaud row already downloaded', () => {
+    // Total must stay stable as a row progresses, or the counter would
+    // renumber itself mid-flight.
+    const mid = { ...base, audio_path: '/a.mp3' } as RecordingRow;
+    expect(stepPlanFor(mid)).toHaveLength(4);
   });
 });
