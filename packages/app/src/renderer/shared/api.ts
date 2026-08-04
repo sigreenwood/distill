@@ -156,10 +156,19 @@ export interface ModelPullProgressDTO {
   percent: number | null;
 }
 
+export interface VocabularyBudgetDTO {
+  limit: number;
+  used: number;
+  hintsAvailable: number;
+  hintsUsed: number;
+  droppedExamples: string[];
+}
+
 export interface SettingsDTO {
   outputs: OutputsDTO;
   prompts: MeetingTypeDTO[];
   vocabularyScopes: VocabularyScopeDTO[];
+  vocabularyBudget: VocabularyBudgetDTO;
   general: GeneralDTO;
   performance: PerformanceDTO;
   sources: SourcesDTO;

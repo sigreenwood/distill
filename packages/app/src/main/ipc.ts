@@ -12,6 +12,7 @@ import { openSettings, openTagSheet } from './windows.js';
 import { importLocalFile, LocalImportError, type LocalImportProgress } from './localImport.js';
 import {
   BUILTIN_SCOPE_IDS,
+  loadVocabulary,
   countVocabularyTerms,
   isBuiltinScopeId,
   parseVocabularyMarkdownTables,
@@ -316,6 +317,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       },
       prompts: ctx.state.listMeetingTypes().map(toMeetingTypeDTO),
       vocabularyScopes: listVocabularyScopes(ctx),
+      vocabularyBudget: vocabularyBudget(ctx),
       general: toGeneralDTO(cfg),
       performance: toPerformanceDTO(cfg),
       sources: toSourcesDTO(ctx),
@@ -1059,6 +1061,32 @@ function listVocabularyScopes(ctx: IpcContext) {
     scopes.push(scopeSummary(ctx, client.id, readVocabularyFile(dir, client.id)));
   }
   return scopes;
+}
+
+/**
+ * How much of the vocabulary Whisper can actually use.
+ *
+ * The scopes are just folders for managing keywords — they carry no
+ * special meaning — but they all merge into one prompt with a hard
+ * 800-character limit. Beyond that, terms are silently ignored, which
+ * is invisible while curating lists in four separate files.
+ */
+function vocabularyBudget(ctx: IpcContext) {
+  const dir = vocabularyDirFor();
+  // Worst case is a client meeting: its scope plus all three shared ones.
+  const clientIds = ctx.state.listClients().map((c) => c.id).filter((id) => !isBuiltinScopeId(id));
+  let worst = loadVocabulary(dir, null);
+  for (const id of clientIds) {
+    const v = loadVocabulary(dir, id);
+    if (v.hintsDropped.length > worst.hintsDropped.length) worst = v;
+  }
+  return {
+    limit: 800,
+    used: worst.whisperPrompt.length,
+    hintsAvailable: worst.hintsAvailable,
+    hintsUsed: worst.hintsUsed,
+    droppedExamples: worst.hintsDropped.slice(0, 12),
+  };
 }
 
 function scopeSummary(ctx: IpcContext, scopeId: string, file: VocabularyFile) {

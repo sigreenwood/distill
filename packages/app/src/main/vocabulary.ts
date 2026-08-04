@@ -50,19 +50,49 @@ export interface LoadedVocabulary {
   whisperPrompt: string;
   replacements: VocabularyReplacement[];
   sources: string[];
+  /** Distinct hints across all scopes, after case-insensitive dedupe. */
+  hintsAvailable: number;
+  /** How many actually fitted in Whisper's 800-character prompt. */
+  hintsUsed: number;
+  /** Hints that did not fit and were therefore not used at all. */
+  hintsDropped: string[];
+  /**
+   * Replacement rules whose `from` collides with an earlier rule's.
+   *
+   * Matching is case-insensitive, so rules chain rather than compete:
+   * `sim -> SIM` followed by `sim -> CIM` produces CIM, because the
+   * second rule re-matches what the first just wrote. Whichever file
+   * loads last quietly wins, which is not obvious when the rules live
+   * in different scopes.
+   */
+  conflictingRules: { from: string; winner: string; overridden: string[] }[];
 }
 
 /**
- * Merge the built-in scopes (global, organisation, industry) plus the
- * per-client file when a client id is given. Missing files are fine;
- * malformed JSON is an error the pipeline surfaces.
+ * Merge the vocabulary scopes into one flat list.
+ *
+ * The scopes carry no special meaning — they exist so keywords can be
+ * managed in separate files, and every term ends up in the same prompt.
+ * Order matters for exactly one reason: Whisper's prompt is capped at
+ * 800 characters and overflow is dropped from the tail. Loading the
+ * broad scopes first meant per-client terms — the ones most likely to
+ * matter for the meeting actually being transcribed — were discarded
+ * first. Demonstrated with a plausible setup (60 global + 60
+ * organisation + 40 industry + 5 client terms): all five client terms
+ * were dropped and the budget went entirely to generic ones. Loading
+ * narrowest-first makes the truncation sacrifice the least specific
+ * terms instead.
+ *
+ * Missing files are fine; malformed JSON is an error the pipeline
+ * surfaces.
  */
 export function loadVocabulary(vocabularyDir: string, clientId?: string | null): LoadedVocabulary {
   const sources: string[] = [];
   const hints: string[] = [];
   const replacements: VocabularyReplacement[] = [];
-  const files = ['global.json', 'organisation.json', 'industry.json'];
+  const files: string[] = [];
   if (clientId) files.push(`${clientId}.json`);
+  files.push('organisation.json', 'industry.json', 'global.json');
   for (const filename of files) {
     const p = path.join(vocabularyDir, filename);
     if (!fs.existsSync(p)) continue;
@@ -75,9 +105,51 @@ export function loadVocabulary(vocabularyDir: string, clientId?: string | null):
       throw new Error(`Invalid vocabulary file ${p}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  const uniqueHints = Array.from(new Set(hints));
+  // Deduplicate case-insensitively, keeping the first — i.e. the most
+  // specific scope's spelling. "PEGA" and "Pega" are the same term to
+  // Whisper but two charges against an 800-character budget, and real
+  // transcripts contain both.
+  const seen = new Set<string>();
+  const uniqueHints: string[] = [];
+  for (const h of hints) {
+    const key = h.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniqueHints.push(h);
+  }
   const whisperPrompt = buildWhisperPrompt(uniqueHints);
-  return { whisperPrompt, replacements, sources };
+  // The 800-character cap is Whisper's, not ours, and it is enforced
+  // silently. Someone curating keywords across several files has no way
+  // to know they have passed the point where new terms stop having any
+  // effect, so report it rather than leaving it to be discovered.
+  const hintsDropped = uniqueHints.filter((h) => !whisperPrompt.includes(h));
+
+  // Rules sharing a `from` chain instead of competing, so the last one
+  // loaded silently decides the result. Report rather than resolve:
+  // picking a winner would be hidden logic, and the fix belongs in
+  // whichever file the author didn't mean to write.
+  const byFrom = new Map<string, VocabularyReplacement[]>();
+  for (const r of replacements) {
+    const key = r.from.toLowerCase();
+    byFrom.set(key, [...(byFrom.get(key) ?? []), r]);
+  }
+  const conflictingRules = [...byFrom.values()]
+    .filter((rules) => rules.length > 1 && new Set(rules.map((r) => r.to)).size > 1)
+    .map((rules) => ({
+      from: rules[0].from,
+      winner: rules[rules.length - 1].to,
+      overridden: rules.slice(0, -1).map((r) => r.to),
+    }));
+
+  return {
+    whisperPrompt,
+    replacements,
+    sources,
+    hintsAvailable: uniqueHints.length,
+    hintsUsed: uniqueHints.length - hintsDropped.length,
+    hintsDropped,
+    conflictingRules,
+  };
 }
 
 /**

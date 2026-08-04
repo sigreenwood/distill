@@ -95,10 +95,30 @@ export async function doTranscribe(id: string, signal: AbortSignal, ctx: Pipelin
         id,
         sources: vocab.sources,
         hintsChars: vocab.whisperPrompt.length,
+        hintsUsed: vocab.hintsUsed,
+        hintsAvailable: vocab.hintsAvailable,
         replacements: vocab.replacements.length,
       },
       'vocabulary loaded',
     );
+    if (vocab.hintsDropped.length > 0) {
+      // Silently having no effect is the worst outcome for someone
+      // curating a keyword list, so say exactly which terms were unused.
+      ctx.logger.warn(
+        {
+          id,
+          dropped: vocab.hintsDropped.length,
+          examples: vocab.hintsDropped.slice(0, 10),
+        },
+        `vocabulary exceeds Whisper's 800-character prompt limit — ${vocab.hintsDropped.length} term(s) had no effect`,
+      );
+    }
+    if (vocab.conflictingRules.length > 0) {
+      ctx.logger.warn(
+        { id, conflicts: vocab.conflictingRules },
+        'vocabulary has replacement rules that rewrite the same term differently; the last one loaded wins',
+      );
+    }
   }
 
   const cfg = ctx.getConfig();
