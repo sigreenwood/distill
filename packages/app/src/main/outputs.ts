@@ -205,13 +205,35 @@ ${fragment}
 `;
 }
 
+/**
+ * Neutralise raw HTML in text that is about to be parsed as Markdown.
+ *
+ * `marked` passes raw HTML straight through by design, so a summary
+ * containing `<script>…</script>` or `<img src=x onerror=…>` would land
+ * live in both the exported .html file and the Apple Note (Notes
+ * renders HTML bodies). The summary is model output derived from a
+ * transcript, and transcripts can be imported from arbitrary files —
+ * so it is not content we control.
+ *
+ * Escaping only `<` is deliberate and sufficient: no tag can form
+ * without it. Leaving `>` alone keeps blockquotes working, and leaving
+ * `&` alone avoids mangling entities and ampersands in ordinary prose.
+ * Every other Markdown construct — headings, bold, lists, links, code —
+ * is unaffected, because none of them depend on `<`.
+ */
+function neutraliseRawHtml(markdown: string): string {
+  return markdown.replace(/</g, '&lt;');
+}
+
 export async function buildHtmlFragment(
   row: JoinedRecordingRow,
   includeTranscript: boolean,
 ): Promise<string> {
   const title = escapeHtml(row.filename);
   const meta = buildMetaBlock(row);
-  const summaryHtml = await marked.parse(row.summary_text ?? '', { async: true });
+  const summaryHtml = await marked.parse(neutraliseRawHtml(row.summary_text ?? ''), {
+    async: true,
+  });
   let doc = `<h1>${title}</h1>\n${meta}\n<h2>Summary</h2>\n${summaryHtml}\n`;
   if (includeTranscript && row.transcript_text) {
     const transcriptHtml = escapeHtml(row.transcript_text.trim());
