@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { inspectOutputDir } from './outputDirStatus.js';
+import { showAppleNote } from './outputs.js';
 import { app, dialog, ipcMain, shell, BrowserWindow } from 'electron';
 import { Channels, KEEPALIVE_PRESETS, WHISPER_MODEL_PRESETS } from '../shared/ipcChannels.js';
 import { userVocabularyDir } from './paths.js';
@@ -109,11 +110,20 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     const row = ctx.state.getRecording(recordingId);
     if (!row) throw new Error(`No such recording: ${recordingId}`);
     if (kind === 'appleNote') {
-      if (!row.apple_note_written_at) throw new Error('No Apple Note was written for this recording');
-      // Notes has no per-note URL scheme we can rely on across macOS
-      // versions, so open the app and let the user's folder do the rest.
-      void shell.openExternal('notes://');
-      return;
+      if (!row.apple_note_written_at || !row.apple_note_id) {
+        throw new Error('No Apple Note was written for this recording');
+      }
+      // Open the note itself via AppleScript. Falling back to the
+      // notes:// scheme only drops the user at the app, which is what
+      // this used to do for every note — fine as a backstop, not as the
+      // normal path.
+      return showAppleNote(row.apple_note_id).catch((e) => {
+        ctx.logger.warn(
+          { err: e instanceof Error ? e.message : String(e), noteId: row.apple_note_id },
+          'could not show the note directly; opening Notes instead',
+        );
+        void shell.openExternal('notes://');
+      });
     }
     const p = kind === 'markdown' ? row.markdown_path : row.html_path;
     const written = kind === 'markdown' ? row.markdown_written_at : row.html_written_at;

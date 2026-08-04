@@ -337,6 +337,31 @@ function escapeForAppleScript(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
+/**
+ * Open a specific note in Notes.app.
+ *
+ * The inbox originally just opened `notes://` and left the user to find
+ * the note themselves, on the assumption that there was no reliable way
+ * to address an individual note. There is: Notes' AppleScript
+ * dictionary exposes `show` on a note object, and the `x-coredata://…`
+ * id we already store from the write step resolves against it.
+ *
+ * Throws AppleNotesError if the note can't be found — most likely
+ * because it was deleted in Notes after we wrote it, which the caller
+ * should report rather than silently swallow.
+ */
+export async function showAppleNote(noteId: string): Promise<void> {
+  const escaped = escapeForAppleScript(noteId);
+  await runOsaScript(`
+on run
+  tell application "Notes"
+    activate
+    show note id "${escaped}"
+  end tell
+end run
+`);
+}
+
 function runOsaScript(script: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn('osascript', ['-'], { stdio: ['pipe', 'pipe', 'pipe'] });
