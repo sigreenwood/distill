@@ -690,7 +690,40 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     const general = assertGeneralDTO(payload);
     const updated = ctx.applyConfigUpdate({ audioRetentionDays: general.audioRetentionDays });
     saveConfig(updated);
-    ctx.logger.info({ audioRetentionDays: updated.audioRetentionDays }, 'general settings saved');
+    // Only touch the login item when it can mean something, and only when
+    // it actually differs — setLoginItemSettings prompts for approval on
+    // recent macOS, so no-op saves should stay silent.
+    let launchAtLogin: boolean | 'unavailable' = 'unavailable';
+    if (launchAtLoginAvailable()) {
+      launchAtLogin = app.getLoginItemSettings().openAtLogin;
+      if (launchAtLogin !== general.launchAtLogin) {
+        app.setLoginItemSettings({ openAtLogin: general.launchAtLogin });
+        // Read back rather than trusting the write. distill is unsigned, and
+        // macOS can decline the registration or park it behind an approval
+        // in System Settings; setLoginItemSettings reports nothing either
+        // way. Saying "saved" over a setting that did not take is the
+        // failure mode this app keeps hitting.
+        launchAtLogin = app.getLoginItemSettings().openAtLogin;
+        if (launchAtLogin !== general.launchAtLogin) {
+          ctx.logger.warn(
+            { requested: general.launchAtLogin, actual: launchAtLogin },
+            'login item did not take',
+          );
+          throw new Error(
+            general.launchAtLogin
+              ? 'macOS did not accept the login item. Open System Settings › General › Login Items and allow distill, then try again.'
+              : 'macOS did not remove the login item. You can remove it under System Settings › General › Login Items.',
+          );
+        }
+      }
+    }
+    ctx.logger.info(
+      { audioRetentionDays: updated.audioRetentionDays, launchAtLogin },
+      'general settings saved',
+    );
+    // Return what is actually true now, so the pane reflects the OS rather
+    // than what the form asked for.
+    return toGeneralDTO(updated);
   });
 
   ipcMain.handle(Channels.SettingsSavePerformance, (_evt, payload) => {
@@ -1033,8 +1066,24 @@ function toMeetingTypeDTO(r: MeetingTypeRow) {
   };
 }
 
+/**
+ * Launch at login is deliberately not mirrored into config.json. macOS owns
+ * it — System Settings › General › Login Items can turn it off without
+ * telling us, and a cached copy would then be wrong and would re-apply
+ * itself on the next unrelated save. Read the OS every time.
+ */
+function launchAtLoginAvailable() {
+  // Unpackaged, the login item registers the Electron dev binary, not
+  // distill. The toggle would appear to work and do nothing useful.
+  return app.isPackaged;
+}
+
 function toGeneralDTO(cfg: AppConfig) {
-  return { audioRetentionDays: cfg.audioRetentionDays };
+  return {
+    audioRetentionDays: cfg.audioRetentionDays,
+    launchAtLogin: launchAtLoginAvailable() ? app.getLoginItemSettings().openAtLogin : false,
+    launchAtLoginAvailable: launchAtLoginAvailable(),
+  };
 }
 
 function toPerformanceDTO(cfg: AppConfig) {
@@ -1399,11 +1448,20 @@ function slugify(s: string): string {
     .slice(0, 64);
 }
 
-function assertGeneralDTO(v: unknown): { audioRetentionDays: number | null } {
+function assertGeneralDTO(v: unknown): {
+  audioRetentionDays: number | null;
+  launchAtLogin: boolean;
+} {
   if (!v || typeof v !== 'object') throw new Error('Invalid general payload');
   const o = v as Record<string, unknown>;
+
+  if (typeof o.launchAtLogin !== 'boolean') {
+    throw new Error('launchAtLogin must be a boolean');
+  }
+  const launchAtLogin = o.launchAtLogin;
+
   const raw = o.audioRetentionDays;
-  if (raw === null) return { audioRetentionDays: null };
+  if (raw === null) return { audioRetentionDays: null, launchAtLogin };
   if (typeof raw !== 'number' || !Number.isFinite(raw)) {
     throw new Error('audioRetentionDays must be null or a non-negative integer');
   }
@@ -1413,7 +1471,7 @@ function assertGeneralDTO(v: unknown): { audioRetentionDays: number | null } {
   if (raw < 0) {
     throw new Error('audioRetentionDays must be ≥ 0 (use null to disable the sweep)');
   }
-  return { audioRetentionDays: raw };
+  return { audioRetentionDays: raw, launchAtLogin };
 }
 
 function assertPerformanceDTO(v: unknown): {

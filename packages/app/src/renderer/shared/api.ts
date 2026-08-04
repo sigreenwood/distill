@@ -107,6 +107,13 @@ export interface VocabularyFileDTO {
 
 export interface GeneralDTO {
   audioRetentionDays: number | null;
+  /** Read from the OS, not from config — it can be changed in System Settings. */
+  launchAtLogin: boolean;
+  /**
+   * False when running unpackaged: the login item would point at the
+   * Electron dev binary rather than distill, so the toggle is inert.
+   */
+  launchAtLoginAvailable: boolean;
 }
 
 export interface PerformanceDTO {
@@ -262,7 +269,8 @@ export interface DistillApi {
       scopeId: string;
       hints: string[];
     }): Promise<VocabularyBudgetDTO>;
-    saveGeneral(payload: GeneralDTO): Promise<void>;
+    /** Resolves with the state that actually applied, which may differ from the request. */
+    saveGeneral(payload: GeneralDTO): Promise<GeneralDTO>;
     savePerformance(payload: PerformanceDTO): Promise<void>;
     listOllamaModels(): Promise<OllamaModelsDTO>;
     browseFolder(currentPath?: string): Promise<string | null>;

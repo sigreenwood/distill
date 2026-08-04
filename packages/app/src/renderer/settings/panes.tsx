@@ -1244,36 +1244,50 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
   const initialDays = props.initial.audioRetentionDays ?? 14;
   const [enabled, setEnabled] = useState(initialEnabled);
   const [daysText, setDaysText] = useState(String(initialDays));
+  const [launchAtLogin, setLaunchAtLogin] = useState(props.initial.launchAtLogin);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
   const computed = useMemo<GeneralDTO | null>(() => {
-    if (!enabled) return { audioRetentionDays: null };
+    const base = {
+      launchAtLogin,
+      launchAtLoginAvailable: props.initial.launchAtLoginAvailable,
+    };
+    if (!enabled) return { ...base, audioRetentionDays: null };
     const trimmed = daysText.trim();
     if (trimmed.length === 0) return null;
     const parsed = Number(trimmed);
     if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
       return null;
     }
-    return { audioRetentionDays: parsed };
-  }, [enabled, daysText]);
+    return { ...base, audioRetentionDays: parsed };
+  }, [enabled, daysText, launchAtLogin, props.initial.launchAtLoginAvailable]);
 
   const isDirty = useMemo(() => {
     if (!computed) return false;
-    return computed.audioRetentionDays !== props.initial.audioRetentionDays;
-  }, [computed, props.initial.audioRetentionDays]);
+    return (
+      computed.audioRetentionDays !== props.initial.audioRetentionDays ||
+      computed.launchAtLogin !== props.initial.launchAtLogin
+    );
+  }, [computed, props.initial.audioRetentionDays, props.initial.launchAtLogin]);
 
   const onSave = useCallback(async () => {
     if (!computed) return;
     setError(null);
     setSaving(true);
     try {
-      await window.distill.settings.saveGeneral(computed);
-      props.onSaved(computed);
+      // Trust the returned state over the form: macOS is the authority on
+      // the login item and may not have applied what was asked.
+      const applied = await window.distill.settings.saveGeneral(computed);
+      setLaunchAtLogin(applied.launchAtLogin);
+      props.onSaved(applied);
       setSavedAt(Date.now());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      // A rejected save means the login item did not change, so put the
+      // checkbox back rather than leaving it showing a state macOS refused.
+      setLaunchAtLogin(props.initial.launchAtLogin);
     } finally {
       setSaving(false);
     }
@@ -1286,6 +1300,51 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
           App-level settings that aren't tied to a specific output destination, prompt, or vocabulary
           scope.
         </p>
+        <section
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Startup</div>
+          <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>
+            distill lives in the menu bar and polls for new recordings in the background, so it only
+            does its job while it is running.
+          </div>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 12,
+              cursor: props.initial.launchAtLoginAvailable ? 'pointer' : 'default',
+              opacity: props.initial.launchAtLoginAvailable ? 1 : 0.55,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={launchAtLogin}
+              disabled={!props.initial.launchAtLoginAvailable}
+              onChange={(e) => setLaunchAtLogin(e.target.checked)}
+            />
+            Start distill when I log in
+          </label>
+          <div className="muted" style={{ fontSize: 10, marginTop: 6, lineHeight: 1.4 }}>
+            {props.initial.launchAtLoginAvailable ? (
+              <>
+                macOS owns this setting — it also appears under System Settings › General › Login
+                Items, and turning it off there turns it off here.
+              </>
+            ) : (
+              <>
+                Unavailable in a development build: the login item would point at the Electron binary
+                rather than at distill. Works in an installed copy.
+              </>
+            )}
+          </div>
+        </section>
         <section
           style={{
             border: '1px solid var(--border)',

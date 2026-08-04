@@ -422,9 +422,12 @@ or stay where it is?).
 Already planned, kept here as a pointer:
 
 - **v1.1**: ~~`.pkg` installer~~ (shipped Jul 2026, v0.0.2 onward);
-  **Launch on Login still outstanding** — and it is the one that makes
-  the difference between a menu-bar app that syncs and one that only
-  syncs when you remember to open it.
+  ~~Launch on Login~~ (shipped Aug 2026, v0.0.18) — Settings → General →
+  Startup. macOS owns the setting, so it is read from the OS on every
+  settings load rather than mirrored into config.json; turning it off in
+  System Settings → Login Items turns it off in the app. The save reads
+  the value back and reports an error if macOS declined the registration,
+  which it can do for an unsigned app.
 - **v1.2**: Diarisation; thumbs-up/down rating
 - **v2**: Self-updating models/prompts; Plaud device USB pulldown fallback.
   *Partially landed early (Jul 2026):* the model half shipped — weekly
