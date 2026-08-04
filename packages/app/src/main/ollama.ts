@@ -1,3 +1,6 @@
+import http from 'node:http';
+import https from 'node:https';
+
 export interface OllamaModelTag {
   name: string;
   size?: number;
@@ -94,97 +97,149 @@ export class OllamaClient {
   }
 
   /**
-   * Chat completion with streaming. Ollama's /api/chat endpoint returns
-   * newline-delimited JSON chunks when stream=true; we accumulate them
-   * into a full OllamaChatResponse.
+   * Chat completion with streaming NDJSON.
    *
-   * Why streaming rather than blocking? Long generations against a large
-   * transcript (100k+ chars) can take many minutes. Node's undici fetch
-   * imposes a ~5 minute bodyTimeout on an idle socket, so a blocking
-   * request that spends 10 minutes generating dies with "fetch failed".
-   * Streaming keeps the socket active on every token so the timeout
-   * never fires.
+   * Uses node:http rather than fetch, deliberately. Node's fetch
+   * (undici) applies a 5-minute bodyTimeout to an idle socket and there
+   * is no way to override it per-request without pulling in undici as a
+   * dependency.
    *
-   * The optional AbortSignal cancels mid-stream. onChunk, when provided,
-   * fires for each partial message.content delta — useful for a
-   * progress bar in future milestones.
+   * This code previously assumed `stream: true` was enough to avoid
+   * that, on the reasoning that a token arriving every few hundred
+   * milliseconds keeps the socket busy. That holds during *generation*
+   * — but not during *prefill*. While Ollama is processing a long
+   * prompt it emits nothing at all, and a big transcript on a large
+   * model can sit silent for well over five minutes before the first
+   * token appears.
+   *
+   * Observed on a real machine, qwen2.5:32b with a 20,035-token input:
+   * three consecutive summarise attempts failed with a bare "fetch
+   * failed" at 303s, 302s and 302s — the timeout, to the second — and a
+   * fourth attempt succeeded in 234s once the model was warm. The work
+   * was never the problem; the clock was.
+   *
+   * node:http sets no socket timeout unless asked, so a long prefill is
+   * simply a long wait. Cancellation still comes from the AbortSignal,
+   * which is the only thing that should end this request early.
    */
   async chat(
     req: OllamaChatRequest,
     signal?: AbortSignal,
     onChunk?: (accumulated: string) => void,
   ): Promise<OllamaChatResponse> {
-    const res = await fetch(`${this.host}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...req, stream: true }),
-      signal,
+    const url = new URL('/api/chat', this.host);
+    const transport = url.protocol === 'https:' ? https : http;
+    const payload = JSON.stringify({ ...req, stream: true });
+
+    return new Promise<OllamaChatResponse>((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new DOMException('Aborted', 'AbortError'));
+        return;
+      }
+
+      let buffer = '';
+      let accumulated = '';
+      let finalChunk: Partial<OllamaChatResponse> | null = null;
+      let settled = false;
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener('abort', onAbort);
+        fn();
+      };
+
+      const request = transport.request(
+        url,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(payload),
+          },
+        },
+        (res) => {
+          const status = res.statusCode ?? 0;
+          if (status < 200 || status >= 300) {
+            let errBody = '';
+            res.on('data', (c) => {
+              errBody += c;
+            });
+            res.on('end', () =>
+              finish(() => reject(new Error(`Ollama ${status}: ${errBody.slice(0, 500)}`))),
+            );
+            return;
+          }
+          res.setEncoding('utf-8');
+          res.on('data', (chunk: string) => {
+            buffer += chunk;
+            const lines = buffer.split('\n');
+            buffer = lines.pop() ?? '';
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              let parsed: any;
+              try {
+                parsed = JSON.parse(trimmed);
+              } catch {
+                continue;
+              }
+              if (parsed.error) {
+                request.destroy();
+                finish(() => reject(new Error(`Ollama stream error: ${parsed.error}`)));
+                return;
+              }
+              const delta: string = parsed.message?.content ?? '';
+              if (delta) {
+                accumulated += delta;
+                onChunk?.(accumulated);
+              }
+              if (parsed.done) {
+                finalChunk = {
+                  model: parsed.model,
+                  created_at: parsed.created_at,
+                  done: true,
+                  total_duration: parsed.total_duration,
+                  eval_count: parsed.eval_count,
+                };
+              }
+            }
+          });
+          res.on('end', () =>
+            finish(() => {
+              if (!finalChunk) {
+                reject(new Error('Ollama stream ended without a done=true chunk'));
+                return;
+              }
+              resolve({
+                model: finalChunk.model ?? req.model,
+                created_at: finalChunk.created_at ?? new Date().toISOString(),
+                message: { role: 'assistant', content: accumulated },
+                done: true,
+                total_duration: finalChunk.total_duration,
+                eval_count: finalChunk.eval_count,
+              });
+            }),
+          );
+          res.on('error', (e) => finish(() => reject(e)));
+        },
+      );
+
+      function onAbort() {
+        request.destroy();
+        finish(() => reject(new DOMException('Aborted', 'AbortError')));
+      }
+      signal?.addEventListener('abort', onAbort, { once: true });
+
+      request.on('error', (e: NodeJS.ErrnoException) => {
+        const detail =
+          e.code === 'ECONNREFUSED'
+            ? `Ollama is not reachable at ${this.host} (connection refused)`
+            : e.message;
+        finish(() => reject(new Error(detail)));
+      });
+      request.write(payload);
+      request.end();
     });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Ollama ${res.status}: ${body.slice(0, 500)}`);
-    }
-    if (!res.body) {
-      throw new Error('Ollama response had no body');
-    }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let buffer = '';
-    let accumulated = '';
-    let finalChunk: Partial<OllamaChatResponse> | null = null;
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          let parsed: any;
-          try {
-            parsed = JSON.parse(trimmed);
-          } catch {
-            continue;
-          }
-          if (parsed.error) {
-            throw new Error(`Ollama stream error: ${parsed.error}`);
-          }
-          const delta: string = parsed.message?.content ?? '';
-          if (delta) {
-            accumulated += delta;
-            onChunk?.(accumulated);
-          }
-          if (parsed.done) {
-            finalChunk = {
-              model: parsed.model,
-              created_at: parsed.created_at,
-              done: true,
-              total_duration: parsed.total_duration,
-              eval_count: parsed.eval_count,
-            };
-          }
-        }
-      }
-    } finally {
-      try {
-        reader.releaseLock();
-      } catch {
-        // stream already closed
-      }
-    }
-    if (!finalChunk) {
-      throw new Error('Ollama stream ended without a done=true chunk');
-    }
-    return {
-      model: finalChunk.model ?? req.model,
-      created_at: finalChunk.created_at ?? new Date().toISOString(),
-      message: { role: 'assistant', content: accumulated },
-      done: true,
-      total_duration: finalChunk.total_duration,
-      eval_count: finalChunk.eval_count,
-    };
   }
 }
 
