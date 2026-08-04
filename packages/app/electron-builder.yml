@@ -156,5 +156,34 @@ pkg:
   # ~/Applications, which most users don't even know exists).
   installLocation: /Applications
 
+  # Never skip the install because of a version comparison.
+  #
+  # THIS is the setting that matters. By default electron-builder emits
+  #     <bundle-version><bundle id="com.distill.app"/></bundle-version>
+  # into PackageInfo, which lets the macOS Installer compare the payload
+  # bundle against the one already on disk and decline to write it. The
+  # installer still runs to completion and still reports success — the app
+  # is simply not replaced, so About keeps reporting the old version. That
+  # is the "installed 0.0.16, About says something older" symptom.
+  #
+  # Setting this false emits an empty <bundle-version/>, making every
+  # install unconditional. Verified by diffing the expanded PackageInfo of
+  # the 0.0.16 and 0.0.17 packages — the emptied element is the only
+  # meaningful difference between them.
+  #
+  # Worth knowing when debugging this: pkgbuild records the *package*
+  # version as 0 on every build regardless of the app version
+  # (`pkgutil --pkg-info com.distill.app` → `version: 0`), so the receipt
+  # cannot be used to tell releases apart. Check the installed bundle's
+  # CFBundleShortVersionString instead.
+  isVersionChecked: false
+
+  # Belt and braces: pin the install target so it cannot drift to some
+  # other copy of the bundle. Note this is already the generated default —
+  # PackageInfo carries relocatable="false" and an empty <relocate/> with
+  # or without this line, so it fixes nothing on its own. Kept because the
+  # install location should be explicit, not inherited.
+  isRelocatable: false
+
   # No license / readme / welcome screens - keep the installer wizard
   # short. The user can find help in the app itself.

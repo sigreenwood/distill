@@ -114,7 +114,21 @@ app.whenReady().then(async () => {
 
   const localLogger = createLogger({ level: cfg.logLevel, pretty: !app.isPackaged });
   logger = localLogger;
-  localLogger.info({ cfg, appSupportDir: appSupportDirPath }, 'distill starting');
+  // Version and bundle path go in the first line deliberately. A .pkg that
+  // silently declines to replace the app leaves you running an old build
+  // with no indication anywhere, and every bug report after that is against
+  // the wrong code. appPath is here too because "which copy is running" is
+  // the other half of that question.
+  localLogger.info(
+    {
+      version: app.getVersion(),
+      appPath: app.getAppPath(),
+      packaged: app.isPackaged,
+      cfg,
+      appSupportDir: appSupportDirPath,
+    },
+    'distill starting',
+  );
   // Report any pre-rename directory migration. Paths resolve at module
   // load, before the logger exists, so the notes are replayed here.
   for (const note of migrationNotes()) {
