@@ -157,11 +157,13 @@ export interface ModelPullProgressDTO {
 }
 
 export interface VocabularyBudgetDTO {
+  /** Whisper's initial_prompt cap, in characters. */
   limit: number;
   used: number;
   hintsAvailable: number;
   hintsUsed: number;
-  droppedExamples: string[];
+  /** Every term that did not fit — these reach Whisper not at all. */
+  dropped: string[];
 }
 
 export interface SettingsDTO {
@@ -255,6 +257,11 @@ export interface DistillApi {
     saveVocabulary(payload: { scopeId: string; file: VocabularyFileDTO }): Promise<VocabularyScopeDTO>;
     importVocabulary(scopeId: string): Promise<VocabularyFileDTO | null>;
     exportVocabulary(scopeId: string): Promise<{ path: string } | null>;
+    /** Budget for hints currently in the editor, saved or not. */
+    previewVocabularyBudget(payload: {
+      scopeId: string;
+      hints: string[];
+    }): Promise<VocabularyBudgetDTO>;
     saveGeneral(payload: GeneralDTO): Promise<void>;
     savePerformance(payload: PerformanceDTO): Promise<void>;
     listOllamaModels(): Promise<OllamaModelsDTO>;

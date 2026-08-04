@@ -98,6 +98,47 @@ describe('conflicting replacement rules', () => {
   });
 });
 
+describe('unsaved edits (budget preview)', () => {
+  it('counts draft hints instead of what is on disk', () => {
+    scope('global', ['Saved']);
+    scope('organisation', ['OrgTerm']);
+    const v = loadVocabulary(dir, null, { scopeId: 'global', hints: ['Draft', 'Second'] });
+    expect(v.whisperPrompt).toContain('Draft');
+    expect(v.whisperPrompt).toContain('Second');
+    expect(v.whisperPrompt).not.toContain('Saved');
+    // Other scopes are unaffected — the merged total is what is budgeted.
+    expect(v.whisperPrompt).toContain('OrgTerm');
+    expect(v.hintsAvailable).toBe(3);
+  });
+
+  it('counts a draft for a scope with no file yet', () => {
+    scope('global', ['GlobalOnly']);
+    const v = loadVocabulary(dir, 'newclient', { scopeId: 'newclient', hints: ['BrandNew'] });
+    expect(v.whisperPrompt).toContain('BrandNew');
+    expect(v.hintsAvailable).toBe(2);
+  });
+
+  it('ignores blank rows left by the editor', () => {
+    // "+ Add hint" inserts an empty row; it must not widen the prompt, and
+    // must not count as a term — every string contains the empty string, so
+    // a blank would otherwise never register as dropped.
+    scope('global', []);
+    const v = loadVocabulary(dir, null, { scopeId: 'global', hints: ['Real', '', '   '] });
+    expect(v.hintsAvailable).toBe(1);
+    expect(v.hintsDropped).toEqual([]);
+    expect(v.whisperPrompt).not.toContain(', ,');
+  });
+
+  it('reports draft terms that overflow the limit', () => {
+    const many = Array.from({ length: 120 }, (_, i) => `VeryLongDraftTerm${i}`);
+    scope('global', []);
+    const v = loadVocabulary(dir, null, { scopeId: 'global', hints: many });
+    expect(v.whisperPrompt.length).toBeLessThanOrEqual(800);
+    expect(v.hintsDropped.length).toBeGreaterThan(0);
+    expect(v.hintsUsed + v.hintsDropped.length).toBe(v.hintsAvailable);
+  });
+});
+
 describe('vocabulary budget reporting', () => {
   it('reports which terms did not fit', () => {
     scope('global', Array.from({ length: 200 }, (_, i) => `VeryLongGlobalTerm${i}`));

@@ -18,6 +18,7 @@ import {
   parseVocabularyMarkdownTables,
   readVocabularyFile,
   writeVocabularyFile,
+  WHISPER_PROMPT_CHAR_LIMIT,
   type VocabularyFile,
   type VocabularyReplacement,
 } from './vocabulary.js';
@@ -513,6 +514,19 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     assertScopeIdExists(ctx, scopeId);
     const file = readVocabularyFile(vocabularyDirFor(), scopeId);
     return toVocabularyFileDTO(file);
+  });
+
+  // Live budget for hints the editor is showing but has not saved. Merging
+  // stays in loadVocabulary so the number on screen is produced by the same
+  // code that builds the real prompt.
+  ipcMain.handle(Channels.SettingsPreviewVocabularyBudget, (_evt, payload) => {
+    const p = payload as { scopeId?: unknown; hints?: unknown };
+    if (typeof p?.scopeId !== 'string') throw new Error('scopeId must be a string');
+    if (!Array.isArray(p.hints) || p.hints.some((h) => typeof h !== 'string')) {
+      throw new Error('hints must be an array of strings');
+    }
+    assertScopeIdExists(ctx, p.scopeId);
+    return vocabularyBudget(ctx, { scopeId: p.scopeId, hints: p.hints as string[] });
   });
 
   ipcMain.handle(Channels.SettingsSaveVocabulary, (_evt, payload) => {
@@ -1071,21 +1085,27 @@ function listVocabularyScopes(ctx: IpcContext) {
  * 800-character limit. Beyond that, terms are silently ignored, which
  * is invisible while curating lists in four separate files.
  */
-function vocabularyBudget(ctx: IpcContext) {
+function vocabularyBudget(ctx: IpcContext, draft?: { scopeId: string; hints: string[] }) {
   const dir = vocabularyDirFor();
   // Worst case is a client meeting: its scope plus all three shared ones.
   const clientIds = ctx.state.listClients().map((c) => c.id).filter((id) => !isBuiltinScopeId(id));
-  let worst = loadVocabulary(dir, null);
-  for (const id of clientIds) {
-    const v = loadVocabulary(dir, id);
-    if (v.hintsDropped.length > worst.hintsDropped.length) worst = v;
+  // When a client scope is being edited, that client *is* the case to
+  // report — showing some other client's worse total would be confusing
+  // while typing. Editing a shared scope still reports the worst client.
+  const candidates =
+    draft && !isBuiltinScopeId(draft.scopeId) ? [draft.scopeId] : [null, ...clientIds];
+  let worst: ReturnType<typeof loadVocabulary> | null = null;
+  for (const id of candidates) {
+    const v = loadVocabulary(dir, id, draft);
+    if (!worst || v.hintsDropped.length > worst.hintsDropped.length) worst = v;
   }
+  const w = worst!;
   return {
-    limit: 800,
-    used: worst.whisperPrompt.length,
-    hintsAvailable: worst.hintsAvailable,
-    hintsUsed: worst.hintsUsed,
-    droppedExamples: worst.hintsDropped.slice(0, 12),
+    limit: WHISPER_PROMPT_CHAR_LIMIT,
+    used: w.whisperPrompt.length,
+    hintsAvailable: w.hintsAvailable,
+    hintsUsed: w.hintsUsed,
+    dropped: w.hintsDropped,
   };
 }
 

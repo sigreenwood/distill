@@ -31,6 +31,7 @@ export const Channels = {
   SettingsSaveVocabulary: 'settings.saveVocabulary',
   SettingsImportVocabulary: 'settings.importVocabulary',
   SettingsExportVocabulary: 'settings.exportVocabulary',
+  SettingsPreviewVocabularyBudget: 'settings.previewVocabularyBudget',
   SettingsSaveGeneral: 'settings.saveGeneral',
   SettingsSavePerformance: 'settings.savePerformance',
   SettingsListOllamaModels: 'settings.listOllamaModels',

@@ -67,6 +67,8 @@ const api = {
       ipcRenderer.invoke(Channels.SettingsImportVocabulary, scopeId),
     exportVocabulary: (scopeId: string) =>
       ipcRenderer.invoke(Channels.SettingsExportVocabulary, scopeId),
+    previewVocabularyBudget: (payload: unknown) =>
+      ipcRenderer.invoke(Channels.SettingsPreviewVocabularyBudget, payload),
     saveGeneral: (payload: unknown) => ipcRenderer.invoke(Channels.SettingsSaveGeneral, payload),
     savePerformance: (payload: unknown) =>
       ipcRenderer.invoke(Channels.SettingsSavePerformance, payload),
