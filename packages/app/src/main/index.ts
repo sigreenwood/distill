@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { app, dialog, shell } from 'electron';
-import { appSupportDir, userVocabularyDir, expandHome } from './paths.js';
+import { appSupportDir, userVocabularyDir, expandHome, migrationNotes } from './paths.js';
 import { bundledResourcesDir } from './bundledResources.js';
 import { createLogger, type Logger } from './logger.js';
 import {
@@ -114,7 +114,12 @@ app.whenReady().then(async () => {
 
   const localLogger = createLogger({ level: cfg.logLevel, pretty: !app.isPackaged });
   logger = localLogger;
-  localLogger.info({ cfg }, 'distill starting');
+  localLogger.info({ cfg, appSupportDir: appSupportDirPath }, 'distill starting');
+  // Report any pre-rename directory migration. Paths resolve at module
+  // load, before the logger exists, so the notes are replayed here.
+  for (const note of migrationNotes()) {
+    localLogger.info({ migration: note }, 'path migration');
+  }
 
   let localState: State;
   try {

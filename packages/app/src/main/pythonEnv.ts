@@ -148,10 +148,16 @@ export async function installVenv(opts: InstallVenvOptions): Promise<InstallVenv
   }
 
   onProgress({ phase: 'installing-packages' });
-  logger?.info({ pip: venvPip(), reqs: bundledRequirementsFile() }, 'installing packages');
+  logger?.info({ python: venvPython(), reqs: bundledRequirementsFile() }, 'installing packages');
+  // `python -m pip`, not the bin/pip script. The script carries an
+  // absolute shebang baked in at creation time, so it breaks the moment
+  // the venv's parent directory is renamed — which is exactly what the
+  // "Plaud Local" -> "distill" migration in paths.ts does. Invoking the
+  // module through the interpreter works regardless of where the venv
+  // has been moved to.
   const pipResult = await spawnLineByLine(
-    venvPip(),
-    ['install', '--no-input', '--disable-pip-version-check', '-r', bundledRequirementsFile()],
+    venvPython(),
+    ['-m', 'pip', 'install', '--no-input', '--disable-pip-version-check', '-r', bundledRequirementsFile()],
     { signal, onProgress, phase: 'installing-packages' },
   );
   if (pipResult.kind === 'cancelled') return { kind: 'cancelled' };
