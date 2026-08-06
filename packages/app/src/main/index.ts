@@ -44,6 +44,21 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
 
+// With no Dock icon, a tray-only window is the app's only surface — and on
+// notched displays the tray icon itself can end up hidden in the overflow
+// behind the notch. "Just try opening the app again" is the natural thing a
+// user does when they can't find it, so both of macOS's relaunch signals
+// need to actually show the window instead of silently doing nothing:
+// second-instance (a second process attempt) and activate (Finder/Spotlight
+// reactivating the already-running app, e.g. a Dock click would fire this
+// too if there were a Dock icon).
+app.on('second-instance', () => {
+  if (appReady) openInbox();
+});
+app.on('activate', () => {
+  if (appReady) openInbox();
+});
+
 let trayHandle: TrayHandle | null = null;
 let state: State | null = null;
 let poller: Poller | null = null;
