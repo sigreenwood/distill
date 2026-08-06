@@ -129,6 +129,25 @@ asarUnpack:
   - node_modules/better-sqlite3/**/*
   - node_modules/keytar/**/*
 
+# File type registration, so a recording can be opened via Finder's
+# "Open With" menu (right-click a file -> Open With -> distill), not just
+# dragged into an already-open Inbox window. electron-builder turns this
+# into CFBundleDocumentTypes on mac; main/index.ts's `open-file` handler
+# already exists and already does the right thing with it — it just had
+# nothing registering distill as an opener.
+#
+# Deliberately NOT registering .md/.txt here. Those extensions are owned
+# by every text editor on the system; re-summarising a transcript stays
+# reachable via the in-app "+" picker and drag-and-drop instead of
+# putting distill in the Open With list for every text file on the Mac.
+fileAssociations:
+  - ext: [mp3, m4a, wav, aac, ogg, flac, opus]
+    name: Audio Recording
+    role: Editor
+  - ext: [mp4, mov, m4v, mkv, webm]
+    name: Video Recording
+    role: Editor
+
 mac:
   # Target one format - pkg-only (single distribution target). Single arch
   # (arm64) since mlx-whisper is Apple-Silicon-only anyway; an Intel build
