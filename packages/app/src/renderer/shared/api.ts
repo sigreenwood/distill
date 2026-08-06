@@ -51,6 +51,8 @@ export interface InboxItemDTO {
   processedExternally: boolean;
   /** Whether a "Full re-run" can re-transcribe this recording — a local audio file, or (Plaud only) a cloud copy to re-fetch. */
   audioAvailable: boolean;
+  /** Effective per-destination targets: this row's override if it has one, else the current Settings -> Outputs default. */
+  outputTargets: { markdown: boolean; html: boolean; appleNote: boolean };
 }
 
 export interface ClientDTO {
@@ -234,6 +236,10 @@ export interface DistillApi {
     revealOutput(recordingId: string, kind: 'markdown' | 'html' | 'appleNote'): Promise<void>;
     listHidden(): Promise<{ total: number; items: InboxItemDTO[] }>;
     unhide(recordingId: string): Promise<{ status: RecordingStatus }>;
+    setOutputTargets(
+      recordingId: string,
+      targets: { markdown: boolean; html: boolean; appleNote: boolean },
+    ): Promise<void>;
   };
   pipeline: {
     cancel(recordingId: string): Promise<void>;

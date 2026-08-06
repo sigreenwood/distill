@@ -10,6 +10,7 @@ export const Channels = {
   InboxRevealOutput: 'inbox.revealOutput',
   InboxListHidden: 'inbox.listHidden',
   InboxUnhide: 'inbox.unhide',
+  InboxSetOutputTargets: 'inbox.setOutputTargets',
   PipelineCancel: 'pipeline.cancel',
   PipelineRetry: 'pipeline.retry',
   PipelineFullRerun: 'pipeline.fullRerun',

@@ -38,7 +38,7 @@ import {
 } from './pythonEnv.js';
 import type { KeychainCredentialStore } from './keychain.js';
 import type { Logger } from './logger.js';
-import { stepPlanFor } from './state.js';
+import { stepPlanFor, effectiveOutputTargets } from './state.js';
 import type {
   ClientRow,
   JoinedRecordingRow,
@@ -73,7 +73,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       );
       ctx.onStateChanged?.();
     }
-    return ctx.state.listActiveJoined().map(toInboxDTO);
+    return ctx.state.listActiveJoined().map((r) => toInboxDTO(r, cfg.outputs));
   });
 
   ipcMain.handle(Channels.InboxSkip, (_evt, recordingId) => {
@@ -138,9 +138,10 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   });
 
   ipcMain.handle(Channels.InboxListHidden, () => {
+    const cfg = ctx.getConfig();
     return {
       total: ctx.state.hiddenCount(),
-      items: ctx.state.listHiddenJoined().map(toInboxDTO),
+      items: ctx.state.listHiddenJoined().map((r) => toInboxDTO(r, cfg.outputs)),
     };
   });
 
@@ -149,9 +150,10 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     const search = typeof p.search === 'string' ? p.search : '';
     const limit = typeof p.limit === 'number' ? p.limit : 50;
     const offset = typeof p.offset === 'number' ? p.offset : 0;
+    const cfg = ctx.getConfig();
     return {
       total: ctx.state.listAllCount(search),
-      items: ctx.state.listAllJoined(search, limit, offset).map(toInboxDTO),
+      items: ctx.state.listAllJoined(search, limit, offset).map((r) => toInboxDTO(r, cfg.outputs)),
     };
   });
 
@@ -163,6 +165,31 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     ctx.onStateChanged?.();
     broadcastInboxChanged();
     return { status: next };
+  });
+
+  ipcMain.handle(Channels.InboxSetOutputTargets, (_evt, recordingId, targets) => {
+    if (typeof recordingId !== 'string') throw new Error('recordingId must be a string');
+    const t = assertOutputTargetsPayload(targets);
+    const row = ctx.state.getRecording(recordingId);
+    if (!row) throw new Error(`No such recording: ${recordingId}`);
+    ctx.state.setOutputTargets(recordingId, t);
+    // A destination just turned on for a recording that's already
+    // finished, and hasn't been written yet, needs the same "regenerate"
+    // nudge Full re-run uses: leave transcript/summary/other *_written_at
+    // columns alone, flip back to `tagged`, let the worker pick it up.
+    // nextNeededStep sees the transcript+summary are already there and
+    // routes straight to the write step.
+    const needsWrite =
+      (t.markdown && row.markdown_written_at === null) ||
+      (t.html && row.html_written_at === null) ||
+      (t.appleNote && row.apple_note_written_at === null);
+    if (row.status === 'complete' && needsWrite) {
+      ctx.state.setStatus(recordingId, 'tagged');
+      ctx.getWorker()?.nudge();
+    }
+    ctx.logger.info({ recordingId, targets: t }, 'output targets updated');
+    ctx.onStateChanged?.();
+    broadcastInboxChanged();
   });
 
   ipcMain.handle(Channels.TagSave, (_evt, payload) => {
@@ -1052,7 +1079,7 @@ function describeVenvStatus(status: VenvStatus): string {
 
 // --- DTO mappers -----------------------------------------------------------
 
-export function toInboxDTO(r: JoinedRecordingRow) {
+export function toInboxDTO(r: JoinedRecordingRow, outputs: OutputsConfig) {
   const currentStep = statusToStep(r.status);
   const plan = stepPlanFor(r);
   const idx = currentStep ? plan.indexOf(currentStep) : -1;
@@ -1093,6 +1120,10 @@ export function toInboxDTO(r: JoinedRecordingRow) {
     // the row may predate a local download, or the file may have been
     // removed by hand) a cloud copy that can be re-fetched.
     audioAvailable: audioFileExists(r) || r.source === 'plaud',
+    // Effective per-destination targets: this row's override if it has
+    // one, else whatever Settings -> Outputs currently says. Drives the
+    // Inbox row's checkboxes.
+    outputTargets: effectiveOutputTargets(r, outputs),
   };
 }
 
@@ -1361,6 +1392,19 @@ function assertTagSavePayload(v: unknown): {
   if (typeof o.clientId !== 'string') throw new Error('clientId must be a string');
   if (typeof o.meetingTypeId !== 'string') throw new Error('meetingTypeId must be a string');
   return { recordingId: o.recordingId, clientId: o.clientId, meetingTypeId: o.meetingTypeId };
+}
+
+function assertOutputTargetsPayload(v: unknown): {
+  markdown: boolean;
+  html: boolean;
+  appleNote: boolean;
+} {
+  if (!v || typeof v !== 'object') throw new Error('Invalid output targets payload');
+  const o = v as Record<string, unknown>;
+  if (typeof o.markdown !== 'boolean') throw new Error('markdown must be a boolean');
+  if (typeof o.html !== 'boolean') throw new Error('html must be a boolean');
+  if (typeof o.appleNote !== 'boolean') throw new Error('appleNote must be a boolean');
+  return { markdown: o.markdown, html: o.html, appleNote: o.appleNote };
 }
 
 function assertAddClientPayload(v: unknown): { name: string } {

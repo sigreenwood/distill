@@ -7,6 +7,7 @@ import {
   MetaLine,
   OutputLinks,
   FullRerunButton,
+  OutputTargetPicker,
   StatusBadge,
 } from '../shared/recordingRow.js';
 
@@ -166,6 +167,7 @@ function HistoryRow({ r }: { r: InboxItemDTO }) {
         <StatusBadge status={r.status} />
       </div>
       <MetaLine r={r} />
+      <OutputTargetPicker r={r} />
       <OutputLinks r={r} />
       {RERUNNABLE.has(r.status) && (
         <div className="row">

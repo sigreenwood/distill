@@ -14,6 +14,7 @@ import {
   MetaLine,
   OutputLinks,
   FullRerunButton,
+  OutputTargetPicker,
 } from '../shared/recordingRow.js';
 
 type InboxState =
@@ -783,6 +784,7 @@ function ProcessingRow(props: { r: InboxItemDTO; focused: boolean; onCancel: (id
     <Row id={r.id} focused={props.focused}>
       <Title r={r} />
       <MetaLine r={r} />
+      <OutputTargetPicker r={r} />
       <div
         style={{
           display: 'flex',
@@ -814,6 +816,7 @@ function WaitingRow(props: {
     <Row id={props.r.id} focused={props.focused}>
       <Title r={props.r} />
       <MetaLine r={props.r} />
+      <OutputTargetPicker r={props.r} />
       {lengthHint && (
         <div
           style={{
@@ -849,6 +852,7 @@ function ErrorRow(props: {
     <Row id={props.r.id} focused={props.focused}>
       <Title r={props.r} />
       <MetaLine r={props.r} />
+      <OutputTargetPicker r={props.r} />
       {props.r.error && (
         <div
           style={{
@@ -891,6 +895,7 @@ function CancelledRow(props: {
     <Row id={props.r.id} focused={props.focused}>
       <Title r={props.r} />
       <MetaLine r={props.r} />
+      <OutputTargetPicker r={props.r} />
       <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
         Cancelled
       </div>
@@ -932,6 +937,7 @@ function CompleteRow(props: {
     <Row id={r.id} focused={props.focused}>
       <Title r={r} />
       <MetaLine r={r} />
+      <OutputTargetPicker r={r} />
       {r.processedExternally && (
         <div
           style={{

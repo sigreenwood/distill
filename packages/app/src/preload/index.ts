@@ -16,6 +16,10 @@ const api = {
       ipcRenderer.invoke(Channels.InboxRevealOutput, recordingId, kind),
     listHidden: () => ipcRenderer.invoke(Channels.InboxListHidden),
     unhide: (recordingId: string) => ipcRenderer.invoke(Channels.InboxUnhide, recordingId),
+    setOutputTargets: (
+      recordingId: string,
+      targets: { markdown: boolean; html: boolean; appleNote: boolean },
+    ) => ipcRenderer.invoke(Channels.InboxSetOutputTargets, recordingId, targets),
   },
   pipeline: {
     cancel: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineCancel, recordingId),

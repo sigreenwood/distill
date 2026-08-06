@@ -12,7 +12,8 @@ import { estimateTokenBudget } from './tokenBudget.js';
 import { writeOutputs } from './outputs.js';
 import { CancelledError, isCancelled, throwIfAborted } from './cancellation.js';
 import type { Logger } from './logger.js';
-import type { AppConfig } from './config.js';
+import type { AppConfig, OutputsConfig } from './config.js';
+import { effectiveOutputTargets } from './state.js';
 import type { RecordingRow, State } from './state.js';
 import type { OllamaClient } from './ollama.js';
 
@@ -285,10 +286,16 @@ export async function doWriteOutputs(id: string, signal: AbortSignal, ctx: Pipel
   const row = ctx.state.getRecordingJoined(id);
   if (!row) throw new Error(`No such recording: ${id}`);
   if (!row.summary_text) throw new Error('Cannot write outputs without a summary');
-  const outputs = ctx.getConfig().outputs;
+  const globalOutputs = ctx.getConfig().outputs;
+  const targets = effectiveOutputTargets(row, globalOutputs);
+  const outputs: OutputsConfig = {
+    markdown: { ...globalOutputs.markdown, enabled: targets.markdown },
+    html: { ...globalOutputs.html, enabled: targets.html },
+    appleNotes: { ...globalOutputs.appleNotes, enabled: targets.appleNote },
+  };
   if (!outputs.markdown.enabled && !outputs.html.enabled && !outputs.appleNotes.enabled) {
     throw new Error(
-      'No output destinations are enabled. Open Settings and turn on at least one of Markdown, HTML, or Apple Notes.',
+      'No output destinations are enabled for this recording. Turn one on for this row, or in Settings → Outputs.',
     );
   }
   const skip = {

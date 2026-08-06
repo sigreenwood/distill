@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { stateDbFile } from './paths.js';
+import type { OutputsConfig } from './config.js';
 
 export type RecordingStatus =
   | 'inbox'
@@ -52,6 +53,15 @@ export interface RecordingRow {
   estimated_input_tokens: number | null;
   context_window_at_submit: number | null;
   processed_externally: number;
+  /**
+   * Per-recording output-destination overrides. NULL means "inherit
+   * whatever Settings -> Outputs currently says"; 0/1 is an explicit
+   * override set from a checkbox on the Inbox row, independent of the
+   * global config. See effectiveOutputTargets.
+   */
+  output_markdown: number | null;
+  output_html: number | null;
+  output_apple_note: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -123,6 +133,24 @@ export function nextNeededStep(row: RecordingRow): PipelineStep {
   }
   if (!row.summary_text) return 'summarise';
   return 'write';
+}
+
+/**
+ * Merge a recording's per-row output-destination overrides with the
+ * global Settings -> Outputs config: an explicit 0/1 on the row wins,
+ * NULL falls back to whatever the global flag currently says. Used both
+ * to render the Inbox row's checkboxes and to decide, in doWriteOutputs,
+ * which destinations actually get attempted.
+ */
+export function effectiveOutputTargets(
+  row: Pick<RecordingRow, 'output_markdown' | 'output_html' | 'output_apple_note'>,
+  outputs: OutputsConfig,
+): { markdown: boolean; html: boolean; appleNote: boolean } {
+  return {
+    markdown: row.output_markdown === null ? outputs.markdown.enabled : row.output_markdown === 1,
+    html: row.output_html === null ? outputs.html.enabled : row.output_html === 1,
+    appleNote: row.output_apple_note === null ? outputs.appleNotes.enabled : row.output_apple_note === 1,
+  };
 }
 
 interface Migration {
@@ -320,6 +348,20 @@ const MIGRATIONS: Migration[] = [
       -- way to know retrospectively whether they were copied or
       -- locally produced.
       ALTER TABLE recordings ADD COLUMN processed_externally INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    version: 11,
+    sql: `
+      -- Per-recording output-destination overrides, editable from a
+      -- checkbox on the Inbox row. NULL (the migrated default for every
+      -- existing row) means "inherit Settings -> Outputs' current
+      -- setting"; an explicit 0/1 wins over the global config for that
+      -- one recording only. See effectiveOutputTargets in this file and
+      -- doWriteOutputs in pipelineSteps.ts.
+      ALTER TABLE recordings ADD COLUMN output_markdown   INTEGER;
+      ALTER TABLE recordings ADD COLUMN output_html       INTEGER;
+      ALTER TABLE recordings ADD COLUMN output_apple_note INTEGER;
     `,
   },
 ];
@@ -549,7 +591,16 @@ export class State {
     return hit !== undefined;
   }
 
-  insertRecording(r: Omit<RecordingRow, 'retries' | 'created_at' | 'updated_at'>): void {
+  // output_markdown/output_html/output_apple_note deliberately excluded —
+  // every newly-inserted recording starts at NULL ("inherit Settings ->
+  // Outputs"), which is also SQLite's default for a column not named in
+  // the INSERT below, so callers never need to pass them.
+  insertRecording(
+    r: Omit<
+      RecordingRow,
+      'retries' | 'created_at' | 'updated_at' | 'output_markdown' | 'output_html' | 'output_apple_note'
+    >,
+  ): void {
     const now = Date.now();
     this.db
       .prepare(
@@ -792,6 +843,27 @@ export class State {
       )
       .run(clearAudioPath ? 1 : 0, Date.now(), id);
     return result.changes > 0;
+  }
+
+  /**
+   * Set a recording's per-destination output overrides. Always writes an
+   * explicit 0/1 for all three columns — the Inbox checkboxes are never in
+   * a "some inherited, some overridden" state once the user has touched
+   * one of them for a row. Legal from any status: it only ever changes
+   * what a future write step will attempt (see effectiveOutputTargets),
+   * never anything mid-flight.
+   */
+  setOutputTargets(
+    id: string,
+    targets: { markdown: boolean; html: boolean; appleNote: boolean },
+  ): void {
+    this.db
+      .prepare(
+        `UPDATE recordings
+         SET output_markdown = ?, output_html = ?, output_apple_note = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(targets.markdown ? 1 : 0, targets.html ? 1 : 0, targets.appleNote ? 1 : 0, Date.now(), id);
   }
 
   // --- joined reads ------------------------------------------------------

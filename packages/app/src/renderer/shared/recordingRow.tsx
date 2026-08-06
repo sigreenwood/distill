@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import type { InboxItemDTO } from './api.js';
 
 /**
@@ -149,6 +149,52 @@ export function FullRerunButton({ r }: { r: InboxItemDTO }) {
     >
       Full re-run…
     </button>
+  );
+}
+
+type OutputTargets = InboxItemDTO['outputTargets'];
+const OUTPUT_TARGET_LABELS: [keyof OutputTargets, string][] = [
+  ['markdown', 'MD'],
+  ['html', 'HTML'],
+  ['appleNote', 'Notes'],
+];
+
+/**
+ * Per-recording override for which destinations this row writes to.
+ * Pre-filled from the effective value the main process already computed
+ * (this row's override if it has one, else the current Settings ->
+ * Outputs default) — toggling never touches that global default, only
+ * this one recording. See effectiveOutputTargets in state.ts.
+ *
+ * Checking a box that's already-written on a complete row is a no-op;
+ * checking one that isn't written yet kicks the row back through the
+ * write step for just that destination (handled main-process side, same
+ * mechanism Full re-run uses to resume from `tagged`).
+ */
+export function OutputTargetPicker({ r }: { r: InboxItemDTO }) {
+  const [targets, setTargets] = useState<OutputTargets>(r.outputTargets);
+  useEffect(() => setTargets(r.outputTargets), [r.outputTargets]);
+
+  const toggle = (key: keyof OutputTargets) => {
+    const previous = targets;
+    const next = { ...targets, [key]: !targets[key] };
+    setTargets(next);
+    void window.distill.inbox.setOutputTargets(r.id, next).catch((e) => {
+      setTargets(previous);
+      alert(`Could not update output targets: ${e instanceof Error ? e.message : String(e)}`);
+    });
+  };
+
+  return (
+    <div style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 11, marginBottom: 8 }}>
+      <span className="muted">Write to:</span>
+      {OUTPUT_TARGET_LABELS.map(([key, label]) => (
+        <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+          <input type="checkbox" checked={targets[key]} onChange={() => toggle(key)} />
+          {label}
+        </label>
+      ))}
+    </div>
   );
 }
 
