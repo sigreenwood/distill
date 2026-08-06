@@ -12,6 +12,8 @@ export const Channels = {
   InboxUnhide: 'inbox.unhide',
   PipelineCancel: 'pipeline.cancel',
   PipelineRetry: 'pipeline.retry',
+  PipelineFullRerun: 'pipeline.fullRerun',
+  HistoryList: 'history.list',
   TagSave: 'tag.save',
   TagOpenSheet: 'tag.open-sheet',
   ClientsList: 'clients.list',

@@ -1244,6 +1244,7 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
   const initialDays = props.initial.audioRetentionDays ?? 14;
   const [enabled, setEnabled] = useState(initialEnabled);
   const [daysText, setDaysText] = useState(String(initialDays));
+  const [dismissText, setDismissText] = useState(String(props.initial.autoDismissCompleteMinutes));
   const [launchAtLogin, setLaunchAtLogin] = useState(props.initial.launchAtLogin);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1254,23 +1255,39 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
       launchAtLogin,
       launchAtLoginAvailable: props.initial.launchAtLoginAvailable,
     };
-    if (!enabled) return { ...base, audioRetentionDays: null };
+    const dismissTrimmed = dismissText.trim();
+    const dismissParsed = Number(dismissTrimmed);
+    if (
+      dismissTrimmed.length === 0 ||
+      !Number.isFinite(dismissParsed) ||
+      !Number.isInteger(dismissParsed) ||
+      dismissParsed < 0
+    ) {
+      return null;
+    }
+    if (!enabled) return { ...base, audioRetentionDays: null, autoDismissCompleteMinutes: dismissParsed };
     const trimmed = daysText.trim();
     if (trimmed.length === 0) return null;
     const parsed = Number(trimmed);
     if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
       return null;
     }
-    return { ...base, audioRetentionDays: parsed };
-  }, [enabled, daysText, launchAtLogin, props.initial.launchAtLoginAvailable]);
+    return { ...base, audioRetentionDays: parsed, autoDismissCompleteMinutes: dismissParsed };
+  }, [enabled, daysText, dismissText, launchAtLogin, props.initial.launchAtLoginAvailable]);
 
   const isDirty = useMemo(() => {
     if (!computed) return false;
     return (
       computed.audioRetentionDays !== props.initial.audioRetentionDays ||
+      computed.autoDismissCompleteMinutes !== props.initial.autoDismissCompleteMinutes ||
       computed.launchAtLogin !== props.initial.launchAtLogin
     );
-  }, [computed, props.initial.audioRetentionDays, props.initial.launchAtLogin]);
+  }, [
+    computed,
+    props.initial.audioRetentionDays,
+    props.initial.autoDismissCompleteMinutes,
+    props.initial.launchAtLogin,
+  ]);
 
   const onSave = useCallback(async () => {
     if (!computed) return;
@@ -1343,6 +1360,40 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
                 rather than at distill. Works in an installed copy.
               </>
             )}
+          </div>
+        </section>
+        <section
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Recent list</div>
+          <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>
+            A completed recording moves to Inbox's "Recent" section, then automatically drops to
+            Hidden once it's been there this long — the outputs aren't touched, only the row's
+            visibility. Use 0 to turn off auto-hiding.
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={dismissText}
+              onChange={(e) => {
+                setDismissText(e.target.value);
+                setSavedAt(null);
+              }}
+              style={{ ...inputStyle, width: 80 }}
+            />
+            <span style={{ fontSize: 12 }}>minutes after a summary completes</span>
+          </div>
+          <div className="muted" style={{ ...hintStyle, marginTop: 10 }}>
+            {dismissText.trim() === '0'
+              ? 'Auto-hide is off — completed recordings stay in Recent until you hide them yourself.'
+              : `Recordings move to Hidden ${dismissText || 'N'} minute(s) after completing. Find them again from the Hidden section, or in History.`}
           </div>
         </section>
         <section

@@ -753,6 +753,47 @@ export class State {
     return result.changes > 0;
   }
 
+  /**
+   * Reset a finished recording back to the start of the pipeline: clears
+   * the transcript, summary, and all output tracking, and returns it to
+   * `tagged` so the worker re-transcribes and re-summarises from scratch.
+   * Unlike retry(), which resumes wherever a failed run stopped, this
+   * always restarts from the audio.
+   *
+   * Only legal from `complete`/`skipped` — a fully-finished recording.
+   * `error`/`cancelled` rows already have retry() for resuming; this isn't
+   * a substitute for that.
+   *
+   * The caller owns the destructive housekeeping this implies outside the
+   * DB — deleting the old Markdown/HTML files and Apple Note — before
+   * calling this, since the row is eligible for the worker to claim the
+   * moment it flips to `tagged`.
+   *
+   * @param clearAudioPath - true to null out audio_path too, forcing the
+   *   pipeline through `download` again. Used when the local file is gone
+   *   but the recording has a cloud copy to re-fetch (see audioFileExists
+   *   in pipelineSteps.ts) — audio retention never touches Plaud-sourced
+   *   rows, so this is the 'plaud' fallback path, not the common case.
+   */
+  fullRerun(id: string, clearAudioPath: boolean): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE recordings
+         SET status = 'tagged',
+             transcript_text = NULL, summary_text = NULL,
+             markdown_path = NULL, html_path = NULL, apple_note_id = NULL,
+             markdown_written_at = NULL, html_written_at = NULL, apple_note_written_at = NULL,
+             error = NULL, is_auth_error = 0, last_step = NULL,
+             truncation_warning = 0, estimated_input_tokens = NULL, context_window_at_submit = NULL,
+             processed_externally = 0,
+             audio_path = CASE WHEN ? THEN NULL ELSE audio_path END,
+             updated_at = ?
+         WHERE id = ? AND status IN ('complete', 'skipped')`,
+      )
+      .run(clearAudioPath ? 1 : 0, Date.now(), id);
+    return result.changes > 0;
+  }
+
   // --- joined reads ------------------------------------------------------
 
   private joinSelect = `SELECT r.*, c.name AS client_name, mt.name AS meeting_type_name
@@ -833,6 +874,39 @@ export class State {
     const row = this.db
       .prepare("SELECT COUNT(*) as n FROM recordings WHERE status = 'skipped'")
       .get() as { n: number } | undefined;
+    return row?.n ?? 0;
+  }
+
+  /**
+   * Every recording ever seen, regardless of status — the History window's
+   * unbounded answer to "find that meeting from weeks ago," as opposed to
+   * listActiveJoined()/listHiddenJoined() which both exist to serve the
+   * Inbox's "what needs my attention" purpose and filter accordingly.
+   * `search` matches against filename, client name, or meeting type name;
+   * pass '' for no filter.
+   */
+  listAllJoined(search: string, limit = 50, offset = 0): JoinedRecordingRow[] {
+    const like = `%${search}%`;
+    return this.db
+      .prepare(
+        `${this.joinSelect}
+         WHERE r.filename LIKE ? OR c.name LIKE ? OR mt.name LIKE ?
+         ORDER BY r.synced_at DESC LIMIT ? OFFSET ?`,
+      )
+      .all(like, like, like, limit, offset) as JoinedRecordingRow[];
+  }
+
+  listAllCount(search: string): number {
+    const like = `%${search}%`;
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) as n
+         FROM recordings r
+         LEFT JOIN clients       c  ON c.id  = r.client_id
+         LEFT JOIN meeting_types mt ON mt.id = r.meeting_type_id
+         WHERE r.filename LIKE ? OR c.name LIKE ? OR mt.name LIKE ?`,
+      )
+      .get(like, like, like) as { n: number } | undefined;
     return row?.n ?? 0;
   }
 

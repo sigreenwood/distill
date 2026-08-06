@@ -62,6 +62,7 @@ export default defineConfig({
           tag: resolve(__dirname, 'src/renderer/tag/index.html'),
           settings: resolve(__dirname, 'src/renderer/settings/index.html'),
           setup: resolve(__dirname, 'src/renderer/setup/index.html'),
+          history: resolve(__dirname, 'src/renderer/history/index.html'),
         },
       },
     },

@@ -49,6 +49,8 @@ export interface InboxItemDTO {
   contextWindowAtSubmit: number | null;
   modelSnapshot: string | null;
   processedExternally: boolean;
+  /** Whether a "Full re-run" can re-transcribe this recording — a local audio file, or (Plaud only) a cloud copy to re-fetch. */
+  audioAvailable: boolean;
 }
 
 export interface ClientDTO {
@@ -107,6 +109,8 @@ export interface VocabularyFileDTO {
 
 export interface GeneralDTO {
   audioRetentionDays: number | null;
+  /** Minutes a completed recording stays in the Inbox's "Recent" section before it's auto-hidden. */
+  autoDismissCompleteMinutes: number;
   /** Read from the OS, not from config — it can be changed in System Settings. */
   launchAtLogin: boolean;
   /**
@@ -234,6 +238,14 @@ export interface DistillApi {
   pipeline: {
     cancel(recordingId: string): Promise<void>;
     retry(recordingId: string): Promise<void>;
+    fullRerun(recordingId: string): Promise<{ started: boolean }>;
+  };
+  history: {
+    list(payload: {
+      search?: string;
+      limit?: number;
+      offset?: number;
+    }): Promise<{ total: number; items: InboxItemDTO[] }>;
   };
   tag: {
     open(recordingId: string): Promise<void>;

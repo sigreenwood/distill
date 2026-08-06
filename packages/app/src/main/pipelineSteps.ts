@@ -33,6 +33,16 @@ export interface PipelineContext {
   isPackaged?: boolean;
 }
 
+/**
+ * Whether a recording's stored audio_path still points at a real file.
+ * Used to decide whether "full re-run" can go straight to transcribe, or
+ * (for Plaud recordings, which are never touched by audio retention) needs
+ * to fall back to re-downloading first.
+ */
+export function audioFileExists(row: Pick<RecordingRow, 'audio_path'>): boolean {
+  return row.audio_path !== null && fs.existsSync(row.audio_path);
+}
+
 export async function doDownload(id: string, signal: AbortSignal, ctx: PipelineContext): Promise<void> {
   throwIfAborted(signal, 'download');
   const url = await ctx.plaud.getMp3Url(id);

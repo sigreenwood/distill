@@ -20,6 +20,11 @@ const api = {
   pipeline: {
     cancel: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineCancel, recordingId),
     retry: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineRetry, recordingId),
+    fullRerun: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineFullRerun, recordingId),
+  },
+  history: {
+    list: (payload: { search?: string; limit?: number; offset?: number }) =>
+      ipcRenderer.invoke(Channels.HistoryList, payload),
   },
   tag: {
     open: (recordingId: string) => ipcRenderer.invoke(Channels.TagOpenSheet, recordingId),

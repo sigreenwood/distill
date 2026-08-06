@@ -24,6 +24,7 @@ import {
   configureWindows,
   openInbox,
   openSettings,
+  openHistory,
   openSetup,
   closeAll,
 } from './windows.js';
@@ -249,6 +250,7 @@ app.whenReady().then(async () => {
         broadcastInboxChanged();
       },
       onOpenSettings: () => openSettings(),
+      onOpenHistory: () => openHistory(),
       onPauseChange: (nextPause) => {
         const updated = applyConfigUpdate({ paused: nextPause });
         saveConfig(updated);

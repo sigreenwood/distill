@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { inspectOutputDir } from './outputDirStatus.js';
-import { showAppleNote } from './outputs.js';
+import { showAppleNote, deleteAppleNote } from './outputs.js';
+import { audioFileExists } from './pipelineSteps.js';
 import { app, dialog, ipcMain, shell, BrowserWindow } from 'electron';
 import { Channels, KEEPALIVE_PRESETS, WHISPER_MODEL_PRESETS } from '../shared/ipcChannels.js';
 import { userVocabularyDir } from './paths.js';
@@ -143,6 +144,17 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     };
   });
 
+  ipcMain.handle(Channels.HistoryList, (_evt, payload) => {
+    const p = (payload ?? {}) as { search?: unknown; limit?: unknown; offset?: unknown };
+    const search = typeof p.search === 'string' ? p.search : '';
+    const limit = typeof p.limit === 'number' ? p.limit : 50;
+    const offset = typeof p.offset === 'number' ? p.offset : 0;
+    return {
+      total: ctx.state.listAllCount(search),
+      items: ctx.state.listAllJoined(search, limit, offset).map(toInboxDTO),
+    };
+  });
+
   ipcMain.handle(Channels.InboxUnhide, (_evt, recordingId) => {
     if (typeof recordingId !== 'string') throw new Error('recordingId must be a string');
     const next = ctx.state.unhideRecording(recordingId);
@@ -196,6 +208,51 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     ctx.onStateChanged?.();
     broadcastInboxChanged();
     ctx.getWorker()?.nudge();
+  });
+
+  ipcMain.handle(Channels.PipelineFullRerun, async (_evt, recordingId) => {
+    if (typeof recordingId !== 'string') throw new Error('recordingId must be a string');
+    const row = ctx.state.getRecording(recordingId);
+    if (!row) throw new Error(`No such recording: ${recordingId}`);
+
+    const localFileExists = audioFileExists(row);
+    if (!localFileExists && row.source !== 'plaud') {
+      throw new Error(
+        'The original audio for this recording is gone and there is no cloud copy to re-fetch, so it cannot be re-run.',
+      );
+    }
+
+    const { response } = await dialog.showMessageBox({
+      type: 'warning',
+      buttons: ['Cancel', 'Re-run'],
+      defaultId: 0,
+      cancelId: 0,
+      message: 'Re-run this recording from the original audio?',
+      detail:
+        'This deletes the existing Markdown/HTML file and Apple Note for this recording, then re-transcribes and re-summarises from the original audio. This can\'t be undone.',
+    });
+    if (response !== 1) return { started: false };
+
+    if (row.markdown_path) fs.rmSync(row.markdown_path, { force: true });
+    if (row.html_path) fs.rmSync(row.html_path, { force: true });
+    if (row.apple_note_id) {
+      await deleteAppleNote(row.apple_note_id).catch((e) => {
+        ctx.logger.warn(
+          { err: String(e), recordingId },
+          'could not delete previous Apple Note ahead of full re-run — proceeding anyway',
+        );
+      });
+    }
+
+    const changed = ctx.state.fullRerun(recordingId, !localFileExists);
+    if (!changed) {
+      throw new Error('Recording is not in a re-runnable state (must be complete or hidden).');
+    }
+    ctx.logger.info({ recordingId, redownload: !localFileExists }, 'full re-run started');
+    ctx.onStateChanged?.();
+    broadcastInboxChanged();
+    ctx.getWorker()?.nudge();
+    return { started: true };
   });
 
   ipcMain.handle(Channels.ClientsList, () => {
@@ -688,7 +745,10 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(Channels.SettingsSaveGeneral, (_evt, payload) => {
     const general = assertGeneralDTO(payload);
-    const updated = ctx.applyConfigUpdate({ audioRetentionDays: general.audioRetentionDays });
+    const updated = ctx.applyConfigUpdate({
+      audioRetentionDays: general.audioRetentionDays,
+      autoDismissCompleteMinutes: general.autoDismissCompleteMinutes,
+    });
     saveConfig(updated);
     // Only touch the login item when it can mean something, and only when
     // it actually differs — setLoginItemSettings prompts for approval on
@@ -718,7 +778,11 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       }
     }
     ctx.logger.info(
-      { audioRetentionDays: updated.audioRetentionDays, launchAtLogin },
+      {
+        audioRetentionDays: updated.audioRetentionDays,
+        autoDismissCompleteMinutes: updated.autoDismissCompleteMinutes,
+        launchAtLogin,
+      },
       'general settings saved',
     );
     // Return what is actually true now, so the pane reflects the OS rather
@@ -1024,6 +1088,11 @@ export function toInboxDTO(r: JoinedRecordingRow) {
     contextWindowAtSubmit: r.context_window_at_submit,
     modelSnapshot: r.model_snapshot,
     processedExternally: r.processed_externally === 1,
+    // Gates the "Full re-run" action: a local file to re-transcribe from,
+    // or (Plaud rows only — retention never deletes their audio_path, but
+    // the row may predate a local download, or the file may have been
+    // removed by hand) a cloud copy that can be re-fetched.
+    audioAvailable: audioFileExists(r) || r.source === 'plaud',
   };
 }
 
@@ -1081,6 +1150,7 @@ function launchAtLoginAvailable() {
 function toGeneralDTO(cfg: AppConfig) {
   return {
     audioRetentionDays: cfg.audioRetentionDays,
+    autoDismissCompleteMinutes: cfg.autoDismissCompleteMinutes,
     launchAtLogin: launchAtLoginAvailable() ? app.getLoginItemSettings().openAtLogin : false,
     launchAtLoginAvailable: launchAtLoginAvailable(),
   };
@@ -1450,6 +1520,7 @@ function slugify(s: string): string {
 
 function assertGeneralDTO(v: unknown): {
   audioRetentionDays: number | null;
+  autoDismissCompleteMinutes: number;
   launchAtLogin: boolean;
 } {
   if (!v || typeof v !== 'object') throw new Error('Invalid general payload');
@@ -1460,8 +1531,13 @@ function assertGeneralDTO(v: unknown): {
   }
   const launchAtLogin = o.launchAtLogin;
 
+  const dismiss = o.autoDismissCompleteMinutes;
+  if (typeof dismiss !== 'number' || !Number.isInteger(dismiss) || dismiss < 0) {
+    throw new Error('autoDismissCompleteMinutes must be a non-negative integer (0 disables auto-hide)');
+  }
+
   const raw = o.audioRetentionDays;
-  if (raw === null) return { audioRetentionDays: null, launchAtLogin };
+  if (raw === null) return { audioRetentionDays: null, autoDismissCompleteMinutes: dismiss, launchAtLogin };
   if (typeof raw !== 'number' || !Number.isFinite(raw)) {
     throw new Error('audioRetentionDays must be null or a non-negative integer');
   }
@@ -1471,7 +1547,7 @@ function assertGeneralDTO(v: unknown): {
   if (raw < 0) {
     throw new Error('audioRetentionDays must be ≥ 0 (use null to disable the sweep)');
   }
-  return { audioRetentionDays: raw, launchAtLogin };
+  return { audioRetentionDays: raw, autoDismissCompleteMinutes: dismiss, launchAtLogin };
 }
 
 function assertPerformanceDTO(v: unknown): {

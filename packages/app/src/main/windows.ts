@@ -10,13 +10,14 @@ export interface WindowsContext {
   rendererDistDir: string;
 }
 
-type RendererEntry = 'inbox' | 'tag' | 'settings' | 'setup';
+type RendererEntry = 'inbox' | 'tag' | 'settings' | 'setup' | 'history';
 
 let ctx: WindowsContext | null = null;
 let inboxWin: BrowserWindow | null = null;
 let tagWin: BrowserWindow | null = null;
 let settingsWin: BrowserWindow | null = null;
 let setupWin: BrowserWindow | null = null;
+let historyWin: BrowserWindow | null = null;
 let pendingFocusId: string | null = null;
 
 export function configureWindows(c: WindowsContext): void {
@@ -109,10 +110,12 @@ export function closeAll(): void {
   if (tagWin && !tagWin.isDestroyed()) tagWin.close();
   if (settingsWin && !settingsWin.isDestroyed()) settingsWin.close();
   if (setupWin && !setupWin.isDestroyed()) setupWin.close();
+  if (historyWin && !historyWin.isDestroyed()) historyWin.close();
   inboxWin = null;
   tagWin = null;
   settingsWin = null;
   setupWin = null;
+  historyWin = null;
 }
 
 export function openSettings(opts?: { initialTab?: string }): void {
@@ -152,6 +155,41 @@ export function openSettings(opts?: { initialTab?: string }): void {
   });
   settingsWin.on('closed', () => {
     settingsWin = null;
+  });
+}
+
+export function openHistory(): void {
+  if (!ctx) throw new Error('configureWindows must be called first');
+  if (historyWin && !historyWin.isDestroyed()) {
+    historyWin.show();
+    historyWin.focus();
+    return;
+  }
+  historyWin = new BrowserWindow({
+    width: 700,
+    height: 600,
+    show: false,
+    // Unlike the other windows, a searchable list wants room to grow.
+    resizable: true,
+    minWidth: 480,
+    minHeight: 360,
+    fullscreenable: false,
+    title: 'distill — History',
+    webPreferences: {
+      preload: ctx.preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  centreOnCursorDisplay(historyWin);
+  void loadRendererEntry(historyWin, 'history');
+  historyWin.once('ready-to-show', () => {
+    historyWin?.show();
+    historyWin?.focus();
+  });
+  historyWin.on('closed', () => {
+    historyWin = null;
   });
 }
 
