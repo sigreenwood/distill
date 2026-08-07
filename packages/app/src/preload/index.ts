@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 import { Channels } from '../shared/ipcChannels.js';
+import type { Attendee } from '../shared/attendees.js';
 
 /**
  * The renderer-facing API, exposed as `window.distill`. Every call maps
@@ -32,8 +33,12 @@ const api = {
   },
   tag: {
     open: (recordingId: string) => ipcRenderer.invoke(Channels.TagOpenSheet, recordingId),
-    save: (payload: { recordingId: string; clientId: string; meetingTypeId: string }) =>
-      ipcRenderer.invoke(Channels.TagSave, payload),
+    save: (payload: {
+      recordingId: string;
+      clientId: string;
+      meetingTypeId: string;
+      attendees?: Attendee[];
+    }) => ipcRenderer.invoke(Channels.TagSave, payload),
     getSheetRecordingId: (): string | null => {
       const arg = process.argv.find((a) => a.startsWith('--recording-id='));
       return arg ? arg.slice('--recording-id='.length) : null;

@@ -76,7 +76,7 @@ export function openTagSheet(recordingId: string): void {
   }
   tagWin = new BrowserWindow({
     width: 420,
-    height: 420,
+    height: 560,
     show: false,
     frame: false,
     resizable: false,

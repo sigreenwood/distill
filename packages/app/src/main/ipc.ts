@@ -48,6 +48,7 @@ import type {
   State,
 } from './state.js';
 import type { Worker } from './worker.js';
+import type { Attendee } from '../shared/attendees.js';
 
 export interface IpcContext {
   state: State;
@@ -194,12 +195,17 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(Channels.TagSave, (_evt, payload) => {
     const p = assertTagSavePayload(payload);
-    const changed = ctx.state.tagRecording(p.recordingId, p.clientId, p.meetingTypeId);
+    const changed = ctx.state.tagRecording(p.recordingId, p.clientId, p.meetingTypeId, p.attendees);
     if (!changed) {
       throw new Error('Recording could not be tagged — it may already have been tagged or skipped.');
     }
     ctx.logger.info(
-      { recordingId: p.recordingId, clientId: p.clientId, meetingTypeId: p.meetingTypeId },
+      {
+        recordingId: p.recordingId,
+        clientId: p.clientId,
+        meetingTypeId: p.meetingTypeId,
+        attendeeCount: p.attendees?.length ?? 0,
+      },
       'recording tagged',
     );
     ctx.onStateChanged?.();
@@ -1385,13 +1391,33 @@ function assertTagSavePayload(v: unknown): {
   recordingId: string;
   clientId: string;
   meetingTypeId: string;
+  attendees?: Attendee[];
 } {
   if (!v || typeof v !== 'object') throw new Error('Invalid tag payload');
   const o = v as Record<string, unknown>;
   if (typeof o.recordingId !== 'string') throw new Error('recordingId must be a string');
   if (typeof o.clientId !== 'string') throw new Error('clientId must be a string');
   if (typeof o.meetingTypeId !== 'string') throw new Error('meetingTypeId must be a string');
-  return { recordingId: o.recordingId, clientId: o.clientId, meetingTypeId: o.meetingTypeId };
+  const attendees = o.attendees === undefined ? undefined : assertAttendeesList(o.attendees);
+  return { recordingId: o.recordingId, clientId: o.clientId, meetingTypeId: o.meetingTypeId, attendees };
+}
+
+function assertAttendeesList(v: unknown): Attendee[] {
+  if (!Array.isArray(v)) throw new Error('attendees must be an array');
+  return v.map((entry, i) => {
+    if (!entry || typeof entry !== 'object') throw new Error(`attendees[${i}] is invalid`);
+    const e = entry as Record<string, unknown>;
+    if (typeof e.name !== 'string' || e.name.trim().length === 0) {
+      throw new Error(`attendees[${i}].name must be a non-empty string`);
+    }
+    if (e.email !== null && typeof e.email !== 'string') {
+      throw new Error(`attendees[${i}].email must be a string or null`);
+    }
+    if (e.company !== null && typeof e.company !== 'string') {
+      throw new Error(`attendees[${i}].company must be a string or null`);
+    }
+    return { name: e.name, email: (e.email as string | null) ?? null, company: (e.company as string | null) ?? null };
+  });
 }
 
 function assertOutputTargetsPayload(v: unknown): {

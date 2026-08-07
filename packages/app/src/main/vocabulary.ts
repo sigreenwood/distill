@@ -90,9 +90,15 @@ export function loadVocabulary(
   vocabularyDir: string,
   clientId?: string | null,
   draft?: { scopeId: string; hints: string[] },
+  extraHints: string[] = [],
 ): LoadedVocabulary {
   const sources: string[] = [];
-  const hints: string[] = [];
+  // extraHints (e.g. this recording's pasted attendee names) go first —
+  // more specific than even client-scope vocabulary, so they're the last
+  // thing dropped if the 800-char budget runs out. Not a vocabulary
+  // *file*, so they don't appear in `sources` (which stays about which
+  // scope files contributed, for the vocabulary_sources column).
+  const hints: string[] = [...extraHints];
   const replacements: VocabularyReplacement[] = [];
   const files: string[] = [];
   if (clientId) files.push(`${clientId}.json`);

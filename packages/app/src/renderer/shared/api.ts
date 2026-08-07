@@ -5,6 +5,9 @@
  * match main/ipc.ts DTO mappers.
  */
 
+import type { Attendee } from '../../shared/attendees.js';
+export type { Attendee };
+
 export type RecordingStatus =
   | 'inbox'
   | 'tagged'
@@ -255,7 +258,12 @@ export interface DistillApi {
   };
   tag: {
     open(recordingId: string): Promise<void>;
-    save(payload: { recordingId: string; clientId: string; meetingTypeId: string }): Promise<void>;
+    save(payload: {
+      recordingId: string;
+      clientId: string;
+      meetingTypeId: string;
+      attendees?: Attendee[];
+    }): Promise<void>;
     getSheetRecordingId(): string | null;
   };
   clients: {

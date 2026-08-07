@@ -1,6 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { ClientDTO, MeetingTypeDTO } from '../shared/api.js';
+import { parseAttendeesText, type Attendee } from '../../shared/attendees.js';
+
+function mergeAttendees(existing: Attendee[], parsed: Attendee[]): Attendee[] {
+  const merged = [...existing];
+  for (const a of parsed) {
+    const key = a.email ? a.email.toLowerCase() : a.name.trim().toLowerCase();
+    const dupe = merged.some((m) => (m.email ? m.email.toLowerCase() : m.name.trim().toLowerCase()) === key);
+    if (!dupe) merged.push(a);
+  }
+  return merged;
+}
 
 type LoadState =
   | { kind: 'loading' }
@@ -20,6 +31,8 @@ function Tag() {
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [selectedClientId, setSelectedClientId] = useState('');
   const [selectedMeetingTypeId, setSelectedMeetingTypeId] = useState('');
+  const [attendeePaste, setAttendeePaste] = useState('');
+  const [attendees, setAttendees] = useState<Attendee[]>([]);
   const [addClient, setAddClient] = useState<AddClientState>({ open: false });
   const [addMeetingType, setAddMeetingType] = useState<AddMeetingTypeState>({ open: false });
   const [saving, setSaving] = useState(false);
@@ -40,18 +53,6 @@ function Tag() {
       }
     })();
   }, []);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        window.close();
-      } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-        void onSave();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [selectedClientId, selectedMeetingTypeId, recordingId]);
 
   const onAddClient = useCallback(async () => {
     if (!addClient.open) return;
@@ -116,22 +117,54 @@ function Tag() {
     }
   }, [addMeetingType]);
 
+  const onParseAttendees = useCallback(() => {
+    const parsed = parseAttendeesText(attendeePaste);
+    if (parsed.length === 0) return;
+    setAttendees((prev) => mergeAttendees(prev, parsed));
+    setAttendeePaste('');
+  }, [attendeePaste]);
+
+  const onRemoveAttendee = useCallback((index: number) => {
+    setAttendees((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const onRenameAttendee = useCallback((index: number, name: string) => {
+    setAttendees((prev) => prev.map((a, i) => (i === index ? { ...a, name } : a)));
+  }, []);
+
   const onSave = useCallback(async () => {
     if (!recordingId || !selectedClientId || !selectedMeetingTypeId) return;
     setSaving(true);
     setSaveError(null);
     try {
+      // Anything still sitting unparsed in the paste box (pasted, then
+      // saved without clicking Parse) gets folded in here rather than
+      // silently dropped.
+      const finalAttendees = mergeAttendees(attendees, parseAttendeesText(attendeePaste));
       await window.distill.tag.save({
         recordingId,
         clientId: selectedClientId,
         meetingTypeId: selectedMeetingTypeId,
+        ...(finalAttendees.length > 0 ? { attendees: finalAttendees } : {}),
       });
       window.close();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));
       setSaving(false);
     }
-  }, [recordingId, selectedClientId, selectedMeetingTypeId]);
+  }, [recordingId, selectedClientId, selectedMeetingTypeId, attendees, attendeePaste]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        window.close();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        void onSave();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onSave]);
 
   if (!recordingId) {
     return wrap(
@@ -262,6 +295,59 @@ function Tag() {
             <option disabled>────────────</option>
             <option value="__add__">+ Add new meeting type…</option>
           </select>
+        )}
+      </div>
+      <div>
+        <label>Attendees (optional)</label>
+        <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>
+          Paste the invite's attendee list — names, bare emails, or Outlook's
+          "Name &lt;email&gt;" format all work. Used to help Whisper spell names
+          correctly and to give the summary a roster to reference.
+        </div>
+        <textarea
+          placeholder="Simon Greenwood <greenwood.simon@teradata.com>; jane.doe@acme.com"
+          value={attendeePaste}
+          onChange={(e) => setAttendeePaste(e.target.value)}
+          style={{ minHeight: 50 }}
+          onKeyDown={(e) => e.stopPropagation()}
+        />
+        <div className="row" style={{ marginTop: 6 }}>
+          <button onClick={onParseAttendees} disabled={attendeePaste.trim().length === 0}>
+            Parse
+          </button>
+        </div>
+        {attendees.length > 0 && (
+          <ul style={{ listStyle: 'none', margin: '8px 0 0', padding: 0 }}>
+            {attendees.map((a, i) => (
+              <li
+                key={`${a.email ?? a.name}-${i}`}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}
+              >
+                <input
+                  type="text"
+                  value={a.name}
+                  onChange={(e) => onRenameAttendee(i, e.target.value)}
+                  style={{ flex: 1 }}
+                />
+                {(a.email || a.company) && (
+                  <span
+                    className="muted"
+                    style={{ fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                    title={[a.email, a.company].filter(Boolean).join(' · ')}
+                  >
+                    {[a.email, a.company].filter(Boolean).join(' · ')}
+                  </span>
+                )}
+                <button
+                  onClick={() => onRemoveAttendee(i)}
+                  title="Remove"
+                  style={{ padding: '2px 8px', fontSize: 12 }}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
       {saveError && (

@@ -16,6 +16,7 @@ import type { AppConfig, OutputsConfig } from './config.js';
 import { effectiveOutputTargets } from './state.js';
 import type { RecordingRow, State } from './state.js';
 import type { OllamaClient } from './ollama.js';
+import { parseStoredAttendees, buildAttendeeRoster } from '../shared/attendees.js';
 
 /** The audio source the download step needs: just a temp-URL provider. */
 export interface AudioSource {
@@ -98,8 +99,14 @@ export async function doTranscribe(id: string, signal: AbortSignal, ctx: Pipelin
   if (!row) throw new Error(`No such recording: ${id}`);
   if (!row.audio_path) throw new Error('Cannot transcribe without an audio file');
 
+  const attendees = parseStoredAttendees(row.attendees_json);
   const vocabularyDir = userVocabularyDir();
-  const vocab = loadVocabulary(vocabularyDir, row.client_id);
+  const vocab = loadVocabulary(
+    vocabularyDir,
+    row.client_id,
+    undefined,
+    attendees.map((a) => a.name),
+  );
   if (vocab.sources.length > 0) {
     ctx.logger.info(
       {
@@ -221,8 +228,15 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
   const meetingType = ctx.state.getMeetingType(row.meeting_type_id);
   if (!meetingType) throw new Error(`Meeting type ${row.meeting_type_id} no longer exists`);
 
+  // The attendee roster (if any) goes in the user message ahead of the
+  // transcript, not the system prompt — meeting-type prompts are
+  // hash-tracked for the "modified from default" badge and must stay
+  // exactly what the meeting type says, independent of any one recording.
+  const roster = buildAttendeeRoster(parseStoredAttendees(row.attendees_json));
+  const userContent = roster ? `${roster}\n\n${row.transcript_text}` : row.transcript_text;
+
   const cfg = ctx.getConfig();
-  const budget = estimateTokenBudget(meetingType.prompt, row.transcript_text, cfg.ollama.contextWindow);
+  const budget = estimateTokenBudget(meetingType.prompt, userContent, cfg.ollama.contextWindow);
   if (budget.exceedsBudget) {
     ctx.logger.warn(
       {
@@ -251,7 +265,7 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
         model: cfg.ollama.model,
         messages: [
           { role: 'system', content: meetingType.prompt },
-          { role: 'user', content: row.transcript_text },
+          { role: 'user', content: userContent },
         ],
         keep_alive: cfg.ollama.keepAlive,
         options: {

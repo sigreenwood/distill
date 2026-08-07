@@ -3,6 +3,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { stateDbFile } from './paths.js';
 import type { OutputsConfig } from './config.js';
+import type { Attendee } from '../shared/attendees.js';
 
 export type RecordingStatus =
   | 'inbox'
@@ -62,6 +63,12 @@ export interface RecordingRow {
   output_markdown: number | null;
   output_html: number | null;
   output_apple_note: number | null;
+  /**
+   * JSON-encoded Attendee[] pasted into the tag sheet, or NULL if none
+   * were given. See src/shared/attendees.ts for the shape and parsing,
+   * and doTranscribe/doSummarise in pipelineSteps.ts for how it's used.
+   */
+  attendees_json: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -364,6 +371,18 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE recordings ADD COLUMN output_apple_note INTEGER;
     `,
   },
+  {
+    version: 12,
+    sql: `
+      -- Attendees pasted into the tag sheet (raw Outlook invite text,
+      -- parsed client-side into name/email/company), stored as JSON.
+      -- NULL for every existing row and any recording tagged without
+      -- pasting anything -- the pipeline treats that exactly like today
+      -- (no extra Whisper hints, no roster in the summarise prompt).
+      -- See src/shared/attendees.ts.
+      ALTER TABLE recordings ADD COLUMN attendees_json TEXT;
+    `,
+  },
 ];
 
 export function openDatabase(_path?: string): Database.Database {
@@ -591,14 +610,21 @@ export class State {
     return hit !== undefined;
   }
 
-  // output_markdown/output_html/output_apple_note deliberately excluded —
-  // every newly-inserted recording starts at NULL ("inherit Settings ->
-  // Outputs"), which is also SQLite's default for a column not named in
-  // the INSERT below, so callers never need to pass them.
+  // output_markdown/output_html/output_apple_note/attendees_json
+  // deliberately excluded — every newly-inserted recording starts at
+  // NULL (no per-row output override, no attendees), which is also
+  // SQLite's default for a column not named in the INSERT below, so
+  // callers never need to pass them.
   insertRecording(
     r: Omit<
       RecordingRow,
-      'retries' | 'created_at' | 'updated_at' | 'output_markdown' | 'output_html' | 'output_apple_note'
+      | 'retries'
+      | 'created_at'
+      | 'updated_at'
+      | 'output_markdown'
+      | 'output_html'
+      | 'output_apple_note'
+      | 'attendees_json'
     >,
   ): void {
     const now = Date.now();
@@ -913,14 +939,20 @@ export class State {
    * Returns true iff the recording was actually transitioned (prevents
    * double-tagging via rapid clicks).
    */
-  tagRecording(id: string, clientId: string, meetingTypeId: string): boolean {
+  tagRecording(
+    id: string,
+    clientId: string,
+    meetingTypeId: string,
+    attendees?: Attendee[],
+  ): boolean {
+    const attendeesJson = attendees && attendees.length > 0 ? JSON.stringify(attendees) : null;
     const result = this.db
       .prepare(
         `UPDATE recordings
-         SET client_id = ?, meeting_type_id = ?, status = 'tagged', updated_at = ?
+         SET client_id = ?, meeting_type_id = ?, attendees_json = ?, status = 'tagged', updated_at = ?
          WHERE id = ? AND status = 'inbox'`,
       )
-      .run(clientId, meetingTypeId, Date.now(), id);
+      .run(clientId, meetingTypeId, attendeesJson, Date.now(), id);
     return result.changes > 0;
   }
 
