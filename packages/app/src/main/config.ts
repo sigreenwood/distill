@@ -53,6 +53,15 @@ export interface AppConfig {
   pollIntervalMinutes: number;
   paused: PauseConfig;
   whisperModel: string;
+  /**
+   * Which ASR engine transcribes recordings. 'parakeet' is much faster but
+   * has no prompt/hotword mechanism — vocabulary hints and pasted meeting
+   * attendees don't bias it, only the post-transcription find-and-replace
+   * rules still apply. Opt-in for exactly that reason; see Settings ->
+   * Performance and doTranscribe in pipelineSteps.ts.
+   */
+  transcriptionEngine: 'whisper' | 'parakeet';
+  parakeetModel: string;
   outputs: OutputsConfig;
   /** null = keep audio forever; otherwise days to keep downloaded audio */
   audioRetentionDays: number | null;
@@ -209,6 +218,8 @@ export function normaliseConfig(cfg: any): AppConfig {
     pollIntervalMinutes: cfg.pollIntervalMinutes ?? 5,
     paused: normalisePause(cfg.paused),
     whisperModel: cfg.whisperModel ?? 'mlx-community/whisper-large-v3-mlx',
+    transcriptionEngine: cfg.transcriptionEngine === 'parakeet' ? 'parakeet' : 'whisper',
+    parakeetModel: cfg.parakeetModel ?? 'mlx-community/parakeet-tdt-0.6b-v3',
     outputs,
     audioRetentionDays: normaliseAudioRetentionDays(cfg.audioRetentionDays),
     autoDismissCompleteMinutes:

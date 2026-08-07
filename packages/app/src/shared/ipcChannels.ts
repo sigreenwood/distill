@@ -44,6 +44,8 @@ export const Channels = {
   SettingsDismissModelSuggestion: 'settings.dismissModelSuggestion',
   SettingsPullModel: 'settings.pullModel',
   PushModelPullProgress: 'push:model-pull-progress',
+  SettingsInstallParakeet: 'settings.installParakeet',
+  PushParakeetInstallProgress: 'push:parakeet-install-progress',
   SourcesPlaudSignIn: 'sources.plaudSignIn',
   SourcesPlaudSignOut: 'sources.plaudSignOut',
   SourcesPlaudStatus: 'sources.plaudStatus',

@@ -185,6 +185,69 @@ export async function installVenv(opts: InstallVenvOptions): Promise<InstallVenv
   return { kind: 'success', pythonPath: venvPython() };
 }
 
+/**
+ * Whether parakeet-mlx is importable in the venv. Unlike mlx_whisper /
+ * onnxruntime (checked by detectVenv), this is never part of the base
+ * install — it's an optional, user-toggled engine (see
+ * Settings -> Performance), so a missing import here is a normal state,
+ * not a broken venv.
+ */
+export function isParakeetInstalled(): boolean {
+  const py = venvPython();
+  if (!fs.existsSync(py)) return false;
+  const result = spawnSync(py, ['-c', 'import parakeet_mlx'], { timeout: 5000 });
+  return !result.error && result.status === 0;
+}
+
+export interface InstallParakeetOptions {
+  signal?: AbortSignal;
+  onProgress: (e: SetupProgressEvent) => void;
+  logger?: Logger;
+}
+
+/**
+ * pip-install parakeet-mlx into the existing venv and verify it imports.
+ * Reuses spawnLineByLine exactly as installVenv does for the base
+ * install — the 'installing-packages'/'verifying' phase labels were named
+ * for the full venv setup but apply just as well to installing one more
+ * package into an already-working venv.
+ */
+export async function installParakeet(opts: InstallParakeetOptions): Promise<InstallVenvResult> {
+  const { signal, onProgress, logger } = opts;
+  if (!fs.existsSync(venvPython())) {
+    return { kind: 'failed', phase: 'installing-packages', message: 'No venv found — run setup first.' };
+  }
+
+  onProgress({ phase: 'installing-packages' });
+  logger?.info({ python: venvPython() }, 'installing parakeet-mlx');
+  const pipResult = await spawnLineByLine(
+    venvPython(),
+    ['-m', 'pip', 'install', '--no-input', '--disable-pip-version-check', 'parakeet-mlx'],
+    { signal, onProgress, phase: 'installing-packages' },
+  );
+  if (pipResult.kind === 'cancelled') return { kind: 'cancelled' };
+  if (pipResult.kind === 'failed') {
+    return { kind: 'failed', phase: 'installing-packages', message: pipResult.message };
+  }
+
+  onProgress({ phase: 'verifying' });
+  logger?.info('verifying parakeet_mlx import');
+  const verifyResult = await spawnLineByLine(
+    venvPython(),
+    ['-c', 'import parakeet_mlx; print("ok")'],
+    { signal, onProgress, phase: 'verifying' },
+  );
+  if (verifyResult.kind === 'cancelled') return { kind: 'cancelled' };
+  if (verifyResult.kind === 'failed') {
+    return {
+      kind: 'failed',
+      phase: 'verifying',
+      message: 'Install completed but importing parakeet_mlx still failed. ' + verifyResult.message,
+    };
+  }
+  return { kind: 'success', pythonPath: venvPython() };
+}
+
 type SpawnResult = { kind: 'ok' } | { kind: 'cancelled' } | { kind: 'failed'; message: string };
 
 /**

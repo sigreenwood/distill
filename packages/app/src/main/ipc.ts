@@ -33,6 +33,8 @@ import {
   detectSystemPython,
   detectVenv,
   installVenv,
+  isParakeetInstalled,
+  installParakeet,
   type SetupPhase,
   type VenvStatus,
 } from './pythonEnv.js';
@@ -833,6 +835,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         keepAlive: perf.ollamaKeepAlive,
       },
       whisperModel: perf.whisperModel,
+      transcriptionEngine: perf.transcriptionEngine,
+      parakeetModel: perf.parakeetModel,
     });
     saveConfig(updated);
     ctx.logger.info(
@@ -840,9 +844,38 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         ollamaModel: updated.ollama.model,
         ollamaKeepAlive: updated.ollama.keepAlive,
         whisperModel: updated.whisperModel,
+        transcriptionEngine: updated.transcriptionEngine,
+        parakeetModel: updated.parakeetModel,
       },
       'performance settings saved',
     );
+  });
+
+  ipcMain.handle(Channels.SettingsInstallParakeet, async () => {
+    ctx.logger.info('installing parakeet-mlx at user request');
+    try {
+      const result = await installParakeet({
+        logger: ctx.logger,
+        onProgress: (e) => {
+          for (const win of BrowserWindow.getAllWindows()) {
+            if (!win.isDestroyed()) win.webContents.send(Channels.PushParakeetInstallProgress, e);
+          }
+        },
+      });
+      if (result.kind === 'success') {
+        ctx.logger.info('parakeet-mlx install complete');
+        return { ok: true as const };
+      }
+      if (result.kind === 'cancelled') {
+        return { ok: false as const, error: 'Install cancelled' };
+      }
+      ctx.logger.warn({ phase: result.phase, message: result.message }, 'parakeet-mlx install failed');
+      return { ok: false as const, error: result.message };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      ctx.logger.warn({ err: msg }, 'parakeet-mlx install threw');
+      return { ok: false as const, error: msg };
+    }
   });
 
   ipcMain.handle(Channels.SettingsListOllamaModels, async () => {
@@ -1198,6 +1231,9 @@ function toPerformanceDTO(cfg: AppConfig) {
     ollamaModel: cfg.ollama.model,
     ollamaKeepAlive: cfg.ollama.keepAlive,
     whisperModel: cfg.whisperModel,
+    transcriptionEngine: cfg.transcriptionEngine,
+    parakeetModel: cfg.parakeetModel,
+    parakeetInstalled: isParakeetInstalled(),
   };
 }
 
@@ -1624,6 +1660,8 @@ function assertPerformanceDTO(v: unknown): {
   ollamaModel: string;
   ollamaKeepAlive: string;
   whisperModel: string;
+  transcriptionEngine: 'whisper' | 'parakeet';
+  parakeetModel: string;
 } {
   if (!v || typeof v !== 'object') throw new Error('Invalid performance payload');
   const o = v as Record<string, unknown>;
@@ -1652,7 +1690,15 @@ function assertPerformanceDTO(v: unknown): {
       `whisperModel must be one of the curated MLX models: ${allowedWhisper.join(', ')}`,
     );
   }
-  return { ollamaModel, ollamaKeepAlive: keepAlive, whisperModel };
+  if (o.transcriptionEngine !== 'whisper' && o.transcriptionEngine !== 'parakeet') {
+    throw new Error('transcriptionEngine must be "whisper" or "parakeet"');
+  }
+  const transcriptionEngine = o.transcriptionEngine;
+  if (typeof o.parakeetModel !== 'string' || o.parakeetModel.trim().length === 0) {
+    throw new Error('parakeetModel must be a non-empty string');
+  }
+  const parakeetModel = o.parakeetModel.trim();
+  return { ollamaModel, ollamaKeepAlive: keepAlive, whisperModel, transcriptionEngine, parakeetModel };
 }
 
 function assertPlaudSignInPayload(v: unknown): {

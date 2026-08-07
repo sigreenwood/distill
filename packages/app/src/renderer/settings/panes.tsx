@@ -1492,6 +1492,35 @@ export function PerformancePane(props: {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [installingParakeet, setInstallingParakeet] = useState(false);
+  const [parakeetInstallLog, setParakeetInstallLog] = useState<string[]>([]);
+  const [parakeetInstallError, setParakeetInstallError] = useState<string | null>(null);
+
+  useEffect(() => {
+    return window.distill.onParakeetInstallProgress((p) => {
+      if (p.log) {
+        setParakeetInstallLog((prev) => [...prev.slice(-199), p.log!.text]);
+      }
+    });
+  }, []);
+
+  const onInstallParakeet = useCallback(async () => {
+    setInstallingParakeet(true);
+    setParakeetInstallError(null);
+    setParakeetInstallLog([]);
+    try {
+      const result = await window.distill.settings.installParakeet();
+      if (result.ok) {
+        setDraft((prev) => ({ ...prev, parakeetInstalled: true }));
+      } else {
+        setParakeetInstallError(result.error);
+      }
+    } catch (e) {
+      setParakeetInstallError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInstallingParakeet(false);
+    }
+  }, []);
 
   const refreshModels = useCallback(async () => {
     setLoadingModels(true);
@@ -1519,9 +1548,11 @@ export function PerformancePane(props: {
   const isDirty =
     draft.ollamaModel !== props.initial.ollamaModel ||
     draft.ollamaKeepAlive !== props.initial.ollamaKeepAlive ||
-    draft.whisperModel !== props.initial.whisperModel;
+    draft.whisperModel !== props.initial.whisperModel ||
+    draft.transcriptionEngine !== props.initial.transcriptionEngine;
   const ollamaUnreachable = ollamaError !== null;
-  const canSave = !saving && isDirty && !ollamaUnreachable;
+  const parakeetNotReady = draft.transcriptionEngine === 'parakeet' && !draft.parakeetInstalled;
+  const canSave = !saving && isDirty && !ollamaUnreachable && !parakeetNotReady;
 
   const onSave = useCallback(async () => {
     setError(null);
@@ -1654,35 +1685,115 @@ export function PerformancePane(props: {
             marginBottom: 12,
           }}
         >
-          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Whisper model</div>
+          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Transcription engine</div>
           <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>
-            Larger models give better transcription, especially on names and technical terms, but use
-            more RAM and CPU. The vocabulary system compensates somewhat for smaller models.
+            What actually turns audio into text.
           </div>
-          <select
-            value={draft.whisperModel}
-            onChange={(e) => {
-              setDraft({ ...draft, whisperModel: e.target.value });
-              setSavedAt(null);
-            }}
-            style={{ ...inputStyle, width: '100%' }}
-          >
-            {!WHISPER_MODEL_PRESETS.some((p) => p.value === draft.whisperModel) && (
-              <option value={draft.whisperModel}>{draft.whisperModel} — custom</option>
-            )}
-            {WHISPER_MODEL_PRESETS.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-          {!WHISPER_MODEL_PRESETS.some((p) => p.value === draft.whisperModel) && (
-            <div className="muted" style={{ ...hintStyle, marginTop: 6 }}>
-              Your config currently points at a custom Whisper model. Saving will switch to the picked
-              preset.
-            </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginBottom: 6 }}>
+            <input
+              type="radio"
+              name="transcriptionEngine"
+              checked={draft.transcriptionEngine === 'whisper'}
+              onChange={() => {
+                setDraft({ ...draft, transcriptionEngine: 'whisper' });
+                setSavedAt(null);
+              }}
+            />
+            Whisper (MLX)
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+            <input
+              type="radio"
+              name="transcriptionEngine"
+              checked={draft.transcriptionEngine === 'parakeet'}
+              onChange={() => {
+                setDraft({ ...draft, transcriptionEngine: 'parakeet' });
+                setSavedAt(null);
+              }}
+            />
+            Parakeet (MLX) — experimental
+          </label>
+          {draft.transcriptionEngine === 'parakeet' && (
+            <>
+              <div style={warningBoxStyle}>
+                Parakeet is experimental. It does not support vocabulary-based name biasing — your
+                Vocabulary hints and pasted meeting attendees will not influence transcription.
+                Find-and-replace rules still apply afterward. This will improve if NVIDIA's upstream
+                word-boosting work for Parakeet lands in the MLX port.
+              </div>
+              {!draft.parakeetInstalled ? (
+                <div style={{ marginTop: 10 }}>
+                  <button onClick={() => void onInstallParakeet()} disabled={installingParakeet}>
+                    {installingParakeet ? 'Installing…' : 'Install Parakeet MLX'}
+                  </button>
+                  {parakeetInstallError && (
+                    <div style={{ color: 'var(--danger)', fontSize: 11, marginTop: 6 }}>
+                      {parakeetInstallError}
+                    </div>
+                  )}
+                  {parakeetInstallLog.length > 0 && (
+                    <pre
+                      style={{
+                        marginTop: 6,
+                        maxHeight: 100,
+                        overflowY: 'auto',
+                        fontSize: 10,
+                        padding: 8,
+                        background: 'var(--row-hover)',
+                        borderRadius: 4,
+                      }}
+                    >
+                      {parakeetInstallLog.join('\n')}
+                    </pre>
+                  )}
+                </div>
+              ) : (
+                <div className="muted" style={{ ...hintStyle, marginTop: 10 }}>
+                  Parakeet MLX is installed ({draft.parakeetModel}).
+                </div>
+              )}
+            </>
           )}
         </section>
+        {draft.transcriptionEngine === 'whisper' && (
+          <section
+            style={{
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              padding: 12,
+              marginBottom: 12,
+            }}
+          >
+            <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Whisper model</div>
+            <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>
+              Larger models give better transcription, especially on names and technical terms, but use
+              more RAM and CPU. The vocabulary system compensates somewhat for smaller models.
+            </div>
+            <select
+              value={draft.whisperModel}
+              onChange={(e) => {
+                setDraft({ ...draft, whisperModel: e.target.value });
+                setSavedAt(null);
+              }}
+              style={{ ...inputStyle, width: '100%' }}
+            >
+              {!WHISPER_MODEL_PRESETS.some((p) => p.value === draft.whisperModel) && (
+                <option value={draft.whisperModel}>{draft.whisperModel} — custom</option>
+              )}
+              {WHISPER_MODEL_PRESETS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            {!WHISPER_MODEL_PRESETS.some((p) => p.value === draft.whisperModel) && (
+              <div className="muted" style={{ ...hintStyle, marginTop: 6 }}>
+                Your config currently points at a custom Whisper model. Saving will switch to the picked
+                preset.
+              </div>
+            )}
+          </section>
+        )}
         {error && (
           <div role="alert" style={errorBoxStyle}>
             {error}
@@ -1704,7 +1815,9 @@ export function PerformancePane(props: {
             title={
               ollamaUnreachable
                 ? 'Ollama is unreachable — start Ollama and refresh before saving'
-                : undefined
+                : parakeetNotReady
+                  ? 'Install Parakeet MLX before switching to it'
+                  : undefined
             }
           >
             {saving ? 'Saving…' : 'Save'}

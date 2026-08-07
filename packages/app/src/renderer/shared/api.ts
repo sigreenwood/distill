@@ -129,6 +129,10 @@ export interface PerformanceDTO {
   ollamaModel: string;
   ollamaKeepAlive: string;
   whisperModel: string;
+  transcriptionEngine: 'whisper' | 'parakeet';
+  parakeetModel: string;
+  /** Whether parakeet-mlx is importable in the venv right now — drives the Install button. */
+  parakeetInstalled: boolean;
 }
 
 export type PlaudStatusDTO =
@@ -170,6 +174,11 @@ export interface ModelPullProgressDTO {
   completed?: number;
   total?: number;
   percent: number | null;
+}
+
+export interface ParakeetInstallProgressDTO {
+  phase: 'installing-packages' | 'verifying';
+  log?: { stream: 'stdout' | 'stderr'; text: string };
 }
 
 export interface VocabularyBudgetDTO {
@@ -304,6 +313,7 @@ export interface DistillApi {
     revealPath(dir: string): Promise<void>;
     dismissModelSuggestion(): Promise<void>;
     pullModel(model: string): Promise<{ ok: true } | { ok: false; error: string }>;
+    installParakeet(): Promise<{ ok: true } | { ok: false; error: string }>;
   };
   sources: {
     signInPlaud(payload: { email: string; password: string; region: string }): Promise<PlaudStatusDTO>;
@@ -326,6 +336,7 @@ export interface DistillApi {
   onLocalImportProgress(handler: (p: LocalImportProgressDTO) => void): () => void;
   onSetupProgress(handler: (e: SetupProgressDTO) => void): () => void;
   onModelPullProgress(handler: (p: ModelPullProgressDTO) => void): () => void;
+  onParakeetInstallProgress(handler: (p: ParakeetInstallProgressDTO) => void): () => void;
 }
 
 declare global {

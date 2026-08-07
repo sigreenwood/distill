@@ -93,6 +93,26 @@ interface TranscribeOutput {
   };
 }
 
+/**
+ * The engine-specific slice of transcribe.py's CLI args — split out from
+ * doTranscribe so the "parakeet never gets --initial-prompt" rule (it has
+ * no prompt/hotword mechanism at all) is a pure, unit-testable function
+ * rather than something buried in a much larger one.
+ */
+export function buildTranscribeArgs(opts: {
+  engine: 'whisper' | 'parakeet';
+  whisperModel: string;
+  parakeetModel: string;
+  initialPrompt: string | null;
+}): string[] {
+  if (opts.engine === 'parakeet') {
+    return ['--engine', 'parakeet', '--parakeet-model', opts.parakeetModel];
+  }
+  const args = ['--whisper-model', opts.whisperModel];
+  if (opts.initialPrompt) args.push('--initial-prompt', opts.initialPrompt);
+  return args;
+}
+
 export async function doTranscribe(id: string, signal: AbortSignal, ctx: PipelineContext): Promise<void> {
   throwIfAborted(signal, 'transcribe');
   const row = ctx.state.getRecording(id);
@@ -107,7 +127,21 @@ export async function doTranscribe(id: string, signal: AbortSignal, ctx: Pipelin
     undefined,
     attendees.map((a) => a.name),
   );
-  if (vocab.sources.length > 0) {
+  const cfg = ctx.getConfig();
+
+  if (cfg.transcriptionEngine === 'parakeet') {
+    // Hints were still computed above (needed for vocab.replacements,
+    // which runs post-transcription regardless of engine) but never reach
+    // the subprocess — log that plainly rather than the usual
+    // hints-used/dropped breakdown, which would misleadingly imply they
+    // were attempted.
+    if (vocab.sources.length > 0 || attendees.length > 0) {
+      ctx.logger.info(
+        { id, sources: vocab.sources, attendeeNames: attendees.length, replacements: vocab.replacements.length },
+        'vocabulary loaded, but hints are not used — parakeet engine has no prompt/hotword mechanism (find-and-replace rules still apply)',
+      );
+    }
+  } else if (vocab.sources.length > 0) {
     ctx.logger.info(
       {
         id,
@@ -139,14 +173,19 @@ export async function doTranscribe(id: string, signal: AbortSignal, ctx: Pipelin
     }
   }
 
-  const cfg = ctx.getConfig();
   const pyBinary = resolvePythonBinary(ctx.packageDir);
   const script = bundledTranscribeScript();
-  const args = [script, '--audio', row.audio_path, '--whisper-model', cfg.whisperModel];
-  if (vocab.whisperPrompt) {
-    args.push('--initial-prompt', vocab.whisperPrompt);
-  }
-  ctx.logger.info({ id, pyBinary, model: cfg.whisperModel }, 'starting transcription');
+  const engineArgs = buildTranscribeArgs({
+    engine: cfg.transcriptionEngine,
+    whisperModel: cfg.whisperModel,
+    parakeetModel: cfg.parakeetModel,
+    initialPrompt: vocab.whisperPrompt || null,
+  });
+  const args = [script, '--audio', row.audio_path, ...engineArgs];
+  ctx.logger.info(
+    { id, pyBinary, engine: cfg.transcriptionEngine, model: cfg.transcriptionEngine === 'parakeet' ? cfg.parakeetModel : cfg.whisperModel },
+    'starting transcription',
+  );
   const proc = spawn(pyBinary, args, { signal });
   let stdout = '';
   let stderr = '';

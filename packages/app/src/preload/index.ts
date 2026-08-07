@@ -93,6 +93,7 @@ const api = {
     revealPath: (dir: string) => ipcRenderer.invoke(Channels.SettingsRevealPath, dir),
     dismissModelSuggestion: () => ipcRenderer.invoke(Channels.SettingsDismissModelSuggestion),
     pullModel: (model: string) => ipcRenderer.invoke(Channels.SettingsPullModel, model),
+    installParakeet: () => ipcRenderer.invoke(Channels.SettingsInstallParakeet),
   },
   sources: {
     signInPlaud: (payload: { email: string; password: string; region: string }) =>
@@ -130,6 +131,11 @@ const api = {
     const wrapped = (_evt: IpcRendererEvent, e: unknown) => handler(e);
     ipcRenderer.on(Channels.PushSetupProgress, wrapped);
     return () => ipcRenderer.off(Channels.PushSetupProgress, wrapped);
+  },
+  onParakeetInstallProgress: (handler: (p: unknown) => void) => {
+    const wrapped = (_evt: IpcRendererEvent, p: unknown) => handler(p);
+    ipcRenderer.on(Channels.PushParakeetInstallProgress, wrapped);
+    return () => ipcRenderer.off(Channels.PushParakeetInstallProgress, wrapped);
   },
   onModelPullProgress: (handler: (p: unknown) => void) => {
     const wrapped = (_evt: IpcRendererEvent, p: unknown) => handler(p);
