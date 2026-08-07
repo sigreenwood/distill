@@ -314,19 +314,29 @@ def flatten_segments_to_paragraphs(segments: list[dict]) -> str:
 
 
 def decode_audio(path: Path) -> "np.ndarray":
-    """Decode to float32 mono 16k.
+    """Decode to float32 mono 16k, always as a real numpy array.
 
     Primary path is mlx_whisper's ffmpeg-based loader (identical samples
     to what plain `mlx_whisper.transcribe(path)` would see). Machines
     without the ffmpeg CLI fall back to soundfile (libsndfile handles
     mp3/wav/flac/ogg) with linear resampling to 16k — slightly lower
     resample quality, but it beats not transcribing at all.
+
+    load_audio returns an mlx.core.array, not numpy — silently different
+    from the soundfile fallback's real np.ndarray. VAD (SileroVad.speech_probs,
+    onnxruntime) requires actual numpy and fails with a TypeError on
+    mx.array's .astype() (it wants an mx.Dtype, not a numpy dtype class).
+    Discovered because that failure is caught and downgraded to "transcribing
+    without VAD" (apply_vad must never take transcription down with it) —
+    so on any machine with ffmpeg installed, VAD was silently never running
+    at all. Converting here, once, keeps every downstream consumer (VAD,
+    both ASR engines) on one real type.
     """
     import numpy as np
     from mlx_whisper.audio import load_audio
 
     try:
-        return load_audio(str(path))
+        return np.asarray(load_audio(str(path)))
     except FileNotFoundError:
         emit_warning("ffmpeg not found — decoding with soundfile instead.")
     except Exception as e:
@@ -450,6 +460,17 @@ def transcribe_whisper(audio: "np.ndarray", args: Args) -> tuple[str, str, str]:
     return text, args.whisper_model, result.get("language", "unknown")
 
 
+# Mirrors parakeet-mlx CLI's own --chunk-duration/--overlap-duration
+# defaults. These are NOT applied automatically by the Python API — unlike
+# the CLI, model.transcribe(path) with no kwargs tries to process the
+# entire file in one pass. Found the hard way: an unchunked ~94-minute
+# meeting blew past Metal's max buffer size (18.5GB requested vs a ~14GB
+# cap) and crashed outright. Passing these explicitly is load-bearing,
+# not a tuning knob.
+PARAKEET_CHUNK_DURATION_SECONDS = 120.0
+PARAKEET_OVERLAP_DURATION_SECONDS = 15.0
+
+
 def transcribe_parakeet(audio: "np.ndarray", args: Args) -> tuple[str, str, str]:
     """Returns (text, model_id_used, language). Parakeet doesn't report a
     detected language, so "unknown" is returned for parity with Whisper's
@@ -472,9 +493,11 @@ def transcribe_parakeet(audio: "np.ndarray", args: Args) -> tuple[str, str, str]
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             tmp_path = Path(tmp.name)
         sf.write(str(tmp_path), audio, WHISPER_SAMPLE_RATE)
-        # Chunking for long audio is built into parakeet-mlx (default 120s
-        # chunks, 15s overlap) — no manual chunking needed here.
-        result = model.transcribe(str(tmp_path))
+        result = model.transcribe(
+            str(tmp_path),
+            chunk_duration=PARAKEET_CHUNK_DURATION_SECONDS,
+            overlap_duration=PARAKEET_OVERLAP_DURATION_SECONDS,
+        )
     finally:
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
