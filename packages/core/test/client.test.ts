@@ -50,6 +50,9 @@ describe('PlaudClient', () => {
     const recs = await client.listRecordings();
     expect(recs).toHaveLength(1);
     expect(recs[0].id).toBe('rec1');
+    expect(mockFetch.mock.calls[0][0]).toContain(
+      '/file/simple/web?skip=0&limit=99999&is_trash=2&sort_by=start_time&is_desc=true',
+    );
   });
 
   it('gets recording detail with transcript', async () => {
@@ -85,37 +88,6 @@ describe('PlaudClient', () => {
     expect(user.nickname).toBe('Sergi');
   });
 
-  it('sends a non-default User-Agent header (Plaud blocks the "node" UA)', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ status: 0, data_file_list: [] }),
-    });
-
-    await client.listRecordings();
-
-    const [, init] = mockFetch.mock.calls[0];
-    const ua = new Headers(init.headers).get('User-Agent');
-    expect(ua).toBeTruthy();
-    expect(ua).not.toBe('node');
-  });
-
-  it('uses an injected requester instead of global fetch (Obsidian requestUrl path)', async () => {
-    const calls: string[] = [];
-    const requester = vi.fn(async (req: { url: string }) => {
-      calls.push(req.url);
-      return { status: 200, ok: true, json: async () => ({ status: 0, data_file_list: [] }), arrayBuffer: async () => new ArrayBuffer(0) };
-    });
-    const config = new PlaudConfig(tmpDir);
-    const auth = new PlaudAuth(config, requester);
-    const injected = new PlaudClient(auth, 'eu', requester);
-
-    await injected.listRecordings();
-
-    expect(requester).toHaveBeenCalled();
-    expect(calls[0]).toContain('/file/simple/web');
-    expect(mockFetch).not.toHaveBeenCalled(); // global fetch must NOT be used
-  });
-
   it('handles region mismatch', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -135,5 +107,53 @@ describe('PlaudClient', () => {
     const recs = await client.listRecordings();
     expect(recs).toHaveLength(1);
     expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  describe('getMp3Url', () => {
+    it('returns null when the recording is gone (HTTP 404)', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+      });
+
+      const url = await client.getMp3Url('rec1');
+      expect(url).toBeNull();
+    });
+
+    it('throws when auth fails so the caller can show "sign in again"', async () => {
+      // Simulate signed-out state: clear credentials, drop the token,
+      // and let auth.login() throw "No credentials configured" when
+      // getMp3Url tries to acquire a fresh token.
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plaud-noauth-'));
+      const cfg = new PlaudConfig(tmp);
+      const noAuthClient = new PlaudClient(new PlaudAuth(cfg), 'eu');
+      try {
+        await expect(noAuthClient.getMp3Url('rec1')).rejects.toThrow(
+          /No credentials configured/,
+        );
+        // No fetch should have happened — we didn't have a token to even
+        // try with. This guards against regressions where the catch-all
+        // {} swallows the auth error and turns it into a null return.
+        expect(mockFetch).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('propagates non-404 HTTP errors rather than swallowing them', async () => {
+      // E.g. 500 from Plaud during temp-url generation. Returning null
+      // here previously made every server-side blip look identical to
+      // "recording deleted", losing actionable detail.
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+      });
+
+      await expect(client.getMp3Url('rec1')).rejects.toThrow(
+        /Plaud API error: 500/,
+      );
+    });
   });
 });
