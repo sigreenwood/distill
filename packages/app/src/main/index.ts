@@ -209,6 +209,8 @@ app.whenReady().then(async () => {
       kind: installStatus.kind,
       pythonPath: installStatus.kind === 'ready' ? installStatus.pythonPath : null,
       source: installStatus.kind === 'ready' ? installStatus.source : undefined,
+      // Why it isn't ready — otherwise every cause looks the same here.
+      venvStatus: installStatus.kind === 'ready' ? undefined : installStatus.venvStatus,
     },
     'python install status',
   );

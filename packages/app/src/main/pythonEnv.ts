@@ -14,7 +14,18 @@ export type VenvStatus =
   | { kind: 'missing' }
   | { kind: 'broken'; reason: string }
   | { kind: 'wrong-version'; pythonPath: string; foundVersion: string }
-  | { kind: 'incomplete'; pythonPath: string; pythonVersion: string };
+  | { kind: 'incomplete'; pythonPath: string; pythonVersion: string; reason: string };
+
+/**
+ * How long the startup import check may take. distill launches at login,
+ * when importing mlx and onnxruntime means paging them in from a cold
+ * disk while everything else is starting too. That was measured at
+ * 10–12s on a machine where the same import takes ~1.2s warm — so the
+ * old 10s limit failed on nearly every login, and the app sat in the
+ * setup window instead of processing recordings. The check only runs
+ * once, before any window exists, so waiting longer costs nothing.
+ */
+export const IMPORT_CHECK_TIMEOUT_MS = 60_000;
 
 export type SystemPythonResult =
   | { kind: 'found'; path: string; version: string }
@@ -68,12 +79,37 @@ export function detectVenv(): VenvStatus {
   // window, which pip-installs the current requirements.txt.
   const importResult = spawnSync(py, ['-c', 'import mlx_whisper, onnxruntime'], {
     encoding: 'utf-8',
-    timeout: 10_000,
+    timeout: IMPORT_CHECK_TIMEOUT_MS,
   });
   if (importResult.status !== 0) {
-    return { kind: 'incomplete', pythonPath: py, pythonVersion: versionLine };
+    return {
+      kind: 'incomplete',
+      pythonPath: py,
+      pythonVersion: versionLine,
+      reason: describeImportFailure(importResult),
+    };
   }
   return { kind: 'ready', pythonPath: py, pythonVersion: versionLine };
+}
+
+/**
+ * Why the import check failed, for the log. A timeout and a missing
+ * package both land in the setup window, but only one of them means
+ * anything is actually wrong with the environment.
+ */
+export function describeImportFailure(r: {
+  status: number | null;
+  signal?: NodeJS.Signals | null;
+  error?: Error;
+  stderr?: string | null;
+}): string {
+  if ((r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') {
+    return `import check timed out after ${IMPORT_CHECK_TIMEOUT_MS / 1000}s`;
+  }
+  if (r.error) return `import check could not run: ${r.error.message}`;
+  if (r.status === null) return `import check killed by ${r.signal ?? 'a signal'}`;
+  const lastLine = (r.stderr ?? '').trim().split('\n').pop() ?? '';
+  return lastLine ? `import failed: ${lastLine}` : `import exited ${r.status}`;
 }
 
 export function detectSystemPython(): SystemPythonResult {
