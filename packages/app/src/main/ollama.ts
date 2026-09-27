@@ -22,6 +22,13 @@ export interface OllamaChatRequest {
   messages: { role: 'system' | 'user' | 'assistant'; content: string }[];
   options?: { temperature?: number; num_ctx?: number };
   keep_alive?: string;
+  /**
+   * Hidden reasoning for thinking-capable models (qwen3 and later).
+   * Summaries pass false: a summary is extraction, and reasoning tokens
+   * are generated (and waited for) before any of it. Ollama ignores the
+   * field for models without a thinking mode.
+   */
+  think?: boolean;
 }
 
 export interface OllamaChatResponse {

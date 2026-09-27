@@ -257,6 +257,7 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
           { role: 'system', content: meetingType.prompt },
           { role: 'user', content: userContent },
         ],
+        think: false,
         keep_alive: cfg.ollama.keepAlive,
         options: {
           num_ctx: cfg.ollama.contextWindow,
