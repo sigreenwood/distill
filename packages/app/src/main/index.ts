@@ -38,6 +38,10 @@ import { importLocalFile, LocalImportError } from './localImport.js';
 import { migrateScopeRenames, migrateVocabularyToUserDir } from './vocabulary.js';
 import { startSweepSchedule, sweepStateFor, nodeFs } from './audioRetention.js';
 import { startModelUpdateCheck } from './modelUpdateCheck.js';
+import { withToolDirs } from './toolPath.js';
+
+// Before anything spawns ffmpeg, ffprobe or Python — see toolPath.ts.
+process.env.PATH = withToolDirs(process.env.PATH);
 
 app.dock?.hide();
 
