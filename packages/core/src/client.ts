@@ -52,7 +52,14 @@ export class PlaudClient {
   }
 
   async listRecordings(): Promise<PlaudRecording[]> {
-    const data = await this.request('/file/simple/web');
+    // Without parameters the endpoint returns at most 1000 recordings
+    // (every poll logged totalSeen: 1000 on an account with more), so
+    // the rest never sync. These are the parameters Plaud Web sends:
+    // `skip`/`limit` page the list, and `is_trash=2` asks for active and
+    // trashed rows alike — trash is filtered below, as before.
+    const data = await this.request(
+      '/file/simple/web?skip=0&limit=99999&is_trash=2&sort_by=start_time&is_desc=true',
+    );
     const list: PlaudRecording[] = data.data_file_list ?? data.data ?? [];
     return list.filter(r => !r.is_trash);
   }
