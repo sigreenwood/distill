@@ -16,14 +16,28 @@ const api = {
       ipcRenderer.invoke(Channels.InboxRevealOutput, recordingId, kind),
     listHidden: () => ipcRenderer.invoke(Channels.InboxListHidden),
     unhide: (recordingId: string) => ipcRenderer.invoke(Channels.InboxUnhide, recordingId),
+    setOutputTargets: (
+      recordingId: string,
+      targets: { markdown: boolean; html: boolean; appleNote: boolean },
+    ) => ipcRenderer.invoke(Channels.InboxSetOutputTargets, recordingId, targets),
   },
   pipeline: {
     cancel: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineCancel, recordingId),
     retry: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineRetry, recordingId),
+    fullRerun: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineFullRerun, recordingId),
+  },
+  history: {
+    list: (payload: { search: string; limit?: number; offset?: number }) =>
+      ipcRenderer.invoke(Channels.HistoryList, payload),
   },
   tag: {
     open: (recordingId: string) => ipcRenderer.invoke(Channels.TagOpenSheet, recordingId),
-    save: (payload: { recordingId: string; clientId: string; meetingTypeId: string }) =>
+    save: (payload: {
+      recordingId: string;
+      clientId: string;
+      meetingTypeId: string;
+      attendees?: { name: string; email: string | null; company: string | null }[];
+    }) =>
       ipcRenderer.invoke(Channels.TagSave, payload),
     getSheetRecordingId: (): string | null => {
       const arg = process.argv.find((a) => a.startsWith('--recording-id='));
@@ -67,6 +81,8 @@ const api = {
       ipcRenderer.invoke(Channels.SettingsImportVocabulary, scopeId),
     exportVocabulary: (scopeId: string) =>
       ipcRenderer.invoke(Channels.SettingsExportVocabulary, scopeId),
+    previewVocabularyBudget: (payload: { scopeId: string; hints: string[] }) =>
+      ipcRenderer.invoke(Channels.SettingsPreviewVocabularyBudget, payload),
     saveGeneral: (payload: unknown) => ipcRenderer.invoke(Channels.SettingsSaveGeneral, payload),
     savePerformance: (payload: unknown) =>
       ipcRenderer.invoke(Channels.SettingsSavePerformance, payload),

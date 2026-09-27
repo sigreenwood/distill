@@ -10,10 +10,11 @@ import { loadVocabulary, applyReplacements } from './vocabulary.js';
 import { cleanWhisperRepetitions } from './transcriptCleanup.js';
 import { estimateTokenBudget } from './tokenBudget.js';
 import { writeOutputs } from './outputs.js';
+import { buildAttendeeRoster, parseStoredAttendees } from '../shared/attendees.js';
 import { CancelledError, isCancelled, throwIfAborted } from './cancellation.js';
 import type { Logger } from './logger.js';
 import type { AppConfig } from './config.js';
-import type { RecordingRow, State } from './state.js';
+import { effectiveOutputTargets, type RecordingRow, type State } from './state.js';
 import type { OllamaClient } from './ollama.js';
 
 /** The audio source the download step needs: just a temp-URL provider. */
@@ -87,8 +88,17 @@ export async function doTranscribe(id: string, signal: AbortSignal, ctx: Pipelin
   if (!row) throw new Error(`No such recording: ${id}`);
   if (!row.audio_path) throw new Error('Cannot transcribe without an audio file');
 
+  // Attendee names from the tag sheet go ahead of the scope hints so
+  // they survive the Whisper prompt budget — they're the words this one
+  // recording is most likely to get wrong.
+  const attendees = parseStoredAttendees(row.attendees_json);
   const vocabularyDir = userVocabularyDir();
-  const vocab = loadVocabulary(vocabularyDir, row.client_id);
+  const vocab = loadVocabulary(
+    vocabularyDir,
+    row.client_id,
+    undefined,
+    attendees.map((a) => a.name),
+  );
   if (vocab.sources.length > 0) {
     ctx.logger.info(
       {
@@ -210,8 +220,13 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
   const meetingType = ctx.state.getMeetingType(row.meeting_type_id);
   if (!meetingType) throw new Error(`Meeting type ${row.meeting_type_id} no longer exists`);
 
+  // Prepend the attendee roster (if any) so the summary can attribute
+  // actions to the right people. Counted in the budget like the rest.
+  const roster = buildAttendeeRoster(parseStoredAttendees(row.attendees_json));
+  const userContent = roster ? `${roster}\n\n${row.transcript_text}` : row.transcript_text;
+
   const cfg = ctx.getConfig();
-  const budget = estimateTokenBudget(meetingType.prompt, row.transcript_text, cfg.ollama.contextWindow);
+  const budget = estimateTokenBudget(meetingType.prompt, userContent, cfg.ollama.contextWindow);
   if (budget.exceedsBudget) {
     ctx.logger.warn(
       {
@@ -240,7 +255,7 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
         model: cfg.ollama.model,
         messages: [
           { role: 'system', content: meetingType.prompt },
-          { role: 'user', content: row.transcript_text },
+          { role: 'user', content: userContent },
         ],
         keep_alive: cfg.ollama.keepAlive,
         options: {
@@ -275,10 +290,19 @@ export async function doWriteOutputs(id: string, signal: AbortSignal, ctx: Pipel
   const row = ctx.state.getRecordingJoined(id);
   if (!row) throw new Error(`No such recording: ${id}`);
   if (!row.summary_text) throw new Error('Cannot write outputs without a summary');
-  const outputs = ctx.getConfig().outputs;
+  // Per-recording overrides from the Inbox row's checkboxes win over
+  // Settings → Outputs; everything else about each destination (dir,
+  // includeTranscript, Notes folder) still comes from the global config.
+  const globalOutputs = ctx.getConfig().outputs;
+  const targets = effectiveOutputTargets(row, globalOutputs);
+  const outputs = {
+    markdown: { ...globalOutputs.markdown, enabled: targets.markdown },
+    html: { ...globalOutputs.html, enabled: targets.html },
+    appleNotes: { ...globalOutputs.appleNotes, enabled: targets.appleNote },
+  };
   if (!outputs.markdown.enabled && !outputs.html.enabled && !outputs.appleNotes.enabled) {
     throw new Error(
-      'No output destinations are enabled. Open Settings and turn on at least one of Markdown, HTML, or Apple Notes.',
+      'No output destinations are enabled for this recording. Turn one on for this row, or in Settings → Outputs.',
     );
   }
   const skip = {
@@ -330,4 +354,13 @@ export async function doWriteOutputs(id: string, signal: AbortSignal, ctx: Pipel
     },
     'outputs written',
   );
+}
+
+/**
+ * Whether the recording's local audio is still on disk — the "Full
+ * re-run" action needs something to re-transcribe from. Audio retention
+ * may have swept it, or the user may have deleted it by hand.
+ */
+export function audioFileExists(row: Pick<RecordingRow, 'audio_path'>): boolean {
+  return row.audio_path !== null && fs.existsSync(row.audio_path);
 }

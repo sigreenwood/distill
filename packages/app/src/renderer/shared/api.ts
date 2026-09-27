@@ -19,6 +19,15 @@ export type RecordingStatus =
 
 export type PipelineStep = 'download' | 'transcribe' | 'summarise' | 'write';
 
+export type { Attendee } from '../../shared/attendees';
+import type { Attendee } from '../../shared/attendees';
+
+export interface OutputTargetsDTO {
+  markdown: boolean;
+  html: boolean;
+  appleNote: boolean;
+}
+
 export interface InboxItemDTO {
   id: string;
   filename: string;
@@ -49,6 +58,10 @@ export interface InboxItemDTO {
   contextWindowAtSubmit: number | null;
   modelSnapshot: string | null;
   processedExternally: boolean;
+  /** Local audio on disk, or a Plaud cloud copy — gates "Full re-run". */
+  audioAvailable: boolean;
+  /** Effective destinations for this recording (its override, else Settings). */
+  outputTargets: OutputTargetsDTO;
 }
 
 export interface ClientDTO {
@@ -107,6 +120,11 @@ export interface VocabularyFileDTO {
 
 export interface GeneralDTO {
   audioRetentionDays: number | null;
+  /** Minutes before a completed row leaves the Inbox; 0 disables. */
+  autoDismissCompleteMinutes: number;
+  launchAtLogin: boolean;
+  /** False in dev, where a login item would launch bare Electron. */
+  launchAtLoginAvailable: boolean;
 }
 
 export interface PerformanceDTO {
@@ -161,7 +179,8 @@ export interface VocabularyBudgetDTO {
   used: number;
   hintsAvailable: number;
   hintsUsed: number;
-  droppedExamples: string[];
+  /** Every hint that did not fit, in load order. */
+  dropped: string[];
 }
 
 export interface SettingsDTO {
@@ -221,14 +240,28 @@ export interface DistillApi {
     revealOutput(recordingId: string, kind: 'markdown' | 'html' | 'appleNote'): Promise<void>;
     listHidden(): Promise<{ total: number; items: InboxItemDTO[] }>;
     unhide(recordingId: string): Promise<{ status: RecordingStatus }>;
+    setOutputTargets(recordingId: string, targets: OutputTargetsDTO): Promise<void>;
   };
   pipeline: {
     cancel(recordingId: string): Promise<void>;
     retry(recordingId: string): Promise<void>;
+    fullRerun(recordingId: string): Promise<{ started: boolean }>;
+  };
+  history: {
+    list(payload: {
+      search: string;
+      limit?: number;
+      offset?: number;
+    }): Promise<{ total: number; items: InboxItemDTO[] }>;
   };
   tag: {
     open(recordingId: string): Promise<void>;
-    save(payload: { recordingId: string; clientId: string; meetingTypeId: string }): Promise<void>;
+    save(payload: {
+      recordingId: string;
+      clientId: string;
+      meetingTypeId: string;
+      attendees?: Attendee[];
+    }): Promise<void>;
     getSheetRecordingId(): string | null;
   };
   clients: {
@@ -255,7 +288,10 @@ export interface DistillApi {
     saveVocabulary(payload: { scopeId: string; file: VocabularyFileDTO }): Promise<VocabularyScopeDTO>;
     importVocabulary(scopeId: string): Promise<VocabularyFileDTO | null>;
     exportVocabulary(scopeId: string): Promise<{ path: string } | null>;
-    saveGeneral(payload: GeneralDTO): Promise<void>;
+    previewVocabularyBudget(payload: { scopeId: string; hints: string[] }): Promise<VocabularyBudgetDTO>;
+    saveGeneral(
+      payload: Omit<GeneralDTO, 'launchAtLoginAvailable'>,
+    ): Promise<GeneralDTO>;
     savePerformance(payload: PerformanceDTO): Promise<void>;
     listOllamaModels(): Promise<OllamaModelsDTO>;
     browseFolder(currentPath?: string): Promise<string | null>;

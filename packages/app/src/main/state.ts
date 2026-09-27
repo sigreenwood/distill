@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { stateDbFile } from './paths.js';
+import type { OutputsConfig } from './config.js';
+import type { Attendee } from '../shared/attendees.js';
 
 export type RecordingStatus =
   | 'inbox'
@@ -52,6 +54,16 @@ export interface RecordingRow {
   estimated_input_tokens: number | null;
   context_window_at_submit: number | null;
   processed_externally: number;
+  /**
+   * Per-recording output overrides. NULL inherits Settings → Outputs;
+   * 0/1 wins over the global setting for this recording only. See
+   * effectiveOutputTargets.
+   */
+  output_markdown: number | null;
+  output_html: number | null;
+  output_apple_note: number | null;
+  /** JSON Attendee[] from the tag sheet, or NULL. See shared/attendees.ts. */
+  attendees_json: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -110,6 +122,28 @@ export function stepPlanFor(row: RecordingRow): PipelineStep[] {
   }
   plan.push('summarise', 'write');
   return plan;
+}
+
+export interface OutputTargets {
+  markdown: boolean;
+  html: boolean;
+  appleNote: boolean;
+}
+
+/**
+ * Which destinations a write step should attempt for this recording:
+ * its own override where it has one, else the current global setting.
+ */
+export function effectiveOutputTargets(
+  row: Pick<RecordingRow, 'output_markdown' | 'output_html' | 'output_apple_note'>,
+  outputs: OutputsConfig,
+): OutputTargets {
+  return {
+    markdown: row.output_markdown === null ? outputs.markdown.enabled : row.output_markdown === 1,
+    html: row.output_html === null ? outputs.html.enabled : row.output_html === 1,
+    appleNote:
+      row.output_apple_note === null ? outputs.appleNotes.enabled : row.output_apple_note === 1,
+  };
 }
 
 export function nextNeededStep(row: RecordingRow): PipelineStep {
@@ -320,6 +354,32 @@ const MIGRATIONS: Migration[] = [
       -- way to know retrospectively whether they were copied or
       -- locally produced.
       ALTER TABLE recordings ADD COLUMN processed_externally INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    version: 11,
+    sql: `
+      -- Per-recording output-destination overrides, editable from a
+      -- checkbox on the Inbox row. NULL (the migrated default for every
+      -- existing row) means "inherit Settings -> Outputs' current
+      -- setting"; an explicit 0/1 wins over the global config for that
+      -- one recording only. See effectiveOutputTargets in this file and
+      -- doWriteOutputs in pipelineSteps.ts.
+      ALTER TABLE recordings ADD COLUMN output_markdown   INTEGER;
+      ALTER TABLE recordings ADD COLUMN output_html       INTEGER;
+      ALTER TABLE recordings ADD COLUMN output_apple_note INTEGER;
+    `,
+  },
+  {
+    version: 12,
+    sql: `
+      -- Attendees pasted into the tag sheet (raw Outlook invite text,
+      -- parsed client-side into name/email/company), stored as JSON.
+      -- NULL for every existing row and any recording tagged without
+      -- pasting anything -- the pipeline treats that exactly like today
+      -- (no extra Whisper hints, no roster in the summarise prompt).
+      -- See src/shared/attendees.ts.
+      ALTER TABLE recordings ADD COLUMN attendees_json TEXT;
     `,
   },
 ];
@@ -549,7 +609,23 @@ export class State {
     return hit !== undefined;
   }
 
-  insertRecording(r: Omit<RecordingRow, 'retries' | 'created_at' | 'updated_at'>): void {
+  // output_markdown/output_html/output_apple_note/attendees_json
+  // deliberately excluded — every newly-inserted recording starts at
+  // NULL (no per-row output override, no attendees), which is also
+  // SQLite's default for a column not named in the INSERT below, so
+  // callers never need to pass them.
+  insertRecording(
+    r: Omit<
+      RecordingRow,
+      | 'retries'
+      | 'created_at'
+      | 'updated_at'
+      | 'output_markdown'
+      | 'output_html'
+      | 'output_apple_note'
+      | 'attendees_json'
+    >,
+  ): void {
     const now = Date.now();
     this.db
       .prepare(
@@ -753,6 +829,71 @@ export class State {
     return result.changes > 0;
   }
 
+  /**
+   * Reset a finished recording back to the start of the pipeline: clears
+   * the transcript, summary, and all output tracking, and returns it to
+   * `tagged` so the worker re-transcribes and re-summarises from scratch.
+   * Unlike retry(), which resumes wherever a failed run stopped, this
+   * always restarts from the audio.
+   *
+   * Only legal from `complete`/`skipped` — a fully-finished recording.
+   * `error`/`cancelled` rows already have retry() for resuming; this isn't
+   * a substitute for that.
+   *
+   * The caller owns the destructive housekeeping this implies outside the
+   * DB — deleting the old Markdown/HTML files and Apple Note — before
+   * calling this, since the row is eligible for the worker to claim the
+   * moment it flips to `tagged`.
+   *
+   * @param clearAudioPath - true to null out audio_path too, forcing the
+   *   pipeline through `download` again. Used when the local file is gone
+   *   but the recording has a cloud copy to re-fetch (see audioFileExists
+   *   in pipelineSteps.ts) — audio retention never touches Plaud-sourced
+   *   rows, so this is the 'plaud' fallback path, not the common case.
+   */
+  fullRerun(id: string, clearAudioPath: boolean): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE recordings
+         SET status = 'tagged',
+             transcript_text = NULL, summary_text = NULL,
+             markdown_path = NULL, html_path = NULL, apple_note_id = NULL,
+             markdown_written_at = NULL, html_written_at = NULL, apple_note_written_at = NULL,
+             error = NULL, is_auth_error = 0, last_step = NULL,
+             truncation_warning = 0, estimated_input_tokens = NULL, context_window_at_submit = NULL,
+             processed_externally = 0,
+             audio_path = CASE WHEN ? THEN NULL ELSE audio_path END,
+             updated_at = ?
+         WHERE id = ? AND status IN ('complete', 'skipped')`,
+      )
+      .run(clearAudioPath ? 1 : 0, Date.now(), id);
+    return result.changes > 0;
+  }
+
+  /**
+   * Set a recording's per-destination output overrides. Always writes an
+   * explicit 0/1 for all three columns — the Inbox checkboxes are never in
+   * a "some inherited, some overridden" state once the user has touched
+   * one of them for a row. Legal from any status: it only ever changes
+   * what a future write step will attempt (see effectiveOutputTargets),
+   * never anything mid-flight.
+   */
+  setOutputTargets(id: string, targets: OutputTargets): void {
+    this.db
+      .prepare(
+        `UPDATE recordings
+         SET output_markdown = ?, output_html = ?, output_apple_note = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        targets.markdown ? 1 : 0,
+        targets.html ? 1 : 0,
+        targets.appleNote ? 1 : 0,
+        Date.now(),
+        id,
+      );
+  }
+
   // --- joined reads ------------------------------------------------------
 
   private joinSelect = `SELECT r.*, c.name AS client_name, mt.name AS meeting_type_name
@@ -800,14 +941,20 @@ export class State {
    * Returns true iff the recording was actually transitioned (prevents
    * double-tagging via rapid clicks).
    */
-  tagRecording(id: string, clientId: string, meetingTypeId: string): boolean {
+  tagRecording(
+    id: string,
+    clientId: string,
+    meetingTypeId: string,
+    attendees?: Attendee[],
+  ): boolean {
+    const attendeesJson = attendees && attendees.length > 0 ? JSON.stringify(attendees) : null;
     const result = this.db
       .prepare(
         `UPDATE recordings
-         SET client_id = ?, meeting_type_id = ?, status = 'tagged', updated_at = ?
+         SET client_id = ?, meeting_type_id = ?, attendees_json = ?, status = 'tagged', updated_at = ?
          WHERE id = ? AND status = 'inbox'`,
       )
-      .run(clientId, meetingTypeId, Date.now(), id);
+      .run(clientId, meetingTypeId, attendeesJson, Date.now(), id);
     return result.changes > 0;
   }
 
@@ -833,6 +980,39 @@ export class State {
     const row = this.db
       .prepare("SELECT COUNT(*) as n FROM recordings WHERE status = 'skipped'")
       .get() as { n: number } | undefined;
+    return row?.n ?? 0;
+  }
+
+  /**
+   * Every recording ever seen, regardless of status — the History window's
+   * unbounded answer to "find that meeting from weeks ago," as opposed to
+   * listActiveJoined()/listHiddenJoined() which both exist to serve the
+   * Inbox's "what needs my attention" purpose and filter accordingly.
+   * `search` matches against filename, client name, or meeting type name;
+   * pass '' for no filter.
+   */
+  listAllJoined(search: string, limit = 50, offset = 0): JoinedRecordingRow[] {
+    const like = `%${search}%`;
+    return this.db
+      .prepare(
+        `${this.joinSelect}
+         WHERE r.filename LIKE ? OR c.name LIKE ? OR mt.name LIKE ?
+         ORDER BY r.synced_at DESC LIMIT ? OFFSET ?`,
+      )
+      .all(like, like, like, limit, offset) as JoinedRecordingRow[];
+  }
+
+  listAllCount(search: string): number {
+    const like = `%${search}%`;
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) as n
+         FROM recordings r
+         LEFT JOIN clients       c  ON c.id  = r.client_id
+         LEFT JOIN meeting_types mt ON mt.id = r.meeting_type_id
+         WHERE r.filename LIKE ? OR c.name LIKE ? OR mt.name LIKE ?`,
+      )
+      .get(like, like, like) as { n: number } | undefined;
     return row?.n ?? 0;
   }
 

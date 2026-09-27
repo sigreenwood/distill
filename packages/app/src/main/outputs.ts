@@ -384,6 +384,22 @@ end run
 `);
 }
 
+/**
+ * Delete a note distill wrote, ahead of a full re-run replacing it.
+ * Rejects if the note no longer exists; the caller decides whether that
+ * matters (for a re-run it doesn't — the goal is just no duplicate).
+ */
+export async function deleteAppleNote(noteId: string): Promise<void> {
+  const escaped = escapeForAppleScript(noteId);
+  await runOsaScript(`
+on run
+  tell application "Notes"
+    delete note id "${escaped}"
+  end tell
+end run
+`);
+}
+
 function runOsaScript(script: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn('osascript', ['-'], { stdio: ['pipe', 'pipe', 'pipe'] });

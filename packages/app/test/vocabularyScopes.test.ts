@@ -113,3 +113,29 @@ describe('vocabulary budget reporting', () => {
     expect(v.hintsUsed).toBe(2);
   });
 });
+
+describe('attendee hints and unsaved drafts', () => {
+  it('puts attendee names ahead of every scope so overflow drops them last', () => {
+    scope('global', Array.from({ length: 150 }, (_, i) => `GlobalTerm${i}`));
+    const { whisperPrompt, hintsDropped } = loadVocabulary(dir, null, undefined, ['Aoife Ní Bhriain']);
+    expect(whisperPrompt).toContain('Aoife Ní Bhriain');
+    expect(hintsDropped.length).toBeGreaterThan(0);
+  });
+
+  it('uses a draft in place of the saved hints for its scope', () => {
+    scope('global', ['SavedTerm']);
+    const { whisperPrompt } = loadVocabulary(dir, null, { scopeId: 'global', hints: ['DraftTerm'] });
+    expect(whisperPrompt).toContain('DraftTerm');
+    expect(whisperPrompt).not.toContain('SavedTerm');
+  });
+
+  it('previews a draft for a client scope that has no file yet', () => {
+    const { whisperPrompt } = loadVocabulary(dir, null, { scopeId: 'newclient', hints: ['Fresh'] });
+    expect(whisperPrompt).toContain('Fresh');
+  });
+
+  it('ignores blank hints rather than counting them against the budget', () => {
+    const { hintsAvailable } = loadVocabulary(dir, null, { scopeId: 'global', hints: ['A', '  ', ''] });
+    expect(hintsAvailable).toBe(1);
+  });
+});

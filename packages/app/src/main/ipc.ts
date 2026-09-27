@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { inspectOutputDir } from './outputDirStatus.js';
-import { showAppleNote } from './outputs.js';
+import { deleteAppleNote, showAppleNote } from './outputs.js';
 import { app, dialog, ipcMain, shell, BrowserWindow } from 'electron';
 import { Channels, KEEPALIVE_PRESETS, WHISPER_MODEL_PRESETS } from '../shared/ipcChannels.js';
 import { userVocabularyDir } from './paths.js';
@@ -12,12 +12,14 @@ import { openSettings, openTagSheet } from './windows.js';
 import { importLocalFile, LocalImportError, type LocalImportProgress } from './localImport.js';
 import {
   BUILTIN_SCOPE_IDS,
+  WHISPER_PROMPT_CHAR_LIMIT,
   loadVocabulary,
   countVocabularyTerms,
   isBuiltinScopeId,
   parseVocabularyMarkdownTables,
   readVocabularyFile,
   writeVocabularyFile,
+  type VocabularyDraft,
   type VocabularyFile,
   type VocabularyReplacement,
 } from './vocabulary.js';
@@ -36,7 +38,9 @@ import {
 } from './pythonEnv.js';
 import type { KeychainCredentialStore } from './keychain.js';
 import type { Logger } from './logger.js';
-import { stepPlanFor } from './state.js';
+import { effectiveOutputTargets, stepPlanFor, type OutputTargets } from './state.js';
+import { audioFileExists } from './pipelineSteps.js';
+import type { Attendee } from '../shared/attendees.js';
 import type {
   ClientRow,
   JoinedRecordingRow,
@@ -71,7 +75,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       );
       ctx.onStateChanged?.();
     }
-    return ctx.state.listActiveJoined().map(toInboxDTO);
+    return ctx.state.listActiveJoined().map((r) => toInboxDTO(r, cfg.outputs));
   });
 
   ipcMain.handle(Channels.InboxSkip, (_evt, recordingId) => {
@@ -136,9 +140,24 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   });
 
   ipcMain.handle(Channels.InboxListHidden, () => {
+    const cfg = ctx.getConfig();
     return {
       total: ctx.state.hiddenCount(),
-      items: ctx.state.listHiddenJoined().map(toInboxDTO),
+      items: ctx.state.listHiddenJoined().map((r) => toInboxDTO(r, cfg.outputs)),
+    };
+  });
+
+  ipcMain.handle(Channels.HistoryList, (_evt, payload) => {
+    const p = (payload ?? {}) as { search?: unknown; limit?: unknown; offset?: unknown };
+    const search = typeof p.search === 'string' ? p.search : '';
+    const limit = typeof p.limit === 'number' ? p.limit : 50;
+    const offset = typeof p.offset === 'number' ? p.offset : 0;
+    const cfg = ctx.getConfig();
+    return {
+      total: ctx.state.listAllCount(search),
+      items: ctx.state
+        .listAllJoined(search, limit, offset)
+        .map((r) => toInboxDTO(r, cfg.outputs)),
     };
   });
 
@@ -152,14 +171,42 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     return { status: next };
   });
 
+  ipcMain.handle(Channels.InboxSetOutputTargets, (_evt, recordingId, targets) => {
+    if (typeof recordingId !== 'string') throw new Error('recordingId must be a string');
+    const t = assertOutputTargetsPayload(targets);
+    const row = ctx.state.getRecording(recordingId);
+    if (!row) throw new Error(`No such recording: ${recordingId}`);
+    ctx.state.setOutputTargets(recordingId, t);
+    // Ticking a destination on a finished recording that never wrote to
+    // it sends the row back through the write step, which only runs
+    // destinations without a *_written_at — so nothing already written
+    // is duplicated. Unticking never removes an existing file.
+    const needsWrite =
+      (t.markdown && row.markdown_written_at === null) ||
+      (t.html && row.html_written_at === null) ||
+      (t.appleNote && row.apple_note_written_at === null);
+    if (row.status === 'complete' && needsWrite) {
+      ctx.state.setStatus(recordingId, 'tagged');
+      ctx.getWorker()?.nudge();
+    }
+    ctx.logger.info({ recordingId, targets: t }, 'output targets updated');
+    ctx.onStateChanged?.();
+    broadcastInboxChanged();
+  });
+
   ipcMain.handle(Channels.TagSave, (_evt, payload) => {
     const p = assertTagSavePayload(payload);
-    const changed = ctx.state.tagRecording(p.recordingId, p.clientId, p.meetingTypeId);
+    const changed = ctx.state.tagRecording(p.recordingId, p.clientId, p.meetingTypeId, p.attendees);
     if (!changed) {
       throw new Error('Recording could not be tagged — it may already have been tagged or skipped.');
     }
     ctx.logger.info(
-      { recordingId: p.recordingId, clientId: p.clientId, meetingTypeId: p.meetingTypeId },
+      {
+        recordingId: p.recordingId,
+        clientId: p.clientId,
+        meetingTypeId: p.meetingTypeId,
+        attendeeCount: p.attendees?.length ?? 0,
+      },
       'recording tagged',
     );
     ctx.onStateChanged?.();
@@ -195,6 +242,51 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     ctx.onStateChanged?.();
     broadcastInboxChanged();
     ctx.getWorker()?.nudge();
+  });
+
+  ipcMain.handle(Channels.PipelineFullRerun, async (_evt, recordingId) => {
+    if (typeof recordingId !== 'string') throw new Error('recordingId must be a string');
+    const row = ctx.state.getRecording(recordingId);
+    if (!row) throw new Error(`No such recording: ${recordingId}`);
+    const localFileExists = audioFileExists(row);
+    if (!localFileExists && row.source !== 'plaud') {
+      throw new Error(
+        'The original audio for this recording is gone and there is no cloud copy to re-fetch, so it cannot be re-run.',
+      );
+    }
+    const { response } = await dialog.showMessageBox({
+      type: 'warning',
+      buttons: ['Cancel', 'Re-run'],
+      defaultId: 0,
+      cancelId: 0,
+      message: 'Re-run this recording from the original audio?',
+      detail:
+        "This deletes the existing Markdown/HTML file and Apple Note for this recording, then re-transcribes and re-summarises from the original audio. This can't be undone.",
+    });
+    if (response !== 1) return { started: false };
+
+    // Remove the previous outputs first: the moment the row flips to
+    // `tagged` the worker may claim it, and leftovers would sit beside
+    // (or, for Notes, duplicate) the new ones.
+    if (row.markdown_path) fs.rmSync(row.markdown_path, { force: true });
+    if (row.html_path) fs.rmSync(row.html_path, { force: true });
+    if (row.apple_note_id) {
+      await deleteAppleNote(row.apple_note_id).catch((e) => {
+        ctx.logger.warn(
+          { err: String(e), recordingId },
+          'could not delete previous Apple Note ahead of full re-run — proceeding anyway',
+        );
+      });
+    }
+    const changed = ctx.state.fullRerun(recordingId, !localFileExists);
+    if (!changed) {
+      throw new Error('Recording is not in a re-runnable state (must be complete or hidden).');
+    }
+    ctx.logger.info({ recordingId, redownload: !localFileExists }, 'full re-run started');
+    ctx.onStateChanged?.();
+    broadcastInboxChanged();
+    ctx.getWorker()?.nudge();
+    return { started: true };
   });
 
   ipcMain.handle(Channels.ClientsList, () => {
@@ -515,6 +607,19 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     return toVocabularyFileDTO(file);
   });
 
+  // Live budget meter for the Vocabulary pane: the same calculation as
+  // the saved-state budget, with the scope being edited swapped for its
+  // unsaved hints.
+  ipcMain.handle(Channels.SettingsPreviewVocabularyBudget, (_evt, payload) => {
+    const p = payload as { scopeId?: unknown; hints?: unknown } | undefined;
+    if (typeof p?.scopeId !== 'string') throw new Error('scopeId must be a string');
+    if (!Array.isArray(p.hints) || p.hints.some((h) => typeof h !== 'string')) {
+      throw new Error('hints must be an array of strings');
+    }
+    assertScopeIdExists(ctx, p.scopeId);
+    return vocabularyBudget(ctx, { scopeId: p.scopeId, hints: p.hints as string[] });
+  });
+
   ipcMain.handle(Channels.SettingsSaveVocabulary, (_evt, payload) => {
     const p = assertSaveVocabularyPayload(payload);
     assertScopeIdExists(ctx, p.scopeId);
@@ -674,9 +779,43 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(Channels.SettingsSaveGeneral, (_evt, payload) => {
     const general = assertGeneralDTO(payload);
-    const updated = ctx.applyConfigUpdate({ audioRetentionDays: general.audioRetentionDays });
+    const updated = ctx.applyConfigUpdate({
+      audioRetentionDays: general.audioRetentionDays,
+      autoDismissCompleteMinutes: general.autoDismissCompleteMinutes,
+    });
     saveConfig(updated);
-    ctx.logger.info({ audioRetentionDays: updated.audioRetentionDays }, 'general settings saved');
+
+    // Launch at login lives with macOS, not config.json — read it back
+    // after setting, because macOS can refuse (e.g. the user has blocked
+    // it in Login Items) without an error.
+    let launchAtLogin: boolean | 'unavailable' = 'unavailable';
+    if (launchAtLoginAvailable()) {
+      launchAtLogin = app.getLoginItemSettings().openAtLogin;
+      if (launchAtLogin !== general.launchAtLogin) {
+        app.setLoginItemSettings({ openAtLogin: general.launchAtLogin });
+        launchAtLogin = app.getLoginItemSettings().openAtLogin;
+        if (launchAtLogin !== general.launchAtLogin) {
+          ctx.logger.warn(
+            { requested: general.launchAtLogin, actual: launchAtLogin },
+            'login item did not take',
+          );
+          throw new Error(
+            general.launchAtLogin
+              ? 'macOS did not accept the login item. Open System Settings › General › Login Items and allow distill, then try again.'
+              : 'macOS did not remove the login item. You can remove it under System Settings › General › Login Items.',
+          );
+        }
+      }
+    }
+    ctx.logger.info(
+      {
+        audioRetentionDays: updated.audioRetentionDays,
+        autoDismissCompleteMinutes: updated.autoDismissCompleteMinutes,
+        launchAtLogin,
+      },
+      'general settings saved',
+    );
+    return toGeneralDTO(updated);
   });
 
   ipcMain.handle(Channels.SettingsSavePerformance, (_evt, payload) => {
@@ -941,7 +1080,7 @@ function describeVenvStatus(status: VenvStatus): string {
 
 // --- DTO mappers -----------------------------------------------------------
 
-export function toInboxDTO(r: JoinedRecordingRow) {
+export function toInboxDTO(r: JoinedRecordingRow, outputs: OutputsConfig) {
   const currentStep = statusToStep(r.status);
   const plan = stepPlanFor(r);
   const idx = currentStep ? plan.indexOf(currentStep) : -1;
@@ -977,6 +1116,15 @@ export function toInboxDTO(r: JoinedRecordingRow) {
     contextWindowAtSubmit: r.context_window_at_submit,
     modelSnapshot: r.model_snapshot,
     processedExternally: r.processed_externally === 1,
+    // Gates the "Full re-run" action: a local file to re-transcribe from,
+    // or (Plaud rows only — retention never deletes their audio_path, but
+    // the row may predate a local download, or the file may have been
+    // removed by hand) a cloud copy that can be re-fetched.
+    audioAvailable: audioFileExists(r) || r.source === 'plaud',
+    // Effective per-destination targets: this row's override if it has
+    // one, else whatever Settings -> Outputs currently says. Drives the
+    // Inbox row's checkboxes.
+    outputTargets: effectiveOutputTargets(r, outputs),
   };
 }
 
@@ -1019,8 +1167,22 @@ function toMeetingTypeDTO(r: MeetingTypeRow) {
   };
 }
 
+/**
+ * Login items only make sense for the installed app: in dev, Electron
+ * would register the bare electron binary, which then launches nothing
+ * useful at login.
+ */
+function launchAtLoginAvailable(): boolean {
+  return app.isPackaged;
+}
+
 function toGeneralDTO(cfg: AppConfig) {
-  return { audioRetentionDays: cfg.audioRetentionDays };
+  return {
+    audioRetentionDays: cfg.audioRetentionDays,
+    autoDismissCompleteMinutes: cfg.autoDismissCompleteMinutes,
+    launchAtLogin: launchAtLoginAvailable() ? app.getLoginItemSettings().openAtLogin : false,
+    launchAtLoginAvailable: launchAtLoginAvailable(),
+  };
 }
 
 function toPerformanceDTO(cfg: AppConfig) {
@@ -1071,21 +1233,26 @@ function listVocabularyScopes(ctx: IpcContext) {
  * 800-character limit. Beyond that, terms are silently ignored, which
  * is invisible while curating lists in four separate files.
  */
-function vocabularyBudget(ctx: IpcContext) {
+function vocabularyBudget(ctx: IpcContext, draft?: VocabularyDraft) {
   const dir = vocabularyDirFor();
   // Worst case is a client meeting: its scope plus all three shared ones.
+  // A draft for one client only affects that client's meetings; a draft
+  // for a shared scope affects them all, so every candidate is checked.
   const clientIds = ctx.state.listClients().map((c) => c.id).filter((id) => !isBuiltinScopeId(id));
-  let worst = loadVocabulary(dir, null);
-  for (const id of clientIds) {
-    const v = loadVocabulary(dir, id);
-    if (v.hintsDropped.length > worst.hintsDropped.length) worst = v;
+  const candidates: (string | null)[] =
+    draft && !isBuiltinScopeId(draft.scopeId) ? [draft.scopeId] : [null, ...clientIds];
+  let worst: ReturnType<typeof loadVocabulary> | null = null;
+  for (const id of candidates) {
+    const v = loadVocabulary(dir, id, draft);
+    if (!worst || v.hintsDropped.length > worst.hintsDropped.length) worst = v;
   }
+  const w = worst!;
   return {
-    limit: 800,
-    used: worst.whisperPrompt.length,
-    hintsAvailable: worst.hintsAvailable,
-    hintsUsed: worst.hintsUsed,
-    droppedExamples: worst.hintsDropped.slice(0, 12),
+    limit: WHISPER_PROMPT_CHAR_LIMIT,
+    used: w.whisperPrompt.length,
+    hintsAvailable: w.hintsAvailable,
+    hintsUsed: w.hintsUsed,
+    dropped: w.hintsDropped,
   };
 }
 
@@ -1215,13 +1382,42 @@ function assertTagSavePayload(v: unknown): {
   recordingId: string;
   clientId: string;
   meetingTypeId: string;
+  attendees?: Attendee[];
 } {
   if (!v || typeof v !== 'object') throw new Error('Invalid tag payload');
   const o = v as Record<string, unknown>;
   if (typeof o.recordingId !== 'string') throw new Error('recordingId must be a string');
   if (typeof o.clientId !== 'string') throw new Error('clientId must be a string');
   if (typeof o.meetingTypeId !== 'string') throw new Error('meetingTypeId must be a string');
-  return { recordingId: o.recordingId, clientId: o.clientId, meetingTypeId: o.meetingTypeId };
+  const attendees = o.attendees === undefined ? undefined : assertAttendeesList(o.attendees);
+  return { recordingId: o.recordingId, clientId: o.clientId, meetingTypeId: o.meetingTypeId, attendees };
+}
+
+function assertAttendeesList(v: unknown): Attendee[] {
+  if (!Array.isArray(v)) throw new Error('attendees must be an array');
+  return v.map((entry, i) => {
+    if (!entry || typeof entry !== 'object') throw new Error(`attendees[${i}] is invalid`);
+    const e = entry as Record<string, unknown>;
+    if (typeof e.name !== 'string' || e.name.trim().length === 0) {
+      throw new Error(`attendees[${i}].name must be a non-empty string`);
+    }
+    if (e.email !== null && typeof e.email !== 'string') {
+      throw new Error(`attendees[${i}].email must be a string or null`);
+    }
+    if (e.company !== null && typeof e.company !== 'string') {
+      throw new Error(`attendees[${i}].company must be a string or null`);
+    }
+    return { name: e.name, email: e.email ?? null, company: e.company ?? null };
+  });
+}
+
+function assertOutputTargetsPayload(v: unknown): OutputTargets {
+  if (!v || typeof v !== 'object') throw new Error('Invalid output targets payload');
+  const o = v as Record<string, unknown>;
+  if (typeof o.markdown !== 'boolean') throw new Error('markdown must be a boolean');
+  if (typeof o.html !== 'boolean') throw new Error('html must be a boolean');
+  if (typeof o.appleNote !== 'boolean') throw new Error('appleNote must be a boolean');
+  return { markdown: o.markdown, html: o.html, appleNote: o.appleNote };
 }
 
 function assertAddClientPayload(v: unknown): { name: string } {
@@ -1379,11 +1575,23 @@ function slugify(s: string): string {
     .slice(0, 64);
 }
 
-function assertGeneralDTO(v: unknown): { audioRetentionDays: number | null } {
+function assertGeneralDTO(v: unknown): {
+  audioRetentionDays: number | null;
+  autoDismissCompleteMinutes: number;
+  launchAtLogin: boolean;
+} {
   if (!v || typeof v !== 'object') throw new Error('Invalid general payload');
   const o = v as Record<string, unknown>;
+  if (typeof o.launchAtLogin !== 'boolean') {
+    throw new Error('launchAtLogin must be a boolean');
+  }
+  const launchAtLogin = o.launchAtLogin;
+  const dismiss = o.autoDismissCompleteMinutes;
+  if (typeof dismiss !== 'number' || !Number.isInteger(dismiss) || dismiss < 0) {
+    throw new Error('autoDismissCompleteMinutes must be a non-negative integer (0 disables auto-hide)');
+  }
   const raw = o.audioRetentionDays;
-  if (raw === null) return { audioRetentionDays: null };
+  if (raw === null) return { audioRetentionDays: null, autoDismissCompleteMinutes: dismiss, launchAtLogin };
   if (typeof raw !== 'number' || !Number.isFinite(raw)) {
     throw new Error('audioRetentionDays must be null or a non-negative integer');
   }
@@ -1393,7 +1601,7 @@ function assertGeneralDTO(v: unknown): { audioRetentionDays: number | null } {
   if (raw < 0) {
     throw new Error('audioRetentionDays must be ≥ 0 (use null to disable the sweep)');
   }
-  return { audioRetentionDays: raw };
+  return { audioRetentionDays: raw, autoDismissCompleteMinutes: dismiss, launchAtLogin };
 }
 
 function assertPerformanceDTO(v: unknown): {

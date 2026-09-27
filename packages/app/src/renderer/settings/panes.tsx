@@ -8,6 +8,7 @@ import type {
   PlaudStatusDTO,
   SourcesDTO,
   SystemInfoDTO,
+  VocabularyBudgetDTO,
   VocabularyFileDTO,
   VocabularyScopeDTO,
 } from '../shared/api.js';
@@ -599,6 +600,80 @@ interface ReplacementDraft {
   requiresContext: string;
 }
 
+/**
+ * How much of Whisper's 800-character prompt the vocabulary uses, for the
+ * worst-case meeting the scope being edited feeds into. Updates live
+ * from the unsaved hints, so the cost of a term shows before saving.
+ */
+function WhisperBudgetMeter({ budget }: { budget: VocabularyBudgetDTO }) {
+  const remaining = budget.limit - budget.used;
+  const over = budget.dropped.length > 0;
+  const pct = Math.min(100, Math.round((budget.used / budget.limit) * 100));
+  const tight = !over && remaining <= 80;
+  const colour = over
+    ? 'var(--danger, #b91c1c)'
+    : tight
+      ? 'var(--warn, #b45309)'
+      : 'var(--accent, #2563eb)';
+  return (
+    <div
+      style={{
+        marginBottom: 8,
+        padding: '6px 8px',
+        border: '1px solid var(--border)',
+        borderRadius: 4,
+        background: 'var(--bg-subtle, transparent)',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, fontSize: 11 }}>
+        <span style={{ fontWeight: 500 }}>Whisper prompt</span>
+        <span style={{ color: colour, fontVariantNumeric: 'tabular-nums' }}>
+          {budget.used} / {budget.limit} characters
+        </span>
+        <span className="muted" style={{ fontVariantNumeric: 'tabular-nums' }}>
+          {over ? 'limit reached' : `${remaining} remaining`}
+        </span>
+        <span className="muted" style={{ marginLeft: 'auto' }}>
+          {budget.hintsUsed} of {budget.hintsAvailable} terms in use
+        </span>
+      </div>
+      <div
+        role="progressbar"
+        aria-valuenow={budget.used}
+        aria-valuemin={0}
+        aria-valuemax={budget.limit}
+        aria-label="Whisper prompt characters used"
+        style={{
+          marginTop: 4,
+          height: 4,
+          borderRadius: 2,
+          background: 'var(--border)',
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{ width: `${pct}%`, height: '100%', background: colour }} />
+      </div>
+      <div className="muted" style={{ fontSize: 10, marginTop: 4, lineHeight: 1.4 }}>
+        {over ? (
+          <>
+            <strong style={{ color: 'var(--danger, #b91c1c)' }}>
+              {budget.dropped.length} term{budget.dropped.length === 1 ? '' : 's'} ignored:
+            </strong>{' '}
+            {budget.dropped.slice(0, 8).join(', ')}
+            {budget.dropped.length > 8 ? `, +${budget.dropped.length - 8} more` : ''}. All scopes
+            merge into one prompt; the least specific terms are dropped first.
+          </>
+        ) : (
+          <>
+            All scopes merge into one capped prompt. Terms beyond {budget.limit} characters are
+            silently ignored by Whisper.
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function VocabularyPane(props: {
   initialScopes: VocabularyScopeDTO[];
   onScopeSaved: (updated: VocabularyScopeDTO) => void;
@@ -616,8 +691,30 @@ export function VocabularyPane(props: {
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [exportedPath, setExportedPath] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [budget, setBudget] = useState<VocabularyBudgetDTO | null>(null);
 
   const selected = useMemo(() => scopes.find((s) => s.id === selectedId), [scopes, selectedId]);
+
+  // Recompute the budget from the unsaved hints, debounced so typing a
+  // term doesn't fire an IPC round-trip per keystroke.
+  useEffect(() => {
+    if (!selectedId || loadingScope) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void window.distill.settings
+        .previewVocabularyBudget({ scopeId: selectedId, hints })
+        .then((b) => {
+          if (!cancelled) setBudget(b);
+        })
+        .catch(() => {
+          if (!cancelled) setBudget(null);
+        });
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [selectedId, hints, loadingScope]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -780,6 +877,10 @@ export function VocabularyPane(props: {
 
   const builtins = scopes.filter((s) => s.builtin);
   const clientScopes = scopes.filter((s) => !s.builtin);
+  const droppedSet = useMemo(
+    () => new Set((budget?.dropped ?? []).map((d) => d.toLowerCase())),
+    [budget],
+  );
 
   return (
     <div style={paneStyle}>
@@ -851,31 +952,47 @@ export function VocabularyPane(props: {
               <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>
                 Terms Whisper should recognise. Written into the initial_prompt at transcription time.
               </div>
+              {budget && <WhisperBudgetMeter budget={budget} />}
               <div style={tableStyle}>
                 {hints.length === 0 && (
                   <div className="muted" style={{ padding: '4px 2px', fontSize: 11 }}>
                     No hints yet.
                   </div>
                 )}
-                {hints.map((h, i) => (
-                  <div key={i} style={tableRowStyle}>
-                    <input
-                      type="text"
-                      value={h}
-                      onChange={(e) => updateHint(i, e.target.value)}
-                      style={{ ...inputStyle, flex: 1 }}
-                      placeholder="e.g. Acme Corp"
-                    />
-                    <button
-                      onClick={() => deleteHint(i)}
-                      style={deleteButtonStyle}
-                      title="Remove this hint"
-                      aria-label="Remove hint"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
+                {hints.map((h, i) => {
+                  const overflowed = droppedSet.has(h.trim().toLowerCase());
+                  return (
+                    <div key={i} style={tableRowStyle}>
+                      <input
+                        type="text"
+                        value={h}
+                        onChange={(e) => updateHint(i, e.target.value)}
+                        style={{
+                          ...inputStyle,
+                          flex: 1,
+                          ...(overflowed ? { borderColor: 'var(--warn, #b45309)' } : null),
+                        }}
+                        placeholder="e.g. Acme Corp"
+                      />
+                      {overflowed && (
+                        <span
+                          style={{ fontSize: 10, color: 'var(--warn, #b45309)', whiteSpace: 'nowrap' }}
+                          title="Past the 800-character limit — this term is not sent to Whisper at all."
+                        >
+                          over limit
+                        </span>
+                      )}
+                      <button
+                        onClick={() => deleteHint(i)}
+                        style={deleteButtonStyle}
+                        title="Remove this hint"
+                        aria-label="Remove hint"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })}
                 <button onClick={addHint} style={addButtonStyle}>
                   + Add hint
                 </button>
@@ -1128,36 +1245,65 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
   const initialDays = props.initial.audioRetentionDays ?? 14;
   const [enabled, setEnabled] = useState(initialEnabled);
   const [daysText, setDaysText] = useState(String(initialDays));
+  const [dismissText, setDismissText] = useState(String(props.initial.autoDismissCompleteMinutes));
+  const [launchAtLogin, setLaunchAtLogin] = useState(props.initial.launchAtLogin);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
   const computed = useMemo<GeneralDTO | null>(() => {
-    if (!enabled) return { audioRetentionDays: null };
+    const base = {
+      launchAtLogin,
+      launchAtLoginAvailable: props.initial.launchAtLoginAvailable,
+    };
+    const dismissTrimmed = dismissText.trim();
+    const dismissParsed = Number(dismissTrimmed);
+    if (
+      dismissTrimmed.length === 0 ||
+      !Number.isFinite(dismissParsed) ||
+      !Number.isInteger(dismissParsed) ||
+      dismissParsed < 0
+    ) {
+      return null;
+    }
+    if (!enabled) return { ...base, audioRetentionDays: null, autoDismissCompleteMinutes: dismissParsed };
     const trimmed = daysText.trim();
     if (trimmed.length === 0) return null;
     const parsed = Number(trimmed);
     if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
       return null;
     }
-    return { audioRetentionDays: parsed };
-  }, [enabled, daysText]);
+    return { ...base, audioRetentionDays: parsed, autoDismissCompleteMinutes: dismissParsed };
+  }, [enabled, daysText, dismissText, launchAtLogin, props.initial.launchAtLoginAvailable]);
 
   const isDirty = useMemo(() => {
     if (!computed) return false;
-    return computed.audioRetentionDays !== props.initial.audioRetentionDays;
-  }, [computed, props.initial.audioRetentionDays]);
+    return (
+      computed.audioRetentionDays !== props.initial.audioRetentionDays ||
+      computed.autoDismissCompleteMinutes !== props.initial.autoDismissCompleteMinutes ||
+      computed.launchAtLogin !== props.initial.launchAtLogin
+    );
+  }, [
+    computed,
+    props.initial.audioRetentionDays,
+    props.initial.autoDismissCompleteMinutes,
+    props.initial.launchAtLogin,
+  ]);
 
   const onSave = useCallback(async () => {
     if (!computed) return;
     setError(null);
     setSaving(true);
     try {
-      await window.distill.settings.saveGeneral(computed);
-      props.onSaved(computed);
+      // Main returns what actually took effect: macOS can refuse a
+      // login item, so show its answer rather than what was asked for.
+      const applied = await window.distill.settings.saveGeneral(computed);
+      setLaunchAtLogin(applied.launchAtLogin);
+      props.onSaved(applied);
       setSavedAt(Date.now());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setLaunchAtLogin(props.initial.launchAtLogin);
     } finally {
       setSaving(false);
     }
@@ -1170,6 +1316,85 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
           App-level settings that aren't tied to a specific output destination, prompt, or vocabulary
           scope.
         </p>
+        <section
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Startup</div>
+          <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>
+            distill lives in the menu bar and polls for new recordings in the background, so it only
+            does its job while it is running.
+          </div>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 12,
+              cursor: props.initial.launchAtLoginAvailable ? 'pointer' : 'default',
+              opacity: props.initial.launchAtLoginAvailable ? 1 : 0.55,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={launchAtLogin}
+              disabled={!props.initial.launchAtLoginAvailable}
+              onChange={(e) => setLaunchAtLogin(e.target.checked)}
+            />
+            Start distill when I log in
+          </label>
+          <div className="muted" style={{ fontSize: 10, marginTop: 6, lineHeight: 1.4 }}>
+            {props.initial.launchAtLoginAvailable ? (
+              <>
+                macOS owns this setting — it also appears under System Settings › General › Login
+                Items, and turning it off there turns it off here.
+              </>
+            ) : (
+              <>
+                Unavailable in a development build: the login item would point at the Electron
+                binary rather than at distill. Works in an installed copy.
+              </>
+            )}
+          </div>
+        </section>
+        <section
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Recent list</div>
+          <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>
+            A completed recording moves to Inbox's "Recent" section, then automatically drops to
+            Hidden once it's been there this long — the outputs aren't touched, only the row's
+            visibility. Use 0 to turn off auto-hiding.
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={dismissText}
+              onChange={(e) => {
+                setDismissText(e.target.value);
+                setSavedAt(null);
+              }}
+              style={{ ...inputStyle, width: 80 }}
+            />
+            <span style={{ fontSize: 12 }}>minutes after a summary completes</span>
+          </div>
+          <div className="muted" style={{ ...hintStyle, marginTop: 10 }}>
+            {dismissText.trim() === '0'
+              ? 'Auto-hide is off — completed recordings stay in Recent until you hide them yourself.'
+              : `Recordings move to Hidden ${dismissText || 'N'} minute(s) after completing. Find them again from the Hidden section, or in History.`}
+          </div>
+        </section>
         <section
           style={{
             border: '1px solid var(--border)',

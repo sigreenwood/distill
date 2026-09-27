@@ -24,6 +24,7 @@ import {
   configureWindows,
   openInbox,
   openSettings,
+  openHistory,
   openSetup,
   closeAll,
 } from './windows.js';
@@ -57,6 +58,17 @@ let plaudStore: KeychainCredentialStore | null = null;
 // cold launch. Queue those and replay once the app has bootstrapped.
 const pendingFileDrops: string[] = [];
 let appReady = false;
+
+// A menu-bar app has no window to come back to, so launching it again
+// (Spotlight, Finder, the Dock) would otherwise appear to do nothing.
+// Open the Inbox instead.
+app.on('second-instance', () => {
+  if (appReady) openInbox();
+});
+
+app.on('activate', () => {
+  if (appReady) openInbox();
+});
 
 app.on('open-file', (event, filePath) => {
   event.preventDefault();
@@ -114,7 +126,19 @@ app.whenReady().then(async () => {
 
   const localLogger = createLogger({ level: cfg.logLevel, pretty: !app.isPackaged });
   logger = localLogger;
-  localLogger.info({ cfg, appSupportDir: appSupportDirPath }, 'distill starting');
+  // Version and path first: with more than one copy of the app installed
+  // (/Applications and ~/Applications), the log is the only way to tell
+  // which one actually ran.
+  localLogger.info(
+    {
+      version: app.getVersion(),
+      appPath: app.getAppPath(),
+      packaged: app.isPackaged,
+      cfg,
+      appSupportDir: appSupportDirPath,
+    },
+    'distill starting',
+  );
   // Report any pre-rename directory migration. Paths resolve at module
   // load, before the logger exists, so the notes are replayed here.
   for (const note of migrationNotes()) {
@@ -220,6 +244,7 @@ app.whenReady().then(async () => {
         broadcastInboxChanged();
       },
       onOpenSettings: () => openSettings(),
+      onOpenHistory: () => openHistory(),
       onPauseChange: (nextPause) => {
         const updated = applyConfigUpdate({ paused: nextPause });
         saveConfig(updated);

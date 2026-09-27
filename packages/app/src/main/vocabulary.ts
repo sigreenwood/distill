@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Logger } from './logger.js';
 
-const WHISPER_PROMPT_CHAR_LIMIT = 800;
+export const WHISPER_PROMPT_CHAR_LIMIT = 800;
 
 /**
  * Style anchor prepended to every transcription.
@@ -68,6 +68,12 @@ export interface LoadedVocabulary {
   conflictingRules: { from: string; winner: string; overridden: string[] }[];
 }
 
+/** Unsaved Whisper hints for one scope, from the Vocabulary pane. */
+export interface VocabularyDraft {
+  scopeId: string;
+  hints: string[];
+}
+
 /**
  * Merge the vocabulary scopes into one flat list.
  *
@@ -86,19 +92,36 @@ export interface LoadedVocabulary {
  * Missing files are fine; malformed JSON is an error the pipeline
  * surfaces.
  */
-export function loadVocabulary(vocabularyDir: string, clientId?: string | null): LoadedVocabulary {
+export function loadVocabulary(
+  vocabularyDir: string,
+  clientId?: string | null,
+  draft?: VocabularyDraft,
+  extraHints: string[] = [],
+): LoadedVocabulary {
   const sources: string[] = [];
-  const hints: string[] = [];
+  // extraHints (a recording's attendee names) lead: they are the most
+  // specific terms of all, so they are the last the budget should drop.
+  const hints: string[] = [...extraHints];
   const replacements: VocabularyReplacement[] = [];
   const files: string[] = [];
   if (clientId) files.push(`${clientId}.json`);
   files.push('organisation.json', 'industry.json', 'global.json');
+  // An unsaved edit from the Vocabulary pane stands in for its scope's
+  // hints on disk, so the budget meter can preview before saving. A
+  // draft for a scope outside this load order (another client) is
+  // loaded first, as that client's recordings would see it.
+  const draftFile = draft ? `${draft.scopeId}.json` : null;
+  if (draftFile && !files.includes(draftFile)) files.unshift(draftFile);
   for (const filename of files) {
     const p = path.join(vocabularyDir, filename);
-    if (!fs.existsSync(p)) continue;
+    const isDraft = filename === draftFile;
+    if (!isDraft && !fs.existsSync(p)) continue;
     try {
-      const data = JSON.parse(fs.readFileSync(p, 'utf-8')) as Partial<VocabularyFile>;
-      if (data.whisperHints) hints.push(...data.whisperHints);
+      const data = (
+        fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf-8')) : {}
+      ) as Partial<VocabularyFile>;
+      const scopeHints = isDraft ? draft!.hints : data.whisperHints;
+      if (scopeHints) hints.push(...scopeHints);
       if (data.replacements) replacements.push(...data.replacements);
       sources.push(filename);
     } catch (e) {
@@ -111,7 +134,9 @@ export function loadVocabulary(vocabularyDir: string, clientId?: string | null):
   // transcripts contain both.
   const seen = new Set<string>();
   const uniqueHints: string[] = [];
-  for (const h of hints) {
+  for (const raw of hints) {
+    const h = raw.trim();
+    if (h.length === 0) continue;
     const key = h.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
