@@ -5,6 +5,8 @@ import {
   companyFromDomain,
   buildAttendeeRoster,
   parseStoredAttendees,
+  rankFrequentAttendees,
+  suggestClientId,
 } from '../src/shared/attendees.js';
 
 describe('guessNameFromLocalPart', () => {
@@ -125,5 +127,67 @@ describe('parseStoredAttendees', () => {
   it('drops entries missing a name rather than failing the whole list', () => {
     const stored = JSON.stringify([{ email: 'no-name@x.com' }, { name: 'Valid Person' }]);
     expect(parseStoredAttendees(stored)).toEqual([{ name: 'Valid Person' }]);
+  });
+});
+
+describe('rankFrequentAttendees', () => {
+  const jane = { name: 'Jane', email: 'jane@aib.ie', company: 'Aib' };
+  const bob = { name: 'Bob', email: 'bob@aib.ie', company: 'Aib' };
+  const cara = { name: 'Cara', email: null, company: null };
+
+  it('orders by meetings attended, then recency', () => {
+    const ranked = rankFrequentAttendees([[cara], [jane, bob], [jane]]);
+    expect(ranked.map((a) => [a.name, a.meetings])).toEqual([
+      ['Jane', 2],
+      ['Cara', 1],
+      ['Bob', 1],
+    ]);
+  });
+
+  it('keeps the most recent spelling and counts a person once per meeting', () => {
+    const ranked = rankFrequentAttendees([
+      [{ ...jane, name: 'Jane Smith' }, jane],
+      [jane],
+    ]);
+    expect(ranked).toEqual([{ ...jane, name: 'Jane Smith', meetings: 2 }]);
+  });
+});
+
+describe('suggestClientId', () => {
+  const clients = [
+    { id: 'aib', name: 'AIB' },
+    { id: 'hsbc', name: 'HSBC' },
+    { id: 'lloyds', name: 'Lloyds Banking Group' },
+    { id: 'unclassified', name: 'Unclassified' },
+  ];
+  const me = { name: 'Me', email: 'me@teradata.com', company: 'Teradata' };
+  const at = (email: string) => ({ name: email, email, company: null });
+
+  it('matches an unseen domain to a client name', () => {
+    expect(suggestClientId([me, at('x@aib.ie')], [], clients)).toBe('aib');
+    expect(suggestClientId([at('x@lloydsbanking.com')], [], clients)).toBe('lloyds');
+  });
+
+  it("learns a domain from past tagging even when it doesn't look like the name", () => {
+    const history = [{ clientId: 'hsbc', attendees: [at('a@hsbcbank.co.uk')] }];
+    expect(suggestClientId([at('b@hsbcbank.co.uk')], history, clients)).toBe('hsbc');
+  });
+
+  it("ignores your own company's domain, which is in every meeting", () => {
+    const history = [
+      { clientId: 'aib', attendees: [me, at('a@aib.ie')] },
+      { clientId: 'aib', attendees: [me, at('b@aib.ie')] },
+      { clientId: 'hsbc', attendees: [me, at('c@hsbc.com')] },
+    ];
+    expect(suggestClientId([me], history, clients)).toBeNull();
+    expect(suggestClientId([me, at('d@hsbc.com')], history, clients)).toBe('hsbc');
+  });
+
+  it('declines when attendees point at two clients equally', () => {
+    expect(suggestClientId([at('x@aib.ie'), at('y@hsbc.com')], [], clients)).toBeNull();
+  });
+
+  it('declines with no usable email domains', () => {
+    expect(suggestClientId([{ name: 'Jane', email: null, company: null }, at('x@gmail.com')], [], clients)).toBeNull();
   });
 });

@@ -956,6 +956,26 @@ export class State {
     return result.changes > 0;
   }
 
+  /**
+   * Attendee lists from past tagged recordings, newest first — the
+   * history the tag sheet learns suggestions from. Pass a clientId to
+   * restrict to that client's meetings.
+   */
+  listTaggedAttendees(
+    clientId?: string,
+    limit = 200,
+  ): { client_id: string; attendees_json: string }[] {
+    const where = clientId ? 'AND client_id = ?' : '';
+    const params: unknown[] = clientId ? [clientId, limit] : [limit];
+    return this.db
+      .prepare(
+        `SELECT client_id, attendees_json FROM recordings
+         WHERE attendees_json IS NOT NULL AND client_id IS NOT NULL ${where}
+         ORDER BY updated_at DESC LIMIT ?`,
+      )
+      .all(...params) as { client_id: string; attendees_json: string }[];
+  }
+
   inboxCount(): number {
     const row = this.db
       .prepare("SELECT COUNT(*) as n FROM recordings WHERE status = 'inbox'")

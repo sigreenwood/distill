@@ -5,8 +5,8 @@
  * match main/ipc.ts DTO mappers.
  */
 
-import type { Attendee } from '../../shared/attendees.js';
-export type { Attendee };
+import type { Attendee, FrequentAttendee } from '../../shared/attendees.js';
+export type { Attendee, FrequentAttendee };
 
 export type RecordingStatus =
   | 'inbox'
@@ -273,6 +273,12 @@ export interface DistillApi {
       meetingTypeId: string;
       attendees?: Attendee[];
     }): Promise<void>;
+    /** People from this client's past meetings, most frequent first. */
+    frequentAttendees(clientId: string): Promise<FrequentAttendee[]>;
+    /** A client id when attendees' email domains clearly point to one. */
+    suggestClient(attendees: Attendee[]): Promise<string | null>;
+    /** Addresses found on the clipboard, if any. */
+    clipboardAttendees(): Promise<Attendee[]>;
     getSheetRecordingId(): string | null;
   };
   clients: {

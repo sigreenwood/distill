@@ -39,6 +39,11 @@ const api = {
       meetingTypeId: string;
       attendees?: Attendee[];
     }) => ipcRenderer.invoke(Channels.TagSave, payload),
+    frequentAttendees: (clientId: string) =>
+      ipcRenderer.invoke(Channels.TagFrequentAttendees, clientId),
+    suggestClient: (attendees: Attendee[]) =>
+      ipcRenderer.invoke(Channels.TagSuggestClient, attendees),
+    clipboardAttendees: () => ipcRenderer.invoke(Channels.TagClipboardAttendees),
     getSheetRecordingId: (): string | null => {
       const arg = process.argv.find((a) => a.startsWith('--recording-id='));
       return arg ? arg.slice('--recording-id='.length) : null;

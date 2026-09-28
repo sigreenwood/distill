@@ -76,7 +76,10 @@ export function openTagSheet(recordingId: string): void {
   }
   tagWin = new BrowserWindow({
     width: 420,
-    height: 560,
+    // Taller than 560 to fit the clipboard offer and past-attendee chips
+    // under the attendees box. The body scrolls if a long list still
+    // doesn't fit.
+    height: 640,
     show: false,
     frame: false,
     resizable: false,
