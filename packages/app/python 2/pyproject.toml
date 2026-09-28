@@ -1,0 +1,10 @@
+[project]
+name = "plaud-local-transcribe"
+version = "0.1.0"
+description = "MLX Whisper transcription helper for Plaud Local."
+requires-python = ">=3.11"
+dependencies = [
+  "mlx-whisper",
+  "numpy",
+  "soundfile",
+]

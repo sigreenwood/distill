@@ -1,0 +1,13 @@
+{
+  "$description": "Global vocabulary — always applied regardless of client. Seed with people's names, company names, and any term you hear mangled across every meeting. Per-client vocabulary goes in resources/vocabulary/<client-id>.json or via the Settings UI.",
+  "$version": 1,
+
+  "whisperHints": [],
+
+  "replacements": [],
+
+  "notes": [
+    "Add people's names (first-name-last-name pairs, not individual first names) and company proper nouns here as you notice mistranscriptions.",
+    "The 'requiresContext' field on a replacement (see the help panel in Settings -> Vocabulary) restricts that replacement to cases where at least one of the listed words appears in the same transcript. Useful for homophones."
+  ]
+}

@@ -1,14 +1,16 @@
 import { PlaudConfig } from './config.js';
-import { BASE_URLS } from './types.js';
-import type { PlaudTokenData } from './types.js';
+import { BASE_URLS, fetchRequester } from './types.js';
+import type { PlaudTokenData, Requester } from './types.js';
 
 const TOKEN_REFRESH_BUFFER_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export class PlaudAuth {
   private config: PlaudConfig;
+  private requester: Requester;
 
-  constructor(config: PlaudConfig) {
+  constructor(config: PlaudConfig, requester: Requester = fetchRequester) {
     this.config = config;
+    this.requester = requester;
   }
 
   async getToken(): Promise<string> {
@@ -31,7 +33,8 @@ export class PlaudAuth {
       password: creds.password,
     });
 
-    const res = await fetch(`${baseUrl}/auth/access-token`, {
+    const res = await this.requester({
+      url: `${baseUrl}/auth/access-token`,
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
