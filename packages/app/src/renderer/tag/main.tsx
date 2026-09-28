@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { Attendee, ClientDTO, MeetingTypeDTO } from '../shared/api.js';
-import { mergeAttendees, parseAttendeesText } from '../../shared/attendees.js';
+import type { Attendee, ClientDTO, FrequentAttendee, MeetingTypeDTO } from '../shared/api.js';
+import { attendeeKey, mergeAttendees, parseAttendeesText } from '../../shared/attendees.js';
 
 type LoadState =
   | { kind: 'loading' }
@@ -23,6 +23,11 @@ function Tag() {
   const [selectedMeetingTypeId, setSelectedMeetingTypeId] = useState('');
   const [attendeePaste, setAttendeePaste] = useState('');
   const [attendees, setAttendees] = useState<Attendee[]>([]);
+  // Once the user picks a client themselves, suggestions stop moving it.
+  const [clientTouched, setClientTouched] = useState(false);
+  const [clientSuggested, setClientSuggested] = useState(false);
+  const [clipboardOffer, setClipboardOffer] = useState<Attendee[]>([]);
+  const [frequent, setFrequent] = useState<FrequentAttendee[]>([]);
   const [addClient, setAddClient] = useState<AddClientState>({ open: false });
   const [addMeetingType, setAddMeetingType] = useState<AddMeetingTypeState>({ open: false });
   const [saving, setSaving] = useState(false);
@@ -65,6 +70,8 @@ function Tag() {
           : prev,
       );
       setSelectedClientId(created.id);
+      setClientTouched(true);
+      setClientSuggested(false);
       setAddClient({ open: false });
     } catch (e) {
       setAddClient({ ...addClient, saving: false, error: e instanceof Error ? e.message : String(e) });
@@ -106,6 +113,63 @@ function Tag() {
       });
     }
   }, [addMeetingType]);
+
+  // Offer attendees already on the clipboard, e.g. copied from the invite
+  // just before opening this sheet. Offered, never added unasked.
+  useEffect(() => {
+    void window.distill.tag
+      .clipboardAttendees()
+      .then(setClipboardOffer)
+      .catch(() => setClipboardOffer([]));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedClientId) return;
+    let cancelled = false;
+    void window.distill.tag
+      .frequentAttendees(selectedClientId)
+      .then((list) => {
+        if (!cancelled) setFrequent(list);
+      })
+      .catch(() => {
+        if (!cancelled) setFrequent([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClientId]);
+
+  // Pre-select the client the attendees' email domains point to, until
+  // the user chooses one themselves.
+  useEffect(() => {
+    if (clientTouched || state.kind !== 'ready' || attendees.length === 0) return;
+    let cancelled = false;
+    const clientIds = new Set(state.clients.map((c) => c.id));
+    void window.distill.tag
+      .suggestClient(attendees)
+      .then((id) => {
+        if (cancelled || !id || !clientIds.has(id)) return;
+        setSelectedClientId(id);
+        setClientSuggested(true);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [attendees, clientTouched, state]);
+
+  const addedKeys = useMemo(() => new Set(attendees.map(attendeeKey)), [attendees]);
+  const clipboardNew = clipboardOffer.filter((a) => !addedKeys.has(attendeeKey(a)));
+  const frequentNew = frequent.filter((a) => !addedKeys.has(attendeeKey(a)));
+
+  const onAddAttendees = useCallback((toAdd: Attendee[]) => {
+    setAttendees((prev) =>
+      mergeAttendees(
+        prev,
+        toAdd.map(({ name, email, company }) => ({ name, email, company })),
+      ),
+    );
+  }, []);
 
   const onParseAttendees = useCallback(() => {
     const parsed = parseAttendeesText(attendeePaste);
@@ -222,6 +286,8 @@ function Tag() {
                 setAddClient({ open: true, name: '', saving: false, error: null });
               } else {
                 setSelectedClientId(v);
+                setClientTouched(true);
+                setClientSuggested(false);
               }
             }}
           >
@@ -233,6 +299,11 @@ function Tag() {
             <option disabled>────────────</option>
             <option value="__add__">+ Add new client…</option>
           </select>
+        )}
+        {clientSuggested && !addClient.open && (
+          <div className="muted" style={{ fontSize: 10, marginTop: 4 }}>
+            Suggested from attendees' email domains
+          </div>
         )}
       </div>
       <div>
@@ -295,6 +366,30 @@ function Tag() {
           format all work. Used to help Whisper spell names correctly and to give the summary a
           roster to reference.
         </div>
+        {clipboardNew.length > 0 && (
+          <div
+            className="row"
+            style={{
+              marginBottom: 6,
+              padding: '6px 8px',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              fontSize: 11,
+              alignItems: 'center',
+            }}
+          >
+            <span style={{ flex: 1, minWidth: 0 }} className="ellipsis">
+              Clipboard has {clipboardNew.length} attendee{clipboardNew.length === 1 ? '' : 's'}:{' '}
+              {clipboardNew.map((a) => a.name).join(', ')}
+            </span>
+            <button className="primary" onClick={() => onAddAttendees(clipboardNew)}>
+              Add
+            </button>
+            <button onClick={() => setClipboardOffer([])} title="Dismiss">
+              ×
+            </button>
+          </div>
+        )}
         <textarea
           placeholder="Jane Smith <jane.smith@example.com>; john.doe@acme.com"
           value={attendeePaste}
@@ -345,6 +440,31 @@ function Tag() {
               </li>
             ))}
           </ul>
+        )}
+        {frequentNew.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <div className="muted" style={{ fontSize: 10, marginBottom: 4 }}>
+              From past{' '}
+              {state.kind === 'ready'
+                ? (state.clients.find((c) => c.id === selectedClientId)?.name ?? '')
+                : ''}{' '}
+              meetings:
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {frequentNew.map((a) => (
+                <button
+                  key={attendeeKey(a)}
+                  onClick={() => onAddAttendees([a])}
+                  title={[a.email, a.company, `${a.meetings} meeting${a.meetings === 1 ? '' : 's'}`]
+                    .filter(Boolean)
+                    .join(' · ')}
+                  style={{ fontSize: 11, padding: '2px 8px' }}
+                >
+                  + {a.name}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
       </div>
       {saveError && (

@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { inspectOutputDir } from './outputDirStatus.js';
 import { deleteAppleNote, showAppleNote } from './outputs.js';
-import { app, dialog, ipcMain, shell, BrowserWindow } from 'electron';
+import { app, clipboard, dialog, ipcMain, shell, BrowserWindow } from 'electron';
 import { Channels, KEEPALIVE_PRESETS, WHISPER_MODEL_PRESETS } from '../shared/ipcChannels.js';
 import { userVocabularyDir } from './paths.js';
 import { saveConfig, type AppConfig, type OutputsConfig } from './config.js';
@@ -40,7 +40,13 @@ import type { KeychainCredentialStore } from './keychain.js';
 import type { Logger } from './logger.js';
 import { effectiveOutputTargets, stepPlanFor, type OutputTargets } from './state.js';
 import { audioFileExists } from './pipelineSteps.js';
-import type { Attendee } from '../shared/attendees.js';
+import {
+  parseAttendeesText,
+  parseStoredAttendees,
+  rankFrequentAttendees,
+  suggestClientId,
+  type Attendee,
+} from '../shared/attendees.js';
 import type {
   ClientRow,
   JoinedRecordingRow,
@@ -212,6 +218,36 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     ctx.onStateChanged?.();
     broadcastInboxChanged();
     ctx.getWorker()?.nudge();
+  });
+
+  // People from this client's past meetings, for one-click re-adding.
+  ipcMain.handle(Channels.TagFrequentAttendees, (_evt, clientId) => {
+    if (typeof clientId !== 'string') throw new Error('clientId must be a string');
+    const history = ctx.state
+      .listTaggedAttendees(clientId)
+      .map((r) => parseStoredAttendees(r.attendees_json));
+    return rankFrequentAttendees(history);
+  });
+
+  ipcMain.handle(Channels.TagSuggestClient, (_evt, attendees) => {
+    const list = assertAttendeesList(attendees);
+    const history = ctx.state.listTaggedAttendees().map((r) => ({
+      clientId: r.client_id,
+      attendees: parseStoredAttendees(r.attendees_json),
+    }));
+    const clients = ctx.state
+      .listClients()
+      .filter((c) => c.id !== 'unclassified')
+      .map((c) => ({ id: c.id, name: c.name }));
+    return suggestClientId(list, history, clients);
+  });
+
+  // Attendees from whatever is on the clipboard, if it looks like an
+  // invite's attendee list. Only addresses count: plain names parsed
+  // from arbitrary copied text would be noise. The raw clipboard text
+  // never leaves the main process.
+  ipcMain.handle(Channels.TagClipboardAttendees, () => {
+    return parseAttendeesText(clipboard.readText()).filter((a) => a.email !== null);
   });
 
   ipcMain.handle(Channels.TagOpenSheet, (_evt, recordingId) => {
