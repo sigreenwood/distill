@@ -4,6 +4,7 @@
  * rest are renderer → main invoke/handle pairs.
  */
 export const Channels = {
+  InboxSearch: 'inbox.search',
   InboxList: 'inbox.list',
   InboxSkip: 'inbox.skip',
   InboxRevealInFinder: 'inbox.revealInFinder',

@@ -1,3 +1,4 @@
+import { MeetingSearch } from './MeetingSearch.js';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type {
@@ -667,7 +668,7 @@ function Shell(props: ShellProps) {
           activeOrQueued={activeOrQueued}
         />
       )}
-      <main style={{ flexGrow: 1, overflowY: 'auto' }}>{props.children}</main>
+      <main style={{ flexGrow: 1, overflowY: 'auto' }}><MeetingSearch />{props.children}</main>
       {props.dragOver && (
         <div
           style={{
