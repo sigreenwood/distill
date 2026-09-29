@@ -8,6 +8,7 @@ import { Channels } from '../shared/ipcChannels.js';
  */
 const api = {
   inbox: {
+    search: (query: string, scope: 'summary' | 'transcript') => ipcRenderer.invoke(Channels.InboxSearch, query, scope),
     list: () => ipcRenderer.invoke(Channels.InboxList),
     skip: (recordingId: string) => ipcRenderer.invoke(Channels.InboxSkip, recordingId),
     revealInFinder: (recordingId: string) =>

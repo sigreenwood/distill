@@ -96,11 +96,14 @@ These were raised during spec design and deferred along with their phases. Re-su
 
 ## Non-goals across all phases
 
+**Sep 2026 update:** local natural-language meeting search is now in scope:
+summaries by default, with explicit optional transcript search. See
+[`HANDOFF.md`](./HANDOFF.md) for current development status.
+
 State these up front so they don't creep in:
 
 - No Windows or Linux builds
 - No recording from the Mac microphone
 - No sharing / collaboration / multi-user
-- No search UI (Apple Notes has one; so does grep on the Markdown)
 - No USB-direct fallback unless the Plaud-Pro-sync risk materialises
 - No voice identification (named speakers) without a proper voiceprint registration flow — anonymous diarisation only, if any

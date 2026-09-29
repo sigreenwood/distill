@@ -1,3 +1,4 @@
+import type { MeetingSearchResponse, SearchScope } from '../../shared/search.js';
 /**
  * Renderer-side view of the preload bridge (`window.distill`) and the
  * DTOs main sends over it. Kept in the renderer tree (not imported from
@@ -215,6 +216,7 @@ export interface SetupProgressDTO {
 
 export interface DistillApi {
   inbox: {
+    search(query: string, scope: SearchScope): Promise<MeetingSearchResponse>;
     list(): Promise<InboxItemDTO[]>;
     skip(recordingId: string): Promise<void>;
     revealInFinder(recordingId: string): Promise<void>;

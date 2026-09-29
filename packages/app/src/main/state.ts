@@ -760,6 +760,12 @@ export class State {
      LEFT JOIN clients       c  ON c.id  = r.client_id
      LEFT JOIN meeting_types mt ON mt.id = r.meeting_type_id`;
 
+  listSearchableJoined(): JoinedRecordingRow[] {
+    return this.db.prepare(`${this.joinSelect}
+      WHERE r.summary_text IS NOT NULL OR r.transcript_text IS NOT NULL OR r.markdown_path IS NOT NULL
+      ORDER BY COALESCE(r.start_time, r.synced_at) DESC`).all() as JoinedRecordingRow[];
+  }
+
   getRecordingJoined(id: string): JoinedRecordingRow | undefined {
     return this.db.prepare(`${this.joinSelect} WHERE r.id = ?`).get(id) as
       | JoinedRecordingRow

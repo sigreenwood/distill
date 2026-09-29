@@ -20,6 +20,7 @@ export type PreflightResult =
 export interface OllamaChatRequest {
   model: string;
   messages: { role: 'system' | 'user' | 'assistant'; content: string }[];
+  format?: 'json' | Record<string, unknown>;
   options?: { temperature?: number; num_ctx?: number };
   keep_alive?: string;
 }
