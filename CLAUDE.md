@@ -1,5 +1,9 @@
 # distill
 
+Read [`docs/app/HANDOFF.md`](docs/app/HANDOFF.md) before continuing development.
+It records the current checkpoints, verification, limitations, and next step;
+older roadmap documents describe historical phases.
+
 A Mac menu-bar app that turns meeting recordings into summaries, entirely
 on-device: poll Plaud cloud (or drag a file in) → transcribe with MLX
 Whisper → summarise with a local model via Ollama → write Markdown, HTML

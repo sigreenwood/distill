@@ -6,6 +6,9 @@ Everything runs on the Mac. No cloud APIs, no API keys, no data leaves the machi
 
 ## Start here
 
+For the current development state and next task, read [`HANDOFF.md`](./HANDOFF.md)
+first. The phase documents below are historical specifications.
+
 **If you are Claude Code** (or building manually), read files in this order.
 
 1. [`ROADMAP.md`](./ROADMAP.md) — what to build in what order, and what's deferred
@@ -55,3 +58,13 @@ Negotiated with the contributor before specs were written:
 ## No compliance concern in v1
 
 Earlier spec drafts flagged a compliance question about routing client transcripts through Anthropic's API. Moving to local Ollama removes that concern entirely — no client content leaves the Mac at any point in the pipeline.
+
+## Local meeting search
+
+The inbox includes a **Search your meetings** box. Ask a question such as “A call with HSBC that talked about DR”, then choose **Search summaries**. After results arrive, **Search available transcripts** runs the same question against transcript text only. There is no automatic transcript fallback, download, or transcription.
+
+Search includes hidden recordings with locally stored text or a known Markdown export. Results show the source, date, exact excerpts, and a button to reveal saved notes. Missing source text is counted; the newest 30 matches are displayed. Standalone files that Distill does not know about are not scanned.
+
+The configured local Ollama model converts the question into required concepts and alternative phrases (for example, DR / disaster recovery). All concepts must match the selected text or recording name/client. The interpreted terms are displayed so you can refine an overly broad or narrow interpretation. This is language-assisted phrase retrieval, not an exhaustive semantic index or a conversational answer generator. If interpretation fails, search explicitly falls back to keywords. Search requires a loopback Ollama host and a local model; it does not send recording contents to the model.
+
+Summary and transcript results are retained for the current question so you can switch back without repeating the request. Editing or clearing the question resets them; submitting **Search summaries** runs a fresh search.

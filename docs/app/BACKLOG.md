@@ -60,6 +60,33 @@ Suggestions for what to watch for:
 
 ---
 
+## Natural-language meeting search — summaries first
+
+*Added Sep 2026 to the personal-use improvement list.* Use local Ollama
+to interpret questions such as "a call with HSBC that talked about DR".
+
+- **Default: search summaries.** Submitting a new question searches
+  available summaries, including hidden recordings.
+- **Optional: search transcripts.** After the summary search, offer
+  **Search available transcripts** for the same question. Search
+  transcripts only when explicitly selected, including when the summary
+  search finds no matches.
+- Show the recording title, date, client, matching excerpts and whether
+  each result comes from a summary or transcript, with access to the
+  saved notes.
+- Report unavailable content clearly. Transcript search uses existing
+  transcripts; it does not trigger transcription of recordings.
+- Keep inference local. If Ollama interpretation is unavailable, label
+  the fallback as exact keyword matching.
+
+Implemented as the first Sep 2026 development checkpoint in
+`MeetingSearch.tsx` and `meetingSearch.ts`. Automated checks, a browser
+fixture, and a synthetic query against the configured local Ollama model
+have been exercised. Packaging and installation are separate from this
+source checkpoint; see [HANDOFF.md](./HANDOFF.md).
+
+---
+
 ## Silent degradation — the theme of the Jul 2026 shakedown
 
 *Logged Jul 2026 after a day of real use.* Almost every bug found that

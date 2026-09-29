@@ -1,3 +1,4 @@
+import { searchMeetings, validateSearch } from './meetingSearch.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -72,6 +73,10 @@ export interface IpcContext {
 }
 
 export function registerIpcHandlers(ctx: IpcContext): void {
+  ipcMain.handle(Channels.InboxSearch, async (_evt, query, scope) => {
+    validateSearch(query, scope);
+    return searchMeetings(ctx.state.listSearchableJoined(), query, scope, ctx.getConfig().ollama);
+  });
   ipcMain.handle(Channels.InboxList, () => {
     const cfg = ctx.getConfig();
     const swept = ctx.state.sweepCompletedOlderThan(cfg.autoDismissCompleteMinutes);
