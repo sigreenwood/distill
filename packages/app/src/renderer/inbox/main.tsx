@@ -1028,6 +1028,9 @@ function CompleteRow(props: {
       )}
       <OutputLinks r={r} />
       <div className="row">
+        <button className="primary" onClick={() => {
+          void window.distill.meeting.open(r.id).catch(e => alert(e instanceof Error ? e.message : String(e)));
+        }}>Read meeting</button>
         <button onClick={() => void props.onSkip(r.id)} title="Hide this recording. You can bring it back from Hidden.">
           Hide
         </button>

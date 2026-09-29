@@ -75,6 +75,9 @@ export function MeetingSearch() {
           <strong>{result.title}</strong>
           <div className="muted">{new Date(result.date).toLocaleDateString()} · {result.client ?? 'Unclassified'} · {result.source === 'summary' ? 'Summary' : 'Transcript'}</div>
           {result.excerpts.map((excerpt, i) => <blockquote key={i} style={{ margin: '8px 0', whiteSpace: 'pre-wrap' }}>{excerpt}</blockquote>)}
+          <button style={{ marginRight: 8 }} onClick={() => {
+            void window.distill.meeting.open(result.id, result.source).catch(e => setError(String(e)));
+          }}>Open {result.source}</button>
           {result.canReveal && <button onClick={() => {
             void window.distill.inbox.revealInFinder(result.id).catch(e => setError(String(e)));
           }}>Show saved notes</button>}
