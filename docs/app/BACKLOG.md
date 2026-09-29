@@ -87,6 +87,20 @@ source checkpoint; see [HANDOFF.md](./HANDOFF.md).
 
 ---
 
+## Meeting reader — initial version complete
+
+*Sep 2026 development checkpoint.* Completed rows and search results now
+open a separate resizable reader with summary/transcript views, formatted
+Markdown, local find, selectable text, and missing-source messages.
+Stored text can fall back to known Markdown exports. See
+[HANDOFF.md](./HANDOFF.md) for checks and limitations.
+
+Follow-ons remain separate: editing/correction feedback, source-linked
+summary points and audio playback. Accurate audio navigation requires
+preserved segment timestamps and a VAD-to-original-audio time map.
+
+---
+
 ## Silent degradation — the theme of the Jul 2026 shakedown
 
 *Logged Jul 2026 after a day of real use.* Almost every bug found that

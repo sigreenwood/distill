@@ -1,0 +1,30 @@
+.meeting-reader { height: 100%; display: flex; flex-direction: column; }
+.reader-header { padding: 20px 24px 16px; border-bottom: 1px solid var(--border); }
+.reader-heading { display: flex; align-items: flex-start; gap: 8px; }
+.reader-heading h1 { flex: 1; margin: 0; font-size: 20px; overflow-wrap: anywhere; }
+.reader-metadata { margin: 8px 0 16px; font-size: 12px; }
+.reader-toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
+.reader-find { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+.reader-find input { flex: 1; min-width: 0; }
+.reader-find span { white-space: nowrap; font-size: 12px; }
+.reader-find button { padding: 5px 9px; }
+.reader-scroll { flex: 1; min-height: 0; overflow: auto; padding: 12px 24px 32px; -webkit-app-region: no-drag; }
+.reader-source { max-width: 80ch; margin: 0 auto 16px; font-size: 11px; }
+.reader-content { max-width: 80ch; margin: auto; user-select: text; font-size: 15px; line-height: 1.7; overflow-wrap: anywhere; }
+.reader-content h1 { font-size: 1.5em; }
+.reader-content h2 { font-size: 1.3em; }
+.reader-content h3 { font-size: 1.1em; }
+.reader-content h1, .reader-content h2, .reader-content h3 { line-height: 1.35; margin: 1.3em 0 .5em; }
+.reader-content > :first-child { margin-top: 0; }
+.reader-content p { margin: .6em 0; }
+.reader-content li { margin: .3em 0; }
+.reader-content blockquote { border-left: 3px solid var(--border); margin-left: 0; padding-left: 18px; color: var(--fg-muted); }
+.reader-content pre { overflow: auto; padding: 12px; background: var(--chip); border-radius: 6px; }
+.reader-content code { font-size: .9em; }
+.reader-content mark { background: #ffe58a; color: #1c1c1e; border-radius: 2px; }
+.reader-content mark[data-active='true'] { background: #ffac38; outline: 1px solid #8f5700; }
+.reader-transcript { white-space: pre-wrap; }
+.reader-table { overflow-x: auto; }
+.reader-table table { border-collapse: collapse; width: 100%; }
+.reader-table td, .reader-table th { padding: 8px 10px; border: 1px solid var(--border); text-align: left; }
+.reader-notice { margin: 0; padding: 10px 24px; border-bottom: 1px solid var(--border); color: var(--warning); }

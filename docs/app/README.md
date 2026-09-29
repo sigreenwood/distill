@@ -68,3 +68,17 @@ Search includes hidden recordings with locally stored text or a known Markdown e
 The configured local Ollama model converts the question into required concepts and alternative phrases (for example, DR / disaster recovery). All concepts must match the selected text or recording name/client. The interpreted terms are displayed so you can refine an overly broad or narrow interpretation. This is language-assisted phrase retrieval, not an exhaustive semantic index or a conversational answer generator. If interpretation fails, search explicitly falls back to keywords. Search requires a loopback Ollama host and a local model; it does not send recording contents to the model.
 
 Summary and transcript results are retained for the current question so you can switch back without repeating the request. Editing or clearing the question resets them; submitting **Search summaries** runs a fresh search.
+
+## Meeting reader
+
+Use **Read meeting** on a completed recording, or **Open summary/transcript**
+on a search result. The reader opens in a separate resizable window, with
+summary and transcript views. Summaries render basic Markdown; transcripts
+preserve their original text. Cmd/Ctrl-F focuses local find, with highlights
+and previous/next matches. Existing exported notes remain accessible.
+
+The reader uses stored text first and known Markdown exports for missing
+content. It clearly identifies unavailable transcripts and unreadable
+exports. Raw HTML, links and images in meeting content are displayed as
+text rather than executed or fetched. This reader is read-only; audio
+playback and editing are later work.

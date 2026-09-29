@@ -13,6 +13,8 @@ historical; this file describes the current work.
 
 ## Step 1 — local meeting search: complete in source
 
+Commit: `40187ce` — `feat(search): add local summary-first natural-language meeting search`.
+
 - Search box in the inbox; Enter and the primary button search summaries.
 - Explicit **Search available transcripts** after summary results, even
   when there are no matches. No automatic transcript search or transcription.
@@ -39,6 +41,47 @@ records: “A call with HSBC that talked about DR” produced
 `[["hsbc"],["dr","disaster recovery"]]` and matched only the intended
 recording without fallback. No real meeting content was used.
 
+## Step 2 — meeting reader: complete in source
+
+Checkpoint: the commit containing this update, titled
+`feat(reader): add a resizable summary and transcript reader`.
+
+- **Read meeting** on completed recordings and **Open summary/transcript**
+  on search results open a separate resizable reader. The selected result
+  source determines the initial view. Reopening a recording reuses its
+  reader window; different recordings can be compared in separate windows.
+- Render summary headings, lists, emphasis, tables and task checkboxes.
+  Transcript text stays verbatim, including timestamps already present.
+- Literal find within the current view, highlights, counts, previous/next,
+  Cmd/Ctrl-F, Enter/Shift-Enter; Escape clears find before closing.
+- Read from stored text, falling back to a known Markdown export only for
+  missing fields. Show the content source, missing-content messages,
+  unreadable-export warning, and existing long-meeting coverage warning.
+- Embedded HTML is escaped. Markdown links and images render as text;
+  the reader does not execute recording markup or fetch remote images.
+- This is read-only: no DB migration, content edits, re-summarisation,
+  audio playback, or source citation generation was added.
+
+Main files: `main/meetingContent.ts`, `main/windows.ts`, `shared/meeting.ts`,
+`renderer/reader/*`, and the IPC/preload bridge. The reader is a fifth
+renderer entry in `electron.vite.config.ts`.
+
+Verification: 112 app tests, full node/web typechecks and production build
+on a clean staged checkpoint. New tests cover missing exports/transcripts,
+source fallback, Markdown structure, unsafe markup, and literal find.
+An isolated browser fixture exercised opening a search result, formatted
+summary, transcript switching, find counts and next-match navigation.
+Native installed-app interaction and packaging were not exercised.
+
+Reader limitations worth retaining:
+
+- Stored DB text takes precedence over exports. Editing an exported note
+  does not update stored text or make the reader prefer the edited export.
+- Find matches individual rendered text runs; phrases split by Markdown
+  emphasis/link boundaries may not match as a continuous phrase.
+- Existing transcript timestamps are preserved; the transcription pipeline
+  does not yet retain segment timestamps or a VAD-to-original-audio map.
+
 ## Workspace caveat
 
 This iCloud working directory already contained untracked numbered copies
@@ -63,17 +106,28 @@ socket access causes unrelated timeouts. Run those checks with localhost
 access. Native `better-sqlite3` remains built for Electron; existing tests
 avoid opening a real DB from Node.
 
-## Next step
+## Next step — client preparation brief
 
-Build a separate resizable meeting reader, opened from search results and
-completed recordings, with summary/transcript views, local find, safe
-Markdown rendering, and clear missing-content states. Reuse local text and
-known Markdown exports. Source-linked audio needs preserved timestamps
-and a VAD-to-original-audio time map, so it is a later step.
+Suggested next bounded slice: an on-demand brief for a selected client
+using explicitly selected previous meetings or a date range. Include
+recent decisions, stated commitments and questions to revisit, with each
+point linked to its source meeting in the reader. Keep inference local
+and distinguish source statements from inferred follow-up questions.
+Do not claim an action is still open or completed without supporting
+evidence; persistent confirmed status belongs to the later action register.
+Do not introduce calendar integration or automatic background inference.
 
-Subsequent ideas, not implemented or fully specified: client preparation
-briefs; a confirmed action/decision register; correction-to-vocabulary
-suggestions; versioned re-summarisation; long-meeting chunking/coverage;
-idle/overnight processing; diagnostics and backup/restore.
+Before implementation, inspect current IPC/reader patterns and choose a
+bounded source/token budget. Add checks for source citations and missing
+content, then typecheck, test, build, verify the UI and commit the completed
+slice. Update this handoff in the same commit. Do not begin several features
+at once or leave a partial feature mixed into a completed checkpoint.
+
+Later ideas, not implemented or fully specified: confirmed action/decision
+register; correction-to-vocabulary suggestions; versioned re-summarisation;
+long-meeting chunking/coverage; idle/overnight processing; diagnostics and
+backup/restore. Source-linked audio is also later work.
 
 No package has been installed or release published as part of this work.
+The known unrelated untracked files are intentionally left in the working
+directory; the completed feature commits contain none of them.
