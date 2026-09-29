@@ -4,6 +4,8 @@
  * rest are renderer → main invoke/handle pairs.
  */
 export const Channels = {
+  MeetingOpen: 'meeting.open',
+  MeetingGet: 'meeting.get',
   InboxSearch: 'inbox.search',
   InboxList: 'inbox.list',
   InboxSkip: 'inbox.skip',

@@ -8,6 +8,11 @@ import type { Attendee } from '../shared/attendees.js';
  * plumbing so the contract lives entirely in main/ipc.ts.
  */
 const api = {
+  meeting: {
+    open: (recordingId: string, scope: 'summary' | 'transcript' = 'summary') =>
+      ipcRenderer.invoke(Channels.MeetingOpen, recordingId, scope),
+    get: (recordingId: string) => ipcRenderer.invoke(Channels.MeetingGet, recordingId),
+  },
   inbox: {
     search: (query: string, scope: 'summary' | 'transcript') => ipcRenderer.invoke(Channels.InboxSearch, query, scope),
     list: () => ipcRenderer.invoke(Channels.InboxList),

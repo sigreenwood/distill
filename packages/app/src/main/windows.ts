@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { BrowserWindow, screen, type Rectangle } from 'electron';
 import { Channels } from '../shared/ipcChannels.js';
+import type { SearchScope } from '../shared/search.js';
 
 export interface WindowsContext {
   preloadPath: string;
@@ -10,7 +11,7 @@ export interface WindowsContext {
   rendererDistDir: string;
 }
 
-type RendererEntry = 'inbox' | 'tag' | 'settings' | 'setup' | 'history';
+type RendererEntry = 'inbox' | 'tag' | 'settings' | 'setup' | 'history' | 'reader';
 
 let ctx: WindowsContext | null = null;
 let inboxWin: BrowserWindow | null = null;
@@ -19,6 +20,7 @@ let settingsWin: BrowserWindow | null = null;
 let setupWin: BrowserWindow | null = null;
 let historyWin: BrowserWindow | null = null;
 let pendingFocusId: string | null = null;
+const readerWindows = new Map<string, BrowserWindow>();
 
 export function configureWindows(c: WindowsContext): void {
   ctx = c;
@@ -109,6 +111,8 @@ export function openTagSheet(recordingId: string): void {
 }
 
 export function closeAll(): void {
+  for (const win of readerWindows.values()) if (!win.isDestroyed()) win.close();
+  readerWindows.clear();
   if (inboxWin && !inboxWin.isDestroyed()) inboxWin.close();
   if (tagWin && !tagWin.isDestroyed()) tagWin.close();
   if (settingsWin && !settingsWin.isDestroyed()) settingsWin.close();
@@ -119,6 +123,31 @@ export function closeAll(): void {
   settingsWin = null;
   setupWin = null;
   historyWin = null;
+}
+
+export function openMeetingReader(recordingId: string, scope: SearchScope = 'summary'): void {
+  if (!ctx) throw new Error('configureWindows must be called first');
+  const hash = `#${new URLSearchParams({ recordingId, scope })}`;
+  const existing = readerWindows.get(recordingId);
+  if (existing && !existing.isDestroyed()) {
+    void loadRendererEntry(existing, 'reader', hash);
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    return;
+  }
+  const win = new BrowserWindow({
+    width: 900, height: 740, minWidth: 480, minHeight: 400,
+    show: false, resizable: true, title: 'distill — Meeting',
+    webPreferences: {
+      preload: ctx.preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: false,
+    },
+  });
+  readerWindows.set(recordingId, win);
+  centreOnCursorDisplay(win);
+  void loadRendererEntry(win, 'reader', hash);
+  win.once('ready-to-show', () => { win.show(); win.focus(); });
+  win.on('closed', () => { readerWindows.delete(recordingId); });
 }
 
 export function openSettings(opts?: { initialTab?: string }): void {

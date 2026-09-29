@@ -1,4 +1,5 @@
 import { searchMeetings, validateSearch } from './meetingSearch.js';
+import { loadMeetingDetail } from './meetingContent.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -10,7 +11,7 @@ import { Channels, KEEPALIVE_PRESETS, WHISPER_MODEL_PRESETS } from '../shared/ip
 import { userVocabularyDir } from './paths.js';
 import { saveConfig, type AppConfig, type OutputsConfig } from './config.js';
 import { hashPrompt, parsePromptsMarkdownDetailed, readSeedPrompt } from './seed.js';
-import { openSettings, openTagSheet } from './windows.js';
+import { openSettings, openTagSheet, openMeetingReader } from './windows.js';
 import { importLocalFile, LocalImportError, type LocalImportProgress } from './localImport.js';
 import {
   BUILTIN_SCOPE_IDS,
@@ -73,6 +74,18 @@ export interface IpcContext {
 }
 
 export function registerIpcHandlers(ctx: IpcContext): void {
+  function requireMeeting(recordingId: unknown): JoinedRecordingRow {
+    if (typeof recordingId !== 'string' || !recordingId.trim()) throw new Error('Invalid recording ID');
+    const row = ctx.state.getRecordingJoined(recordingId);
+    if (!row) throw new Error('This recording is no longer in the library.');
+    return row;
+  }
+  ipcMain.handle(Channels.MeetingOpen, (_evt, recordingId, scope = 'summary') => {
+    const row = requireMeeting(recordingId);
+    if (scope !== 'summary' && scope !== 'transcript') throw new Error('Invalid meeting source');
+    openMeetingReader(row.id, scope);
+  });
+  ipcMain.handle(Channels.MeetingGet, (_evt, recordingId) => loadMeetingDetail(requireMeeting(recordingId)));
   ipcMain.handle(Channels.InboxSearch, async (_evt, query, scope) => {
     validateSearch(query, scope);
     return searchMeetings(ctx.state.listSearchableJoined(), query, scope, ctx.getConfig().ollama);

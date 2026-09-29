@@ -63,6 +63,7 @@ export default defineConfig({
           settings: resolve(__dirname, 'src/renderer/settings/index.html'),
           setup: resolve(__dirname, 'src/renderer/setup/index.html'),
           history: resolve(__dirname, 'src/renderer/history/index.html'),
+          reader: resolve(__dirname, 'src/renderer/reader/index.html'),
         },
       },
     },
