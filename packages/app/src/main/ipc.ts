@@ -7,6 +7,7 @@ import type { RegisterItem, RegisterItemKind } from '../shared/register.js';
 import type { JoinedRegisterItemRow } from './state.js';
 import { generateSummaryVersion, buildVersionList } from './summaryVersions.js';
 import type { SummaryVersionDTO } from '../shared/summaryVersion.js';
+import { suggestMeetingType } from './meetingTypeSuggestion.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -86,6 +87,8 @@ export interface IpcContext {
 const briefRuns = new Map<number, AbortController>();
 /** In-flight alternative-summary generations, one per reader window. */
 const summaryVersionRuns = new Map<number, AbortController>();
+/** In-flight meeting-type suggestions, one per tag sheet. */
+const meetingTypeSuggestionRuns = new Map<number, AbortController>();
 
 export function registerIpcHandlers(ctx: IpcContext): void {
   function requireMeeting(recordingId: unknown): JoinedRecordingRow {
@@ -575,6 +578,38 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       .filter((c) => c.id !== 'unclassified')
       .map((c) => ({ id: c.id, name: c.name }));
     return suggestClientId(list, history, clients);
+  });
+
+  // Meeting-type suggestion is a real (if small) local Ollama call, unlike
+  // suggestClient above which is a pure heuristic — see
+  // main/meetingTypeSuggestion.ts for why (no transcript exists yet at tag
+  // time, so title/duration/attendees are all there is to reason over).
+  ipcMain.handle(Channels.TagSuggestMeetingType, async (evt, payload) => {
+    const p = payload as { recordingId?: unknown; clientId?: unknown; attendees?: unknown } | undefined;
+    if (typeof p?.recordingId !== 'string') throw new Error('recordingId must be a string');
+    const row = ctx.state.getRecording(p.recordingId);
+    if (!row) throw new Error('This recording is no longer in the library.');
+    const attendees = p.attendees !== undefined ? assertAttendeesList(p.attendees) : [];
+    const clientName =
+      typeof p.clientId === 'string' ? (ctx.state.listClients().find((c) => c.id === p.clientId)?.name ?? null) : null;
+    const candidates = ctx.state.listMeetingTypes().map((m) => ({ id: m.id, name: m.name, prompt: m.prompt }));
+
+    meetingTypeSuggestionRuns.get(evt.sender.id)?.abort();
+    const controller = new AbortController();
+    meetingTypeSuggestionRuns.set(evt.sender.id, controller);
+    try {
+      return await suggestMeetingType(
+        { title: row.filename, durationSeconds: row.duration_seconds, clientName, attendees },
+        candidates,
+        ctx.getConfig().ollama,
+        controller.signal,
+      );
+    } catch (e) {
+      if (controller.signal.aborted) return null;
+      throw e;
+    } finally {
+      if (meetingTypeSuggestionRuns.get(evt.sender.id) === controller) meetingTypeSuggestionRuns.delete(evt.sender.id);
+    }
   });
 
   // Attendees from whatever is on the clipboard, if it looks like an

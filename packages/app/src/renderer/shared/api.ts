@@ -25,6 +25,7 @@ export type RecordingStatus =
 import type { BriefCandidate, ClientBrief } from '../../shared/brief';
 import type { RegisterItem } from '../../shared/register';
 import type { SummaryVersionDTO } from '../../shared/summaryVersion';
+import type { MeetingTypeSuggestion } from '../../shared/meetingTypeSuggestion.js';
 
 export type PipelineStep = 'download' | 'transcribe' | 'summarise' | 'write';
 
@@ -327,6 +328,12 @@ export interface DistillApi {
     frequentAttendees(clientId: string): Promise<FrequentAttendee[]>;
     /** A client id when attendees' email domains clearly point to one. */
     suggestClient(attendees: Attendee[]): Promise<string | null>;
+    /** Local-Ollama guess at the best-fitting meeting type, from title/duration/client/attendees — no transcript exists yet at tag time. */
+    suggestMeetingType(payload: {
+      recordingId: string;
+      clientId?: string;
+      attendees: Attendee[];
+    }): Promise<MeetingTypeSuggestion | null>;
     /** Addresses found on the clipboard, if any. */
     clipboardAttendees(): Promise<Attendee[]>;
     getSheetRecordingId(): string | null;

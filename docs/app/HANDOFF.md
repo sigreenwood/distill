@@ -527,6 +527,78 @@ Limitations worth retaining:
   constants in `tokenBudget.ts`, not user-configurable. Revisit only if
   real use shows the rounding granularity matters.
 
+## Step 9 — meeting-type suggestion: complete in source
+
+Checkpoint: the commit containing this update, titled
+`feat(tag): suggest a meeting type from title, duration and attendees`.
+
+Prompted by asking how to programmatically pick the right meeting-type
+template across a mix like daily standups, client calls, quarterly
+reviews, strategy calls and topic workshops. The one constraint that
+shaped the whole design: **meeting type is chosen at tag time, before
+transcription runs** — tagging is literally what queues the pipeline
+(`stepPlanFor`/`nextNeededStep` in `state.ts`) — so there is no
+transcript yet to classify against. Two options were considered:
+delay the meeting-type choice until after transcription (a real pipeline
+restructuring — bigger, riskier, not attempted), or reason over
+whatever signals already exist before transcription. This ships the
+second, cheaper option.
+
+- Tag sheet, meeting-type field: mirrors the existing client-suggestion
+  UX exactly (`clientTouched`/`clientSuggested` in `renderer/tag/main.tsx`)
+  — pre-selects the dropdown and shows a one-line reason, stops
+  overriding the instant the user picks one themselves. The difference
+  from the client suggestion: that one is a pure heuristic (email-domain
+  matching, `suggestClientId` in `shared/attendees.ts`, free); this one
+  is a real local Ollama call, so it's gated (needs ≥2 meeting types to
+  choose between — does nothing with zero or one) and cancellable
+  (each new request aborts the previous one, same `Map<webContentsId,
+  AbortController>` pattern as briefs/summary-version generations).
+- `main/meetingTypeSuggestion.ts`: reasons over recording title,
+  duration, selected client (if picked) and pasted attendees (names +
+  parsed company) against the user's *own* existing meeting types —
+  labelled `T1`, `T2`, … (same brittle-string-matching defence as
+  `clientBrief.ts`'s `M1`/`M2` meeting labels) with a ~200-char excerpt
+  of each type's own prompt standing in for "what this label means",
+  since meeting types have no separate description field and aren't
+  seeded by default. Schema-constrained JSON output
+  (`{type, confidence, reason}`), temperature 0, local-only
+  (`assertLocalInference`). A label outside the supplied set is dropped,
+  not guessed at.
+- Triggers automatically on tag-sheet load and again whenever attendees
+  or the selected client change (not on every keystroke — attendees only
+  change via discrete Parse/+ button clicks) — silently degrades on any
+  failure, never blocks the Process button.
+
+Main files: `shared/meetingTypeSuggestion.ts` (DTO), `main/meetingTypeSuggestion.ts`
+(`buildSuggestionMessages`/`parseSuggestion`/`suggestMeetingType`, all
+pure or directly tested), `main/ipc.ts` (`Channels.TagSuggestMeetingType`),
+`renderer/tag/main.tsx`.
+
+Verification: 226 tests (10 new, covering label mapping, invalid/missing
+JSON, the confidence fallback, the local-inference guard, and the
+fewer-than-two-candidates no-op), both typechecks, production build.
+**Not exercised: the actual tag sheet against a running Ollama server**
+— same Node-version verification gap as every step this session. Before
+relying on this in real use: create at least two meeting types with
+genuinely different prompts, open the tag sheet on a real inbox item,
+and check the suggestion is both populated and sane.
+
+Limitations worth retaining:
+
+- No suggestion at all once transcription finishes — if a summary later
+  makes clear the tagged type was wrong, that's a manual re-tag
+  (there's no "reclassify from the transcript and re-summarise" action;
+  Step 7's Versions panel already covers switching *models*/*prompts*
+  post-hoc, but the user still has to notice and pick the right one).
+- Quality depends entirely on the recording's title being informative.
+  Plaud recordings often carry generic, timestamp-based titles; the
+  attendee list and duration carry more of the signal in that case.
+- No manual "suggest again" affordance — only automatic re-triggering on
+  attendee/client changes. Fine for the normal flow, mildly annoying if
+  you want to force a retry after, say, fixing a mis-parsed attendee
+  name without changing the list.
+
 ## Next step
 
 Later ideas, not implemented or fully specified: idle/overnight
@@ -534,11 +606,12 @@ processing; diagnostics and backup/restore. Source-linked audio is also
 later work. Decision supersession/versioning (see the register's
 limitations above), a tray-level completion pulse and native Dock
 switching (see Step 6's limitations), a real side-by-side diff view or
-a retention policy for summary versions (see Step 7's limitations), and
-configurable adaptive-context tuning (see Step 8's limitations) are
-optional follow-ons to already-shipped steps, not required by them.
-Long-meeting chunking (the original item 7) remains deliberately
-un-built — see Step 8 and BACKLOG.md's "Truncation guard" for why.
+a retention policy for summary versions (see Step 7's limitations),
+configurable adaptive-context tuning (see Step 8's limitations), and
+post-transcript reclassification (see Step 9's limitations) are optional
+follow-ons to already-shipped steps, not required by them. Long-meeting
+chunking (the original item 7) remains deliberately un-built — see
+Step 8 and BACKLOG.md's "Truncation guard" for why.
 
 No package has been installed or release published as part of this work.
 The known unrelated untracked files are intentionally left in the working

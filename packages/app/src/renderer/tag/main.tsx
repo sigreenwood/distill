@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { ClientDTO, FrequentAttendee, MeetingTypeDTO } from '../shared/api.js';
+import type { MeetingTypeSuggestion } from '../../shared/meetingTypeSuggestion.js';
 import { attendeeKey, parseAttendeesText, type Attendee } from '../../shared/attendees.js';
 
 function mergeAttendees(existing: Attendee[], parsed: Attendee[]): Attendee[] {
@@ -36,6 +37,11 @@ function Tag() {
   // Once the user picks a client themselves, suggestions stop moving it.
   const [clientTouched, setClientTouched] = useState(false);
   const [clientSuggested, setClientSuggested] = useState(false);
+  // Same pattern for meeting type, but the suggestion comes from a local
+  // Ollama call (title/duration/client/attendees — no transcript exists
+  // yet), not a pure heuristic, so it also carries a reason to show.
+  const [meetingTypeTouched, setMeetingTypeTouched] = useState(false);
+  const [meetingTypeSuggestion, setMeetingTypeSuggestion] = useState<MeetingTypeSuggestion | null>(null);
   const [clipboardOffer, setClipboardOffer] = useState<Attendee[]>([]);
   const [frequent, setFrequent] = useState<FrequentAttendee[]>([]);
   const [addClient, setAddClient] = useState<AddClientState>({ open: false });
@@ -114,6 +120,8 @@ function Tag() {
           : prev,
       );
       setSelectedMeetingTypeId(created.id);
+      setMeetingTypeTouched(true);
+      setMeetingTypeSuggestion(null);
       setAddMeetingType({ open: false });
     } catch (e) {
       setAddMeetingType({
@@ -167,6 +175,29 @@ function Tag() {
       cancelled = true;
     };
   }, [attendees, clientTouched, state]);
+
+  // Same idea for meeting type, but re-fires whenever the signals it
+  // reasons over change (attendees pasted/added, client picked) since a
+  // local Ollama call isn't free the way the pure client heuristic is.
+  // Silently does nothing with fewer than two meeting types to choose
+  // between (see suggestMeetingType's own guard) or on any failure —
+  // this is advisory, never something Process should wait on or fail for.
+  useEffect(() => {
+    if (meetingTypeTouched || state.kind !== 'ready' || !recordingId || state.meetingTypes.length < 2) return;
+    let cancelled = false;
+    const typeIds = new Set(state.meetingTypes.map((m) => m.id));
+    void window.distill.tag
+      .suggestMeetingType({ recordingId, clientId: selectedClientId || undefined, attendees })
+      .then((suggestion) => {
+        if (cancelled || !suggestion || !typeIds.has(suggestion.meetingTypeId)) return;
+        setSelectedMeetingTypeId(suggestion.meetingTypeId);
+        setMeetingTypeSuggestion(suggestion);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [recordingId, attendees, selectedClientId, meetingTypeTouched, state]);
 
   const addedKeys = useMemo(() => new Set(attendees.map(attendeeKey)), [attendees]);
   const clipboardNew = clipboardOffer.filter((a) => !addedKeys.has(attendeeKey(a)));
@@ -355,6 +386,8 @@ function Tag() {
                 setAddMeetingType({ open: true, name: '', prompt: '', saving: false, error: null });
               } else {
                 setSelectedMeetingTypeId(v);
+                setMeetingTypeTouched(true);
+                setMeetingTypeSuggestion(null);
               }
             }}
           >
@@ -366,6 +399,12 @@ function Tag() {
             <option disabled>────────────</option>
             <option value="__add__">+ Add new meeting type…</option>
           </select>
+        )}
+        {meetingTypeSuggestion && !addMeetingType.open && (
+          <div className="muted" style={{ fontSize: 10, marginTop: 4 }}>
+            Suggested ({meetingTypeSuggestion.confidence} confidence)
+            {meetingTypeSuggestion.reason ? `: ${meetingTypeSuggestion.reason}` : ''}
+          </div>
         )}
       </div>
       <div>

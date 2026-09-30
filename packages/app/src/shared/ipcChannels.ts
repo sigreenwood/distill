@@ -34,6 +34,7 @@ export const Channels = {
   TagOpenSheet: 'tag.open-sheet',
   TagFrequentAttendees: 'tag.frequentAttendees',
   TagSuggestClient: 'tag.suggestClient',
+  TagSuggestMeetingType: 'tag.suggestMeetingType',
   TagClipboardAttendees: 'tag.clipboardAttendees',
   ClientsList: 'clients.list',
   ClientsAdd: 'clients.add',

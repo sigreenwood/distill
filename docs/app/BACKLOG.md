@@ -196,6 +196,22 @@ simply raising the default ceiling instead.
 
 ---
 
+## Meeting-type suggestion — complete in source
+
+*Sep 2026 development checkpoint.* The tag sheet now suggests a meeting
+type the same way it already suggests a client: pre-selects the dropdown
+and shows a reason, never applies anything without the user reaching
+Process themselves. Unlike the client suggestion (a pure heuristic on
+email domains), this is a small local Ollama call — no transcript exists
+at tag time (tagging is what queues transcription), so it reasons over
+the recording's title, duration, selected client and pasted attendees
+against the user's own existing meeting types. Needs at least two
+meeting types to have anything to choose between; does nothing with
+zero or one. See [HANDOFF.md](./HANDOFF.md) for the reasoning behind
+reasoning over pre-transcript signals rather than transcript content.
+
+---
+
 ## Silent degradation — the theme of the Jul 2026 shakedown
 
 *Logged Jul 2026 after a day of real use.* Almost every bug found that

@@ -83,6 +83,8 @@ const api = {
       ipcRenderer.invoke(Channels.TagFrequentAttendees, clientId),
     suggestClient: (attendees: Attendee[]) =>
       ipcRenderer.invoke(Channels.TagSuggestClient, attendees),
+    suggestMeetingType: (payload: { recordingId: string; clientId?: string; attendees: Attendee[] }) =>
+      ipcRenderer.invoke(Channels.TagSuggestMeetingType, payload),
     clipboardAttendees: () => ipcRenderer.invoke(Channels.TagClipboardAttendees),
     getSheetRecordingId: (): string | null => {
       const arg = process.argv.find((a) => a.startsWith('--recording-id='));
