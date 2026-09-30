@@ -1,4 +1,29 @@
-# Development handoff — 2026-09-29
+# Development handoff — 2026-09-30
+
+## Base branch — read first
+
+Work on `integrate/search-reader` (worktree `.claude/worktrees/recover`),
+not local `main`. Steps 1–2 below were first committed on local `main`
+(40187ce, de6e9bb) on top of the old 0.0.16 source, which lacks the
+installed app's 0.0.17–0.0.23 work (attendees, output targets, History,
+full re-run, startup/PATH fixes, tag-sheet suggestions). They have been
+cherry-picked onto `recover/v0.0.20` (PR #1, still unmerged) as 7df3c56
+and dc15722. Only conflicts: the renderer entry lists in
+`electron.vite.config.ts` and `windows.ts` (History and reader both kept).
+After integration: typecheck, 164 tests and production build pass.
+
+Once PR #1 is merged, merge this branch too and reset local `main` to
+GitHub. Local `main`'s two commits are then redundant.
+
+The repo folder is in iCloud Drive and its `.git` appears shared with a
+second Mac (a worktree registered under `/Users/sigreenwood/`). That is
+how the July corruption happened; each machine should keep its own clone
+outside iCloud and share work through GitHub only.
+
+Build/install notes: packaging on Node 26 needs the native-module rebuild
+via `@electron/rebuild`'s API (the CLI fails); launching the app from a
+VS Code terminal needs `env -u ELECTRON_RUN_AS_NODE open …`. Installed:
+0.0.22 (0.0.23 installer built, not yet installed).
 
 ## Intent and workflow
 
