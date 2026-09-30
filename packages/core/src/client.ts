@@ -35,7 +35,15 @@ export class PlaudClient {
       throw new Error(`Plaud API error: ${res.status}`);
     }
 
-    const data = await res.json();
+    let data: any;
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error(
+        `Plaud API returned a non-JSON response (HTTP ${res.status}). ` +
+          'The session may have expired, or Plaud may be blocking the request. Sign in again and retry.',
+      );
+    }
 
     // Handle region mismatch. Retry at most once — if the server still
     // reports a mismatch after switching, retrying again would loop forever.

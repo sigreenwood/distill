@@ -38,6 +38,16 @@ const RULES: Rule[] = [
     },
   },
   {
+    pattern: /Insufficient\s+Memory|out\s+of\s+memory|GPU.*memory/i,
+    build: (_m, ctx) => {
+      const model = ctx.ollamaModel ?? 'the configured model';
+      return (
+        `Ollama ran out of GPU memory while loading "${model}". ` +
+        'Switch to a smaller model in Settings → Performance, lower contextWindow, or quit other GPU-heavy apps, then Retry.'
+      );
+    },
+  },
+  {
     pattern: /Ollama\s+stream\s+error|Ollama\s+5\d\d/i,
     build: () =>
       'Ollama errored during generation. This usually means it ran out of memory — try a smaller model, shorter transcript, or restart Ollama.',
@@ -66,6 +76,12 @@ const RULES: Rule[] = [
     },
   },
   // --- Plaud download ------------------------------------------------------
+  {
+    pattern: /Plaud API returned a non-JSON response/i,
+    build: () =>
+      'Plaud returned an HTML or otherwise invalid response instead of JSON. Open Settings → Sources, sign in again, then retry. If it continues, Plaud may be temporarily blocking requests.',
+    isAuthError: true,
+  },
   {
     pattern: /getMp3Url\s+returned\s+null|Plaud\s+did\s+not\s+return\s+a\s+download\s+URL/i,
     build: () =>
