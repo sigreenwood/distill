@@ -1,0 +1,21 @@
+{
+  "$version": 1,
+  "whisperHints": [
+    "MCP",
+    "LLM",
+    "POC",
+    "NVIDIA",
+    "Databricks",
+    "Hugging Face",
+    "Iceberg",
+    "Vector Store",
+    "GPU",
+    "AWS",
+    "Azure",
+    "GCP",
+    "Salesforce",
+    "SAS",
+    "agentic"
+  ],
+  "replacements": []
+}

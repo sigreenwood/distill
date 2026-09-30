@@ -1,0 +1,54 @@
+{
+  "$version": 1,
+  "whisperHints": [
+    "HSBC",
+    "Lloyds",
+    "TSB",
+    "BioCatch",
+    "Celebrus",
+    "Pega",
+    "CommsHub",
+    "CIM",
+    "VCX",
+    "DataStage",
+    "LDAP",
+    "SIEM",
+    "ARR",
+    "SOW"
+  ],
+  "replacements": [
+    {
+      "from": "ComSub",
+      "to": "CommsHub"
+    },
+    {
+      "from": "Coms Hub",
+      "to": "CommsHub"
+    },
+    {
+      "from": "ComsHub",
+      "to": "CommsHub"
+    },
+    {
+      "from": "Biocatch",
+      "to": "BioCatch"
+    },
+    {
+      "from": "Clearscape",
+      "to": "ClearScape"
+    },
+    {
+      "from": "Vantage Cloud",
+      "to": "VantageCloud"
+    },
+    {
+      "from": "Ratchet",
+      "to": "Rajesh",
+      "requiresContext": [
+        "team",
+        "call",
+        "meeting"
+      ]
+    }
+  ]
+}
