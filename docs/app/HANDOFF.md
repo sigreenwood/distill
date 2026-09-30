@@ -2,28 +2,27 @@
 
 ## Base branch — read first
 
-Work on `integrate/search-reader` (worktree `.claude/worktrees/recover`),
-not local `main`. Steps 1–2 below were first committed on local `main`
-(40187ce, de6e9bb) on top of the old 0.0.16 source, which lacks the
-installed app's 0.0.17–0.0.23 work (attendees, output targets, History,
-full re-run, startup/PATH fixes, tag-sheet suggestions). They have been
-cherry-picked onto `recover/v0.0.20` (PR #1, still unmerged) as 7df3c56
-and dc15722. Only conflicts: the renderer entry lists in
-`electron.vite.config.ts` and `windows.ts` (History and reader both kept).
-After integration: typecheck, 164 tests and production build pass.
+`consolidate/main` is the single source of truth until it is merged to
+GitHub `main`. It is built from the other Mac's real history
+(`~/dev/distill`, rescued 2026-09-30 as `rescue/Si-Macbook-Pro-…-1-main`):
+0.0.17–0.0.20 as originally committed, plus the optional Parakeet engine
+and the VAD-with-ffmpeg fix (149be1d). Replayed on top: the 0.0.21–0.0.23
+fixes (full Plaud history + backfill, `think: false`, 60s startup import
+check, Homebrew PATH, tag-sheet suggestions), search, reader and client
+brief, and the other Mac's uncommitted backlog notes and error-message
+work. The earlier `recover/v0.0.20` / `integrate/search-reader` branches
+were a reconstruction of 0.0.17–0.0.20 from the compiled app and are
+superseded. Checks: typecheck, 201 tests, production build.
 
-Once PR #1 is merged, merge this branch too and reset local `main` to
-GitHub. Local `main`'s two commits are then redundant.
+Note: builds 0.0.22/0.0.23 from the old branches found ffmpeg (PATH fix)
+without the 149be1d fix, so VAD was likely off in them. Builds from this
+branch have both.
 
-The repo folder is in iCloud Drive and its `.git` appears shared with a
-second Mac (a worktree registered under `/Users/sigreenwood/`). That is
-how the July corruption happened; each machine should keep its own clone
-outside iCloud and share work through GitHub only.
-
-Build/install notes: packaging on Node 26 needs the native-module rebuild
-via `@electron/rebuild`'s API (the CLI fails); launching the app from a
-VS Code terminal needs `env -u ELECTRON_RUN_AS_NODE open …`. Installed:
-0.0.22 (0.0.23 installer built, not yet installed).
+Both Macs are moving to fresh clones in `~/Developer/distill`, outside
+iCloud (scripts in iCloud Drive/distill-migration). Develop with Node 22
+(`.nvmrc`); Node 26 breaks better-sqlite3 and electron-rebuild's CLI.
+Launching the app from a VS Code terminal needs
+`env -u ELECTRON_RUN_AS_NODE open …`.
 
 ## Intent and workflow
 
