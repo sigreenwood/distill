@@ -34,12 +34,14 @@ function Tag() {
   const [selectedMeetingTypeId, setSelectedMeetingTypeId] = useState('');
   const [attendeePaste, setAttendeePaste] = useState('');
   const [attendees, setAttendees] = useState<Attendee[]>([]);
-  // Once the user picks a client themselves, suggestions stop moving it.
+  // Suggestions are shown, never applied automatically — a wrong guess
+  // that silently changed the selection could send a recording through
+  // the wrong pipeline (wrong client, or the wrong summarise prompt)
+  // with nothing to notice. The user always clicks "Use this" (or just
+  // picks directly), which is also what stops the suggestion from
+  // recomputing itself out from under a deliberate choice.
   const [clientTouched, setClientTouched] = useState(false);
-  const [clientSuggested, setClientSuggested] = useState(false);
-  // Same pattern for meeting type, but the suggestion comes from a local
-  // Ollama call (title/duration/client/attendees — no transcript exists
-  // yet), not a pure heuristic, so it also carries a reason to show.
+  const [clientSuggestion, setClientSuggestion] = useState<{ id: string; name: string } | null>(null);
   const [meetingTypeTouched, setMeetingTypeTouched] = useState(false);
   const [meetingTypeSuggestion, setMeetingTypeSuggestion] = useState<MeetingTypeSuggestion | null>(null);
   const [clipboardOffer, setClipboardOffer] = useState<Attendee[]>([]);
@@ -87,7 +89,7 @@ function Tag() {
       );
       setSelectedClientId(created.id);
       setClientTouched(true);
-      setClientSuggested(false);
+      setClientSuggestion(null);
       setAddClient({ open: false });
     } catch (e) {
       setAddClient({ ...addClient, saving: false, error: e instanceof Error ? e.message : String(e) });
@@ -157,20 +159,26 @@ function Tag() {
     };
   }, [selectedClientId]);
 
-  // Pre-select the client the attendees' email domains point to, until
-  // the user chooses one themselves.
+  // Work out which client the attendees' email domains point to, until
+  // the user has made their own choice — shown as a suggestion to click,
+  // never applied to selectedClientId on its own.
   useEffect(() => {
-    if (clientTouched || state.kind !== 'ready' || attendees.length === 0) return;
+    if (clientTouched || state.kind !== 'ready' || attendees.length === 0) {
+      setClientSuggestion(null);
+      return;
+    }
     let cancelled = false;
-    const clientIds = new Set(state.clients.map((c) => c.id));
+    const clients = state.clients;
     void window.distill.tag
       .suggestClient(attendees)
       .then((id) => {
-        if (cancelled || !id || !clientIds.has(id)) return;
-        setSelectedClientId(id);
-        setClientSuggested(true);
+        if (cancelled) return;
+        const client = id ? clients.find((c) => c.id === id) : undefined;
+        setClientSuggestion(client ? { id: client.id, name: client.name } : null);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setClientSuggestion(null);
+      });
     return () => {
       cancelled = true;
     };
@@ -181,19 +189,24 @@ function Tag() {
   // local Ollama call isn't free the way the pure client heuristic is.
   // Silently does nothing with fewer than two meeting types to choose
   // between (see suggestMeetingType's own guard) or on any failure —
-  // this is advisory, never something Process should wait on or fail for.
+  // this is advisory, never something Process should wait on or fail for,
+  // and never applied to selectedMeetingTypeId without the user clicking it.
   useEffect(() => {
-    if (meetingTypeTouched || state.kind !== 'ready' || !recordingId || state.meetingTypes.length < 2) return;
+    if (meetingTypeTouched || state.kind !== 'ready' || !recordingId || state.meetingTypes.length < 2) {
+      setMeetingTypeSuggestion(null);
+      return;
+    }
     let cancelled = false;
     const typeIds = new Set(state.meetingTypes.map((m) => m.id));
     void window.distill.tag
       .suggestMeetingType({ recordingId, clientId: selectedClientId || undefined, attendees })
       .then((suggestion) => {
-        if (cancelled || !suggestion || !typeIds.has(suggestion.meetingTypeId)) return;
-        setSelectedMeetingTypeId(suggestion.meetingTypeId);
-        setMeetingTypeSuggestion(suggestion);
+        if (cancelled) return;
+        setMeetingTypeSuggestion(suggestion && typeIds.has(suggestion.meetingTypeId) ? suggestion : null);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setMeetingTypeSuggestion(null);
+      });
     return () => {
       cancelled = true;
     };
@@ -327,7 +340,7 @@ function Tag() {
               } else {
                 setSelectedClientId(v);
                 setClientTouched(true);
-                setClientSuggested(false);
+                setClientSuggestion(null);
               }
             }}
           >
@@ -340,9 +353,31 @@ function Tag() {
             <option value="__add__">+ Add new client…</option>
           </select>
         )}
-        {clientSuggested && !addClient.open && (
-          <div className="muted" style={{ fontSize: 10, marginTop: 4 }}>
-            Suggested from attendees' email domains
+        {clientSuggestion && clientSuggestion.id !== selectedClientId && !addClient.open && (
+          <div
+            className="row"
+            style={{
+              marginTop: 4,
+              padding: '4px 8px',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              fontSize: 10,
+              alignItems: 'center',
+            }}
+          >
+            <span style={{ flex: 1, minWidth: 0 }} className="muted">
+              Suggested from attendees' email domains: <strong>{clientSuggestion.name}</strong>
+            </span>
+            <button
+              style={{ fontSize: 10, padding: '2px 8px' }}
+              onClick={() => {
+                setSelectedClientId(clientSuggestion.id);
+                setClientTouched(true);
+                setClientSuggestion(null);
+              }}
+            >
+              Use this
+            </button>
           </div>
         )}
       </div>
@@ -400,12 +435,41 @@ function Tag() {
             <option value="__add__">+ Add new meeting type…</option>
           </select>
         )}
-        {meetingTypeSuggestion && !addMeetingType.open && (
-          <div className="muted" style={{ fontSize: 10, marginTop: 4 }}>
-            Suggested ({meetingTypeSuggestion.confidence} confidence)
-            {meetingTypeSuggestion.reason ? `: ${meetingTypeSuggestion.reason}` : ''}
-          </div>
-        )}
+        {meetingTypeSuggestion &&
+          meetingTypeSuggestion.meetingTypeId !== selectedMeetingTypeId &&
+          !addMeetingType.open &&
+          (() => {
+            const suggestedType = meetingTypes.find((m) => m.id === meetingTypeSuggestion.meetingTypeId);
+            if (!suggestedType) return null;
+            return (
+              <div
+                className="row"
+                style={{
+                  marginTop: 4,
+                  padding: '4px 8px',
+                  border: '1px solid var(--border)',
+                  borderRadius: 4,
+                  fontSize: 10,
+                  alignItems: 'center',
+                }}
+              >
+                <span style={{ flex: 1, minWidth: 0 }} className="muted">
+                  Suggested ({meetingTypeSuggestion.confidence} confidence): <strong>{suggestedType.name}</strong>
+                  {meetingTypeSuggestion.reason ? ` — ${meetingTypeSuggestion.reason}` : ''}
+                </span>
+                <button
+                  style={{ fontSize: 10, padding: '2px 8px' }}
+                  onClick={() => {
+                    setSelectedMeetingTypeId(meetingTypeSuggestion.meetingTypeId);
+                    setMeetingTypeTouched(true);
+                    setMeetingTypeSuggestion(null);
+                  }}
+                >
+                  Use this
+                </button>
+              </div>
+            );
+          })()}
       </div>
       <div>
         <label>Attendees (optional)</label>

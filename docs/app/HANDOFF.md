@@ -544,15 +544,27 @@ restructuring — bigger, riskier, not attempted), or reason over
 whatever signals already exist before transcription. This ships the
 second, cheaper option.
 
-- Tag sheet, meeting-type field: mirrors the existing client-suggestion
-  UX exactly (`clientTouched`/`clientSuggested` in `renderer/tag/main.tsx`)
-  — pre-selects the dropdown and shows a one-line reason, stops
-  overriding the instant the user picks one themselves. The difference
-  from the client suggestion: that one is a pure heuristic (email-domain
-  matching, `suggestClientId` in `shared/attendees.ts`, free); this one
-  is a real local Ollama call, so it's gated (needs ≥2 meeting types to
-  choose between — does nothing with zero or one) and cancellable
-  (each new request aborts the previous one, same `Map<webContentsId,
+- Tag sheet, meeting-type field: shown as a dismissable "Suggested: X
+  (confidence) — reason [Use this]" chip below the dropdown, never
+  applied to the actual selection on its own. **Revised mid-session**: the
+  first version pre-selected the dropdown automatically (mirroring the
+  client suggestion below); flagged immediately as wrong, because a
+  silently-wrong auto-selection here means the wrong summarise prompt
+  runs with nothing to notice — exactly the "silent degradation" failure
+  mode `CLAUDE.md` already warns about. Clicking "Use this" (or just
+  picking directly from the dropdown) is what applies a choice and stops
+  the suggestion from recomputing itself out from under it.
+  `main/meetingTypeSuggestion.ts` itself was unaffected — only how
+  `renderer/tag/main.tsx` uses its result changed.
+- **The pre-existing client suggestion was retrofitted to match**, at the
+  same request: email-domain matching (`suggestClientId` in
+  `shared/attendees.ts`, a pure heuristic, unrelated to this step's
+  Ollama call) now also only ever shows as a "Use this" chip, never
+  auto-selects `selectedClientId`. This is the one piece of this step
+  that touches behaviour that predates this session.
+- The Ollama-backed suggestion is gated (needs ≥2 meeting types to
+  choose between — does nothing with zero or one) and cancellable (each
+  new request aborts the previous one, same `Map<webContentsId,
   AbortController>` pattern as briefs/summary-version generations).
 - `main/meetingTypeSuggestion.ts`: reasons over recording title,
   duration, selected client (if picked) and pasted attendees (names +
