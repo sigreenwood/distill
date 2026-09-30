@@ -377,6 +377,23 @@ export function applyReplacements(
 }
 
 /**
+ * Add or update one replacement rule in a vocabulary file, keyed
+ * case-insensitively on `from` — a repeated correction updates its
+ * existing rule's `to` rather than accumulating duplicates. Used to turn
+ * a one-off transcript correction (see meetingContent.ts) into a
+ * reusable rule at whatever scope the user picked.
+ */
+export function addReplacementRule(file: VocabularyFile, rule: VocabularyReplacement): VocabularyFile {
+  const fromLower = rule.from.toLowerCase();
+  const replacements = file.replacements ?? [];
+  const index = replacements.findIndex((r) => r.from.toLowerCase() === fromLower);
+  const next = [...replacements];
+  if (index >= 0) next[index] = rule;
+  else next.push(rule);
+  return { ...file, replacements: next };
+}
+
+/**
  * Parse "Heard as | Should be | Context cue" markdown tables (the format
  * of private/MY-VOCAB.md) into replacement rules. Tables with other
  * headers are ignored.

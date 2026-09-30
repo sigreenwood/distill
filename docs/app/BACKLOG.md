@@ -127,6 +127,23 @@ because a later meeting didn't mention it again. See
 
 ---
 
+## Transcript corrections with optional reusable vocabulary rules — complete in source
+
+*Sep 2026 development checkpoint.* In the meeting reader, viewing a
+finished recording's transcript offers **Correct a word or phrase…**:
+a "heard as" / "should be" pair is applied to the stored transcript,
+the existing Markdown/HTML/Apple Note are deleted, and the recording is
+queued straight to re-summarise — Whisper never re-runs (same
+`nextNeededStep` short-circuit the output-target checkboxes already use).
+Optionally the same correction can be saved as a reusable vocabulary
+rule (client, organisation or global scope) via the existing vocabulary
+system, so future recordings benefit — nothing is remembered unless
+explicitly asked for. See [HANDOFF.md](./HANDOFF.md) for checks and
+limitations, including the still-open "Regenerate outputs" and
+"Stage 3 LLM transcript cleanup" items this deliberately does not replace.
+
+---
+
 ## Silent degradation — the theme of the Jul 2026 shakedown
 
 *Logged Jul 2026 after a day of real use.* Almost every bug found that

@@ -926,6 +926,40 @@ export class State {
   }
 
   /**
+   * Apply a corrected transcript to a finished recording and queue it for
+   * re-summarisation only — unlike fullRerun, transcript_text and
+   * audio_path are left alone (transcript_text is set to the corrected
+   * text, not cleared), so the worker's nextNeededStep resumes straight
+   * at 'summarise' and Whisper never re-runs. See ipc.ts's
+   * Channels.MeetingCorrect for the caller, which owns deleting the
+   * stale Markdown/HTML/Apple Note first (same contract as fullRerun).
+   *
+   * Only legal from 'complete'/'skipped' with an existing stored
+   * transcript — there is nothing to correct on a row that never had
+   * one (e.g. a Markdown-fallback-only transcript, which lives on disk,
+   * not in this column).
+   */
+  correctTranscript(id: string, correctedText: string): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE recordings
+         SET status = 'tagged',
+             transcript_text = @correctedText,
+             summary_text = NULL,
+             markdown_path = NULL, html_path = NULL, apple_note_id = NULL,
+             markdown_written_at = NULL, html_written_at = NULL, apple_note_written_at = NULL,
+             error = NULL, is_auth_error = 0, last_step = NULL,
+             truncation_warning = 0, estimated_input_tokens = NULL, context_window_at_submit = NULL,
+             processed_externally = 0,
+             updated_at = @updated_at
+         WHERE id = @id AND status IN ('complete','skipped')
+           AND transcript_text IS NOT NULL AND trim(transcript_text) != ''`,
+      )
+      .run({ id, correctedText, updated_at: Date.now() });
+    return result.changes > 0;
+  }
+
+  /**
    * Set a recording's per-destination output overrides. Always writes an
    * explicit 0/1 for all three columns — the Inbox checkboxes are never in
    * a "some inherited, some overridden" state once the user has touched

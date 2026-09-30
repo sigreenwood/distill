@@ -249,6 +249,12 @@ export interface DistillApi {
   meeting: {
     open(recordingId: string, scope?: SearchScope): Promise<void>;
     get(recordingId: string): Promise<MeetingDetail>;
+    correct(payload: {
+      recordingId: string;
+      from: string;
+      to: string;
+      rememberScope?: 'client' | 'organisation' | 'global' | null;
+    }): Promise<{ applied: boolean; occurrences: number }>;
   };
   brief: {
     /** The client's meetings in the period, newest first. */

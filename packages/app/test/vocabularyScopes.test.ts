@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { loadVocabulary, applyReplacements } from '../src/main/vocabulary.js';
+import { loadVocabulary, applyReplacements, addReplacementRule } from '../src/main/vocabulary.js';
+import type { VocabularyFile } from '../src/main/vocabulary.js';
 
 let dir: string;
 
@@ -152,5 +153,34 @@ describe('vocabulary budget reporting', () => {
     const v = loadVocabulary(dir, null);
     expect(v.hintsDropped).toEqual([]);
     expect(v.hintsUsed).toBe(2);
+  });
+});
+
+describe('addReplacementRule', () => {
+  const empty: VocabularyFile = { $version: 1, whisperHints: [], replacements: [] };
+
+  it('appends a new rule', () => {
+    const next = addReplacementRule(empty, { from: 'Prashant', to: 'Samir' });
+    expect(next.replacements).toEqual([{ from: 'Prashant', to: 'Samir' }]);
+  });
+
+  it('updates an existing rule for the same "from", case-insensitively, instead of duplicating it', () => {
+    const withRule: VocabularyFile = { ...empty, replacements: [{ from: 'prashant', to: 'Samir' }] };
+    const next = addReplacementRule(withRule, { from: 'Prashant', to: 'Prashanth' });
+    expect(next.replacements).toEqual([{ from: 'Prashant', to: 'Prashanth' }]);
+  });
+
+  it('leaves other rules and file fields untouched', () => {
+    const withRule: VocabularyFile = {
+      $version: 1,
+      whisperHints: ['Teradata'],
+      replacements: [{ from: 'sim', to: 'SIM', requiresContext: ['bank'] }],
+    };
+    const next = addReplacementRule(withRule, { from: 'Rajesh', to: 'Rajesh Kumar' });
+    expect(next.whisperHints).toEqual(['Teradata']);
+    expect(next.replacements).toEqual([
+      { from: 'sim', to: 'SIM', requiresContext: ['bank'] },
+      { from: 'Rajesh', to: 'Rajesh Kumar' },
+    ]);
   });
 });

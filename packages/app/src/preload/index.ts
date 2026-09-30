@@ -12,6 +12,12 @@ const api = {
     open: (recordingId: string, scope: 'summary' | 'transcript' = 'summary') =>
       ipcRenderer.invoke(Channels.MeetingOpen, recordingId, scope),
     get: (recordingId: string) => ipcRenderer.invoke(Channels.MeetingGet, recordingId),
+    correct: (payload: {
+      recordingId: string;
+      from: string;
+      to: string;
+      rememberScope?: 'client' | 'organisation' | 'global' | null;
+    }) => ipcRenderer.invoke(Channels.MeetingCorrect, payload),
   },
   brief: {
     listMeetings: (clientId: string, sinceDays: number | null) =>

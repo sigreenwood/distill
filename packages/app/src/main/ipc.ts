@@ -26,6 +26,8 @@ import {
   parseVocabularyMarkdownTables,
   readVocabularyFile,
   writeVocabularyFile,
+  addReplacementRule,
+  applyReplacements,
   WHISPER_PROMPT_CHAR_LIMIT,
   type VocabularyFile,
   type VocabularyReplacement,
@@ -94,6 +96,90 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     openMeetingReader(row.id, scope);
   });
   ipcMain.handle(Channels.MeetingGet, (_evt, recordingId) => loadMeetingDetail(requireMeeting(recordingId)));
+
+  // --- transcript corrections ------------------------------------------------
+  // See shared/register.ts's neighbour in spirit: a correction is always an
+  // explicit user action, applied to one recording's stored transcript, with
+  // an optional (also explicit) promotion to a reusable vocabulary rule.
+
+  ipcMain.handle(Channels.MeetingCorrect, async (_evt, payload) => {
+    const p = payload as
+      | { recordingId?: unknown; from?: unknown; to?: unknown; rememberScope?: unknown }
+      | undefined;
+    const from = typeof p?.from === 'string' ? p.from.trim() : '';
+    const to = typeof p?.to === 'string' ? p.to.trim() : '';
+    const rememberScope = p?.rememberScope;
+    if (
+      rememberScope !== undefined && rememberScope !== null &&
+      rememberScope !== 'client' && rememberScope !== 'organisation' && rememberScope !== 'global'
+    ) {
+      throw new Error('Invalid vocabulary scope.');
+    }
+    if (!from) throw new Error('Enter the phrase to correct.');
+    if (!to) throw new Error('Enter the correction.');
+    if (from.length > 200 || to.length > 200) throw new Error('Keep corrections under 200 characters.');
+
+    const row = requireMeeting(p?.recordingId);
+    if (row.status !== 'complete' && row.status !== 'skipped') {
+      throw new Error('This recording is still processing — corrections apply once it has finished.');
+    }
+    if (!row.transcript_text?.trim()) {
+      throw new Error(
+        'There is no stored transcript to correct for this recording — only a Markdown export is available.',
+      );
+    }
+    const scopeId = rememberScope === 'client' ? row.client_id : (rememberScope ?? null);
+    if (rememberScope === 'client' && !scopeId) {
+      throw new Error('This recording has no client to save a client-scoped rule against.');
+    }
+    const { text: correctedText, applied } = applyReplacements(row.transcript_text, [{ from, to }]);
+    if (applied === 0) {
+      throw new Error(`"${from}" was not found in the stored transcript (matching is whole-word and case-insensitive).`);
+    }
+
+    const { response } = await dialog.showMessageBox({
+      type: 'warning',
+      buttons: ['Cancel', 'Correct & regenerate'],
+      defaultId: 0,
+      cancelId: 0,
+      message: 'Correct the transcript and regenerate the summary?',
+      detail:
+        'This replaces the stored transcript, deletes the existing Markdown/HTML file and Apple Note for ' +
+        'this recording, and queues a fresh summary from the corrected text. The recording is not ' +
+        "re-transcribed. This can't be undone.",
+    });
+    if (response !== 1) return { applied: false, occurrences: 0 };
+
+    if (row.markdown_path) fs.rmSync(row.markdown_path, { force: true });
+    if (row.html_path) fs.rmSync(row.html_path, { force: true });
+    if (row.apple_note_id) {
+      await deleteAppleNote(row.apple_note_id).catch((e) => {
+        ctx.logger.warn(
+          { err: String(e), recordingId: row.id },
+          'could not delete previous Apple Note ahead of correction — proceeding anyway',
+        );
+      });
+    }
+
+    const changed = ctx.state.correctTranscript(row.id, correctedText);
+    if (!changed) throw new Error('This recording is no longer in a correctable state.');
+
+    if (scopeId) {
+      const existing = readVocabularyFile(vocabularyDirFor(), scopeId);
+      writeVocabularyFile(vocabularyDirFor(), scopeId, addReplacementRule(existing, { from, to }));
+      ctx.logger.info({ recordingId: row.id, scopeId }, 'correction saved as a reusable vocabulary rule');
+    }
+
+    ctx.logger.info(
+      { recordingId: row.id, occurrences: applied, remembered: Boolean(scopeId) },
+      'transcript correction applied; summary queued',
+    );
+    ctx.onStateChanged?.();
+    broadcastInboxChanged();
+    ctx.getWorker()?.nudge();
+    return { applied: true, occurrences: applied };
+  });
+
   // --- client brief --------------------------------------------------------
 
   ipcMain.handle(Channels.BriefListMeetings, async (_evt, clientId, sinceDays) => {

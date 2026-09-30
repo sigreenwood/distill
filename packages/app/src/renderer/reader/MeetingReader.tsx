@@ -14,6 +14,8 @@ export function MeetingReader({ recordingId, initialScope = 'summary' }: { recor
   const [matchCount, setMatchCount] = useState(0);
   const [activeMatch, setActiveMatch] = useState(0);
   const [showRegisterForm, setShowRegisterForm] = useState(false);
+  const [showCorrectForm, setShowCorrectForm] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const article = useRef<HTMLElement>(null);
   const findInput = useRef<HTMLInputElement>(null);
 
@@ -85,6 +87,11 @@ export function MeetingReader({ recordingId, initialScope = 'summary' }: { recor
             Add to register…
           </button>
         )}
+        {scope === 'transcript' && meeting?.canCorrect && (
+          <button aria-pressed={showCorrectForm} onClick={() => { setShowCorrectForm(v => !v); setNotice(null); }}>
+            Correct a word or phrase…
+          </button>
+        )}
       </nav>
       {showRegisterForm && meeting?.clientId && (
         <RegisterQuickAdd
@@ -94,6 +101,20 @@ export function MeetingReader({ recordingId, initialScope = 'summary' }: { recor
           onError={setError}
         />
       )}
+      {showCorrectForm && meeting && (
+        <CorrectionForm
+          recordingId={meeting.id}
+          clientId={meeting.clientId}
+          onSaved={message => {
+            setShowCorrectForm(false);
+            setNotice(message);
+            setRevision(value => value + 1);
+          }}
+          onCancel={() => setShowCorrectForm(false)}
+          onError={setError}
+        />
+      )}
+      {notice && <p className="reader-notice" role="status">{notice}</p>}
       <div className="reader-find" role="search" aria-label="Find in this meeting">
         <input ref={findInput} type="text" aria-label={`Find in ${scope}`} placeholder={`Find in ${scope} (⌘F)`}
           value={query} maxLength={300} onChange={event => setQuery(event.target.value)}
@@ -121,6 +142,71 @@ export function MeetingReader({ recordingId, initialScope = 'summary' }: { recor
       </>}
     </main>
   </div>;
+}
+
+type RememberScope = 'client' | 'organisation' | 'global' | '';
+
+/**
+ * Corrects a mistaken word or phrase in the stored transcript, then
+ * queues the recording for a fresh summary — Whisper is never re-run
+ * (see State.correctTranscript). Optionally promotes the same {from, to}
+ * pair to a reusable vocabulary rule at the chosen scope, so future
+ * recordings benefit too; nothing is remembered unless asked for.
+ */
+function CorrectionForm(props: {
+  recordingId: string;
+  clientId: string | null;
+  onSaved: (message: string) => void;
+  onCancel: () => void;
+  onError: (message: string) => void;
+}) {
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [rememberScope, setRememberScope] = useState<RememberScope>('');
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (!from.trim() || !to.trim()) return;
+    setBusy(true);
+    try {
+      const result = await window.distill.meeting.correct({
+        recordingId: props.recordingId,
+        from,
+        to,
+        rememberScope: rememberScope || null,
+      });
+      if (result.applied) {
+        props.onSaved(
+          `Corrected ${result.occurrences} occurrence${result.occurrences === 1 ? '' : 's'} and queued a fresh summary.` +
+            (rememberScope ? ' Saved as a reusable vocabulary rule.' : ''),
+        );
+      }
+    } catch (e) {
+      props.onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="reader-register-form">
+      <input type="text" placeholder="Heard as" value={from} maxLength={200} disabled={busy}
+        onChange={e => setFrom(e.target.value)} />
+      <span aria-hidden>→</span>
+      <input type="text" placeholder="Should be" value={to} maxLength={200} disabled={busy}
+        onChange={e => setTo(e.target.value)} />
+      <select value={rememberScope} disabled={busy} onChange={e => setRememberScope(e.target.value as RememberScope)}>
+        <option value="">Just this recording</option>
+        {props.clientId && <option value="client">Remember for this client</option>}
+        <option value="organisation">Remember for the organisation</option>
+        <option value="global">Remember globally</option>
+      </select>
+      <button className="primary" disabled={busy || !from.trim() || !to.trim()} onClick={() => void save()}>
+        Correct &amp; regenerate
+      </button>
+      <button disabled={busy} onClick={props.onCancel}>Cancel</button>
+    </div>
+  );
 }
 
 /**

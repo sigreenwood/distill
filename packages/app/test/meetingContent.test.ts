@@ -8,7 +8,7 @@ import type { JoinedRecordingRow } from '../src/main/state.js';
 const row = {
   id: 'meeting', filename: 'Planning', synced_at: 1234, start_time: null,
   duration_seconds: 120, client_name: 'Example client', meeting_type_name: 'Review',
-  summary_text: 'Stored summary', transcript_text: 'Stored transcript',
+  summary_text: 'Stored summary', transcript_text: 'Stored transcript', status: 'complete',
   truncation_warning: 1, markdown_path: null, html_path: null, apple_note_id: null,
 } as JoinedRecordingRow;
 let directory: string | undefined;
@@ -22,6 +22,14 @@ describe('meeting reader content', () => {
     expect(result.date).toBe(1234);
     expect(result.truncationWarning).toBe(true);
     expect(result.canReveal).toBe(false);
+    expect(result.canCorrect).toBe(true);
+  });
+
+  it('allows correction only when finished and a stored transcript exists', async () => {
+    expect((await loadMeetingDetail({ ...row, status: 'skipped' })).canCorrect).toBe(true);
+    expect((await loadMeetingDetail({ ...row, status: 'summarising' })).canCorrect).toBe(false);
+    expect((await loadMeetingDetail({ ...row, transcript_text: null })).canCorrect).toBe(false);
+    expect((await loadMeetingDetail({ ...row, transcript_text: '   ' })).canCorrect).toBe(false);
   });
 
   it('fills only missing text from Markdown without replacing the stored source', async () => {

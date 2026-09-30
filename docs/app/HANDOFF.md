@@ -220,14 +220,76 @@ Limitations worth retaining:
 - No bulk actions (mark several done at once), no edit-in-place (only
   add / toggle status / delete), no export.
 
+## Step 5 — transcript corrections + reusable vocabulary rules: complete in source
+
+Checkpoint: the commit containing this update, titled
+`feat(correction): correct a transcript and regenerate its summary`.
+
+- Meeting reader, transcript view, on a finished recording (`complete` or
+  `skipped`) with a stored transcript: **Correct a word or phrase…**
+  reveals a "Heard as" / "Should be" form.
+- Applying it reuses `applyReplacements` from the existing vocabulary
+  system (word-boundary aware, case-insensitive) as a single ad-hoc rule
+  against `transcript_text`. Zero matches is rejected before anything
+  changes. A native confirm dialog names exactly what happens (transcript
+  replaced, existing Markdown/HTML/Apple Note deleted, summary
+  regenerated, not undoable) before anything runs.
+- `State.correctTranscript` sets the corrected text and clears
+  `summary_text`/output tracking/error state, then flips status to
+  `tagged` — deliberately leaving `transcript_text` and `audio_path`
+  alone so `nextNeededStep` resumes at `summarise`, not `transcribe`.
+  This is the same short-circuit `InboxSetOutputTargets` already relies
+  on for "flip to tagged, let the worker skip finished steps".
+- Optional: the same `{from, to}` pair can be saved as a reusable
+  vocabulary rule via a scope picker (this client / organisation /
+  global), using `addReplacementRule` + the existing
+  `readVocabularyFile`/`writeVocabularyFile`. Declining leaves the
+  vocabulary files untouched — nothing is remembered by default.
+- Correction is unavailable (button hidden) while a recording is still
+  processing, or when the reader is only showing a Markdown-fallback
+  transcript — there is no stored `transcript_text` to write back to in
+  that case. `MeetingDetail.canCorrect` encodes both conditions.
+
+Main files: `main/vocabulary.ts` (`addReplacementRule`, new pure/tested),
+`main/state.ts` (`correctTranscript`), `main/ipc.ts`
+(`Channels.MeetingCorrect`), `shared/meeting.ts` (`canCorrect`),
+`main/meetingContent.ts`, `renderer/reader/MeetingReader.tsx`
+(`CorrectionForm`).
+
+Verification: 190 tests (4 new: `addReplacementRule` behaviour and
+`canCorrect` gating), both typechecks, production build. **Not
+exercised: the actual window/dialog inside a running app** — same
+Node-version constraint noted in Step 4 applied again this session.
+Before relying on this in real use: run `npm run dev` under Node 22,
+correct a real mistranscribed name, and confirm the recording actually
+re-summarises without re-transcribing (check the inbox step it resumes
+at) and that a saved vocabulary rule shows up in Settings → Vocabulary.
+
+Limitations worth retaining:
+
+- One correction per action — no batch/multi-term corrections in one
+  step. Repeat the action for a second phrase.
+- The correction does not touch `summary_text` directly (it's cleared
+  and regenerated instead), so a mistake that only appears in an
+  already-written summary and nowhere in the transcript can't be fixed
+  this way — correct the transcript, or wait for the new summary.
+- No undo. The confirm dialog is the only safety net; there is no
+  version history of transcript text (see "versioned re-summarisation"
+  below, which is a different, larger feature: keeping *summary*
+  versions side by side, not undoing a transcript edit).
+- This is not Stage 3 from BACKLOG.md (an LLM-driven pass proposing its
+  own corrections from context) — this is manual, one rule at a time.
+  Stage 3 could eventually generate the `{from, to}` pairs this feature
+  now knows how to apply and offer to remember.
+
 ## Next step
 
-Later ideas, not implemented or fully specified: correction-to-vocabulary
-suggestions; versioned re-summarisation; long-meeting chunking/coverage;
-idle/overnight processing; diagnostics and backup/restore. Source-linked
-audio is also later work. Decision supersession/versioning (see the
-register's limitations above) could also extend this step rather than
-starting a new one.
+Later ideas, not implemented or fully specified: versioned
+re-summarisation; long-meeting chunking/coverage; idle/overnight
+processing; diagnostics and backup/restore. Source-linked audio is also
+later work. Decision supersession/versioning (see the register's
+limitations above) could also extend that step rather than starting a
+new one.
 
 No package has been installed or release published as part of this work.
 The known unrelated untracked files are intentionally left in the working

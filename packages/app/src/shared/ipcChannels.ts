@@ -6,6 +6,7 @@
 export const Channels = {
   MeetingOpen: 'meeting.open',
   MeetingGet: 'meeting.get',
+  MeetingCorrect: 'meeting.correct',
   BriefListMeetings: 'brief.listMeetings',
   BriefGenerate: 'brief.generate',
   BriefCancel: 'brief.cancel',
