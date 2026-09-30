@@ -381,16 +381,84 @@ Limitations worth retaining:
 - Wordmark, wordmark lockups, and an About/Settings-window use of the
   logo were not added — no such screen currently exists to put one in.
 
+## Step 7 — versioned re-summarisation and comparison: complete in source
+
+Checkpoint: the commit containing this update, titled
+`feat(summary-versions): try alternative summaries and keep one`.
+
+- Meeting reader, summary view, on a finished recording with a stored
+  transcript (same `canCorrect` gate as Step 5's correction, reused as-is
+  since both need the same precondition): **Versions…** reveals a panel
+  listing every summary this recording has ever had, newest first, each
+  labelled with the meeting-type prompt used and the model.
+- **Generate an alternative**: pick a (optionally different) meeting
+  type and Ollama model, run it against the same stored transcript. This
+  never touches the live `recordings.summary_text` or any output —
+  purely additive, logged as an inactive version. A token-budget check
+  (reusing `estimateTokenBudget`, same as the main pipeline) surfaces a
+  warning rather than blocking.
+- **Keep this version**: `State.activateSummaryVersion` copies the
+  chosen version's text/model/prompt onto the recording row, clears only
+  output tracking (`*_written_at`, `markdown_path`/`html_path`/
+  `apple_note_id`) and flips status to `tagged` — `transcript_text` is
+  untouched, so `nextNeededStep` resumes at `write`, not `summarise` or
+  `transcribe`. Only legal from `complete`/`skipped`.
+- Every summary the normal pipeline produces — including one triggered
+  by a Step 5 correction — is now logged as an active version
+  automatically (`doSummarise` calls `State.addSummaryVersion` right
+  after writing the row). Recordings summarised before this migration
+  have no logged history; `buildVersionList` synthesises their existing
+  summary as a "Current" entry at read time rather than backfilling —
+  the same choice this project already made for `original_prompt_hash`
+  (see BACKLOG.md).
+
+Main files: `main/summaryVersions.ts` (`generateSummaryVersion`,
+`buildVersionList`, both pure/tested), `shared/summaryVersion.ts` (DTO),
+`main/state.ts` (migration 14, `addSummaryVersion`,
+`activateSummaryVersion`, `listSummaryVersions`), `main/pipelineSteps.ts`
+(one added call in `doSummarise`), `main/ipc.ts`
+(`Channels.SummaryVersions*`), `renderer/reader/MeetingReader.tsx`
+(`VersionsPanel`), `shared/meeting.ts`/`main/meetingContent.ts`
+(`meetingTypeId`, for defaulting the picker to the recording's own type).
+
+Verification: 205 tests (8 new: `buildVersionList`'s reconciliation
+logic including the synthesised-current and stale-active-row cases, and
+`generateSummaryVersion`'s local-inference guard, budget warning, and
+empty-response rejection), both typechecks, production build. **Not
+exercised: the actual reader panel inside a running app** — same
+Node-version constraint as every prior step this session; `npm run dev`
+under Node 22 is still the way to confirm the model/meeting-type pickers
+populate correctly and that "Keep this version" actually triggers a
+re-write in the inbox.
+
+Limitations worth retaining:
+
+- No side-by-side diff view — versions list sequentially with an
+  expand/collapse for each one's full text, not a two-pane comparison.
+  The spec language ("show the versions side by side") is satisfied
+  loosely; a true diff view is a larger follow-on if it turns out to
+  matter in practice.
+- No cap or cleanup on version history — every summarise run adds a row
+  forever. Low-cost today (summaries are small text blobs) but worth
+  a retention policy if this ever becomes a real volume of data.
+- "Generate an alternative" always re-sends the full transcript (plus
+  attendee roster) to Ollama — there's no cheaper "just re-run with a
+  different temperature" path, matching how the main pipeline itself
+  always re-summarises from the full transcript.
+- Activating a version while the recording is mid-pipeline (not
+  `complete`/`skipped`) is refused outright rather than queued — the
+  version stays logged and can be activated once processing finishes.
+
 ## Next step
 
-Later ideas, not implemented or fully specified: versioned
-re-summarisation; long-meeting chunking/coverage; idle/overnight
-processing; diagnostics and backup/restore. Source-linked audio is also
-later work. Decision supersession/versioning (see the register's
-limitations above) could also extend that step rather than starting a
-new one. A tray-level completion pulse and native Dock switching (see
-Step 6's limitations) are optional follow-ons to the branding work,
-not required by it.
+Later ideas, not implemented or fully specified: long-meeting
+chunking/coverage; idle/overnight processing; diagnostics and
+backup/restore. Source-linked audio is also later work. Decision
+supersession/versioning (see the register's limitations above), a
+tray-level completion pulse and native Dock switching (see Step 6's
+limitations), and a real side-by-side diff view or a retention policy
+for summary versions (see Step 7's limitations) are optional follow-ons
+to already-shipped steps, not required by them.
 
 No package has been installed or release published as part of this work.
 The known unrelated untracked files are intentionally left in the working

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
@@ -328,6 +329,19 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
     truncation_warning: budget.exceedsBudget ? 1 : 0,
     estimated_input_tokens: budget.estimatedInputTokens,
     context_window_at_submit: budget.contextWindow,
+  });
+  // Every summary the pipeline produces is logged as an active version —
+  // see main/summaryVersions.ts. This only touches summary_versions'
+  // own bookkeeping; the recordings row above is already the source of
+  // truth for the live summary.
+  ctx.state.addSummaryVersion({
+    id: crypto.randomUUID(),
+    recording_id: id,
+    summary_text: summary,
+    model: response.model,
+    prompt_snapshot: meetingType.prompt,
+    meeting_type_name: meetingType.name,
+    active: true,
   });
   ctx.logger.info(
     { id, chars: summary.length, truncationWarning: budget.exceedsBudget },

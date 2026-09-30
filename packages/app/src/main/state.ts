@@ -116,6 +116,17 @@ export interface JoinedRegisterItemRow extends RegisterItemRow {
   source_date: number;
 }
 
+export interface SummaryVersionRow {
+  id: string;
+  recording_id: string;
+  summary_text: string;
+  model: string;
+  prompt_snapshot: string;
+  meeting_type_name: string;
+  is_active: number;
+  created_at: number;
+}
+
 export interface ProcessingSummary {
   currentStatus: RecordingStatus | null;
   running: number;
@@ -435,6 +446,33 @@ const MIGRATIONS: Migration[] = [
         completed_at        INTEGER
       );
       CREATE INDEX idx_register_items_client ON register_items(client_id, kind);
+    `,
+  },
+  {
+    version: 14,
+    sql: `
+      -- Summary version history (see main/summaryVersions.ts). Every
+      -- summary doSummarise produces is logged here, active by
+      -- construction (it just became the live summary); a version
+      -- generated on demand from the reader to try a different model or
+      -- meeting-type prompt is logged inactive until the user explicitly
+      -- keeps it (State.activateSummaryVersion). Existing rows are not
+      -- backfilled -- their pre-existing summary_text/model_snapshot on
+      -- \`recordings\` stands in as an implicit "current" version at read
+      -- time instead (see buildVersionList), consistent with this
+      -- project's preference for read-time reconciliation over
+      -- backfill migrations (see the original_prompt_hash precedent).
+      CREATE TABLE summary_versions (
+        id                TEXT PRIMARY KEY,
+        recording_id      TEXT NOT NULL REFERENCES recordings(id),
+        summary_text      TEXT NOT NULL,
+        model             TEXT NOT NULL,
+        prompt_snapshot   TEXT NOT NULL,
+        meeting_type_name TEXT NOT NULL,
+        is_active         INTEGER NOT NULL DEFAULT 0,
+        created_at        INTEGER NOT NULL
+      );
+      CREATE INDEX idx_summary_versions_recording ON summary_versions(recording_id, created_at DESC);
     `,
   },
 ];
@@ -1306,5 +1344,93 @@ export class State {
 
   deleteRegisterItem(id: string): boolean {
     return this.db.prepare('DELETE FROM register_items WHERE id = ?').run(id).changes > 0;
+  }
+
+  // --- summary versions ------------------------------------------------------
+
+  /**
+   * Log a summary version. `active` only ever touches this table's own
+   * `is_active` bookkeeping (deactivating any prior active version for
+   * the recording) — it never writes to `recordings` itself. The normal
+   * pipeline (doSummarise) calls this with `active: true` right after it
+   * writes the new summary onto the recording row directly; the on-demand
+   * "generate an alternative" action calls it with `active: false`,
+   * logging a candidate without disturbing the live summary.
+   */
+  addSummaryVersion(row: {
+    id: string;
+    recording_id: string;
+    summary_text: string;
+    model: string;
+    prompt_snapshot: string;
+    meeting_type_name: string;
+    active: boolean;
+  }): void {
+    this.db.transaction(() => {
+      if (row.active) {
+        this.db
+          .prepare('UPDATE summary_versions SET is_active = 0 WHERE recording_id = ?')
+          .run(row.recording_id);
+      }
+      this.db
+        .prepare(
+          `INSERT INTO summary_versions (
+             id, recording_id, summary_text, model, prompt_snapshot, meeting_type_name, is_active, created_at
+           ) VALUES (
+             @id, @recording_id, @summary_text, @model, @prompt_snapshot, @meeting_type_name, @is_active, @created_at
+           )`,
+        )
+        .run({ ...row, is_active: row.active ? 1 : 0, created_at: Date.now() });
+    })();
+  }
+
+  /** Newest first. */
+  listSummaryVersions(recordingId: string): SummaryVersionRow[] {
+    return this.db
+      .prepare('SELECT * FROM summary_versions WHERE recording_id = ? ORDER BY created_at DESC')
+      .all(recordingId) as SummaryVersionRow[];
+  }
+
+  /**
+   * Promote a logged version back into being the live summary: copies its
+   * text/model/prompt onto the recording row, clears output tracking so
+   * the worker re-writes (not re-summarises or re-transcribes — see
+   * nextNeededStep), and flips the version bookkeeping. Only legal from
+   * 'complete'/'skipped', matching correctTranscript's gating. Returns
+   * the recording id on success so the caller can nudge the worker and
+   * log, or null if the version doesn't exist or the recording isn't in
+   * a promotable state.
+   */
+  activateSummaryVersion(versionId: string): string | null {
+    const version = this.db
+      .prepare('SELECT * FROM summary_versions WHERE id = ?')
+      .get(versionId) as SummaryVersionRow | undefined;
+    if (!version) return null;
+    return this.db.transaction((): string | null => {
+      const result = this.db
+        .prepare(
+          `UPDATE recordings
+           SET summary_text = @summary_text, model_snapshot = @model, prompt_snapshot = @prompt_snapshot,
+               markdown_path = NULL, html_path = NULL, apple_note_id = NULL,
+               markdown_written_at = NULL, html_written_at = NULL, apple_note_written_at = NULL,
+               status = 'tagged', error = NULL, is_auth_error = 0, last_step = NULL,
+               truncation_warning = 0, estimated_input_tokens = NULL, context_window_at_submit = NULL,
+               processed_externally = 0, updated_at = @updated_at
+           WHERE id = @recording_id AND status IN ('complete','skipped')`,
+        )
+        .run({
+          summary_text: version.summary_text,
+          model: version.model,
+          prompt_snapshot: version.prompt_snapshot,
+          recording_id: version.recording_id,
+          updated_at: Date.now(),
+        });
+      if (result.changes === 0) return null;
+      this.db
+        .prepare('UPDATE summary_versions SET is_active = 0 WHERE recording_id = ?')
+        .run(version.recording_id);
+      this.db.prepare('UPDATE summary_versions SET is_active = 1 WHERE id = ?').run(versionId);
+      return version.recording_id;
+    })();
   }
 }

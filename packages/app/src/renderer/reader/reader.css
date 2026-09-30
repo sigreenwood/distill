@@ -30,3 +30,5 @@
 .reader-notice { margin: 0; padding: 10px 24px; border-bottom: 1px solid var(--border); color: var(--warning); }
 .reader-register-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
 .reader-register-form input[type='text'] { min-width: 160px; }
+.reader-versions { margin-top: 12px; max-height: 260px; overflow-y: auto; }
+.reader-versions .reader-register-form { margin-top: 0; }

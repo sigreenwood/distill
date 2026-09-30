@@ -160,6 +160,24 @@ asset pack's own source location.
 
 ---
 
+## Versioned re-summarisation and comparison — complete in source
+
+*Sep 2026 development checkpoint.* The meeting reader's summary view
+gains **Versions…**: every summary a recording has ever had (logged
+automatically on every completed summarise, including one triggered by
+a transcript correction), newest first, each showing its model and
+meeting-type prompt. **Generate an alternative** tries a different model
+and/or meeting-type prompt against the same stored transcript without
+touching the live summary or re-transcribing; **Keep this version**
+promotes one, clearing only output tracking so the worker re-writes
+Markdown/HTML/Apple Notes — not re-summarise or re-transcribe. Recordings
+summarised before this feature shipped show their existing summary as an
+implicit "Current" entry rather than being backfilled. See
+[HANDOFF.md](./HANDOFF.md) for what this deliberately doesn't cover
+(no decision-style history diffing, no auto-cleanup of old versions).
+
+---
+
 ## Silent degradation — the theme of the Jul 2026 shakedown
 
 *Logged Jul 2026 after a day of real use.* Almost every bug found that

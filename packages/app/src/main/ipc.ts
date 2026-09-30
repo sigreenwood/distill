@@ -5,6 +5,8 @@ import type { BriefCandidate } from '../shared/brief.js';
 import { checkRegisterAdd } from '../shared/register.js';
 import type { RegisterItem, RegisterItemKind } from '../shared/register.js';
 import type { JoinedRegisterItemRow } from './state.js';
+import { generateSummaryVersion, buildVersionList } from './summaryVersions.js';
+import type { SummaryVersionDTO } from '../shared/summaryVersion.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -82,6 +84,8 @@ export interface IpcContext {
 
 /** In-flight client briefs, one per brief window (keyed by webContents id). */
 const briefRuns = new Map<number, AbortController>();
+/** In-flight alternative-summary generations, one per reader window. */
+const summaryVersionRuns = new Map<number, AbortController>();
 
 export function registerIpcHandlers(ctx: IpcContext): void {
   function requireMeeting(recordingId: unknown): JoinedRecordingRow {
@@ -312,6 +316,90 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   ipcMain.handle(Channels.RegisterDelete, (_evt, id) => {
     if (typeof id !== 'string') throw new Error('id must be a string');
     ctx.state.deleteRegisterItem(id);
+  });
+
+  // --- summary versions --------------------------------------------------
+  // See main/summaryVersions.ts. Every completed summarise logs a version
+  // automatically (doSummarise); this block covers the on-demand "try an
+  // alternative" action and viewing/promoting history from the reader.
+
+  ipcMain.handle(Channels.SummaryVersionsList, (_evt, recordingId) => {
+    const row = requireMeeting(recordingId);
+    return buildVersionList(row, ctx.state.listSummaryVersions(row.id));
+  });
+
+  ipcMain.handle(Channels.SummaryVersionsGenerate, async (evt, payload) => {
+    const p = payload as { recordingId?: unknown; model?: unknown; meetingTypeId?: unknown } | undefined;
+    const row = requireMeeting(p?.recordingId);
+    if (row.status !== 'complete' && row.status !== 'skipped') {
+      throw new Error('This recording is still processing — try again once it has finished.');
+    }
+    if (!row.transcript_text?.trim()) {
+      throw new Error('There is no stored transcript to summarise for this recording.');
+    }
+    const model = typeof p?.model === 'string' && p.model.trim() ? p.model.trim() : ctx.getConfig().ollama.model;
+    const meetingTypeId = typeof p?.meetingTypeId === 'string' && p.meetingTypeId ? p.meetingTypeId : row.meeting_type_id;
+    if (!meetingTypeId) throw new Error('Pick a meeting type to summarise with.');
+    const meetingType = ctx.state.getMeetingType(meetingTypeId);
+    if (!meetingType) throw new Error('That meeting type no longer exists.');
+
+    summaryVersionRuns.get(evt.sender.id)?.abort();
+    const controller = new AbortController();
+    summaryVersionRuns.set(evt.sender.id, controller);
+    ctx.logger.info({ recordingId: row.id, model, meetingTypeId }, 'generating an alternative summary version');
+    try {
+      const result = await generateSummaryVersion(
+        {
+          transcriptText: row.transcript_text,
+          attendeesJson: row.attendees_json,
+          meetingType: { name: meetingType.name, prompt: meetingType.prompt },
+          model,
+        },
+        ctx.getConfig().ollama,
+        controller.signal,
+      );
+      const id = crypto.randomUUID();
+      ctx.state.addSummaryVersion({
+        id,
+        recording_id: row.id,
+        summary_text: result.summaryText,
+        model: result.model,
+        prompt_snapshot: meetingType.prompt,
+        meeting_type_name: meetingType.name,
+        active: false,
+      });
+      ctx.logger.info({ recordingId: row.id, model: result.model }, 'alternative summary version generated');
+      const version: SummaryVersionDTO = {
+        id,
+        summaryText: result.summaryText,
+        model: result.model,
+        meetingTypeName: meetingType.name,
+        isActive: false,
+        createdAt: Date.now(),
+      };
+      return { version, warning: result.warning };
+    } catch (e) {
+      if (controller.signal.aborted) throw new Error('Cancelled.');
+      throw e;
+    } finally {
+      if (summaryVersionRuns.get(evt.sender.id) === controller) summaryVersionRuns.delete(evt.sender.id);
+    }
+  });
+
+  ipcMain.handle(Channels.SummaryVersionsCancel, (evt) => {
+    summaryVersionRuns.get(evt.sender.id)?.abort();
+  });
+
+  ipcMain.handle(Channels.SummaryVersionsActivate, (_evt, id) => {
+    if (typeof id !== 'string') throw new Error('id must be a string');
+    const recordingId = ctx.state.activateSummaryVersion(id);
+    if (!recordingId) {
+      throw new Error('That version could not be promoted — the recording may still be processing.');
+    }
+    ctx.logger.info({ recordingId, versionId: id }, 'summary version promoted; outputs queued to re-write');
+    ctx.onStateChanged?.();
+    broadcastInboxChanged();
+    ctx.getWorker()?.nudge();
   });
 
   ipcMain.handle(Channels.InboxSearch, async (_evt, query, scope) => {

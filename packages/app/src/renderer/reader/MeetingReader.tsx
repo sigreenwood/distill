@@ -1,7 +1,9 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { MeetingDetail } from '../../shared/meeting.js';
 import type { SearchScope } from '../../shared/search.js';
 import type { RegisterItemKind } from '../../shared/register.js';
+import type { SummaryVersionDTO } from '../../shared/summaryVersion.js';
+import type { MeetingTypeDTO } from '../shared/api.js';
 import { MeetingText } from './MeetingText.js';
 
 export function MeetingReader({ recordingId, initialScope = 'summary' }: { recordingId: string; initialScope?: SearchScope }) {
@@ -15,6 +17,7 @@ export function MeetingReader({ recordingId, initialScope = 'summary' }: { recor
   const [activeMatch, setActiveMatch] = useState(0);
   const [showRegisterForm, setShowRegisterForm] = useState(false);
   const [showCorrectForm, setShowCorrectForm] = useState(false);
+  const [showVersions, setShowVersions] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const article = useRef<HTMLElement>(null);
   const findInput = useRef<HTMLInputElement>(null);
@@ -92,6 +95,11 @@ export function MeetingReader({ recordingId, initialScope = 'summary' }: { recor
             Correct a word or phrase…
           </button>
         )}
+        {scope === 'summary' && meeting?.canCorrect && (
+          <button aria-pressed={showVersions} onClick={() => { setShowVersions(v => !v); setNotice(null); }}>
+            Versions…
+          </button>
+        )}
       </nav>
       {showRegisterForm && meeting?.clientId && (
         <RegisterQuickAdd
@@ -111,6 +119,17 @@ export function MeetingReader({ recordingId, initialScope = 'summary' }: { recor
             setRevision(value => value + 1);
           }}
           onCancel={() => setShowCorrectForm(false)}
+          onError={setError}
+        />
+      )}
+      {showVersions && meeting && (
+        <VersionsPanel
+          recordingId={meeting.id}
+          currentMeetingTypeId={meeting.meetingTypeId}
+          onActivated={() => {
+            setNotice('Kept this version. Outputs will be re-written from it.');
+            setRevision(value => value + 1);
+          }}
           onError={setError}
         />
       )}
@@ -271,6 +290,124 @@ function RegisterQuickAdd(props: {
       )}
       <button className="primary" disabled={busy || !text.trim()} onClick={() => void save()}>Save</button>
       <button disabled={busy} onClick={props.onDone}>Cancel</button>
+    </div>
+  );
+}
+
+/**
+ * Summary version history: every summary this recording has ever had,
+ * newest first, always including the live one. Generating a candidate
+ * never touches the live summary — only "Keep this version" does, which
+ * queues outputs to re-write (not re-summarise or re-transcribe; see
+ * State.activateSummaryVersion).
+ */
+function VersionsPanel(props: {
+  recordingId: string;
+  currentMeetingTypeId: string | null;
+  onActivated: () => void;
+  onError: (message: string) => void;
+}) {
+  const [versions, setVersions] = useState<SummaryVersionDTO[] | null>(null);
+  const [meetingTypes, setMeetingTypes] = useState<MeetingTypeDTO[]>([]);
+  const [models, setModels] = useState<{ name: string }[]>([]);
+  const [meetingTypeId, setMeetingTypeId] = useState(props.currentMeetingTypeId ?? '');
+  const [model, setModel] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [activating, setActivating] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    void window.distill.summaryVersions.list(props.recordingId).then(setVersions);
+  }, [props.recordingId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    void window.distill.meetingTypes.list().then(setMeetingTypes);
+    void window.distill.settings.listOllamaModels().then(result => {
+      if (result.ok) {
+        setModels(result.models);
+        if (result.models[0]) setModel((current) => current || result.models[0].name);
+      }
+    });
+  }, []);
+
+  useEffect(() => () => void window.distill.summaryVersions.cancel(), []);
+
+  const generate = async () => {
+    setBusy(true);
+    try {
+      const result = await window.distill.summaryVersions.generate({
+        recordingId: props.recordingId,
+        model: model || undefined,
+        meetingTypeId: meetingTypeId || undefined,
+      });
+      setVersions(prev => [result.version, ...(prev ?? [])]);
+      if (result.warning) props.onError(result.warning);
+    } catch (e) {
+      props.onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const activate = async (id: string) => {
+    setActivating(id);
+    try {
+      await window.distill.summaryVersions.activate(id);
+      props.onActivated();
+      load();
+    } catch (e) {
+      props.onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setActivating(null);
+    }
+  };
+
+  return (
+    <div className="reader-versions">
+      <div className="reader-register-form">
+        <select value={meetingTypeId} disabled={busy} onChange={e => setMeetingTypeId(e.target.value)}>
+          {meetingTypes.map(mt => <option key={mt.id} value={mt.id}>{mt.name}</option>)}
+        </select>
+        <select value={model} disabled={busy || models.length === 0} onChange={e => setModel(e.target.value)}>
+          {models.length === 0 && <option value="">No models found</option>}
+          {models.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
+        </select>
+        <button className="primary" disabled={busy || !meetingTypeId || !model} onClick={() => void generate()}>
+          {busy ? 'Generating…' : 'Generate an alternative'}
+        </button>
+        {busy && <button onClick={() => void window.distill.summaryVersions.cancel()}>Cancel</button>}
+      </div>
+      {versions === null ? (
+        <p className="muted" style={{ fontSize: 12 }}>Loading versions…</p>
+      ) : (
+        <ul style={{ listStyle: 'none', margin: '10px 0 0', padding: 0 }}>
+          {versions.map(v => (
+            <li key={v.id} style={{ padding: '8px 0', borderTop: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                <strong style={{ fontSize: 12 }}>{v.meetingTypeName}</strong>
+                <span className="muted" style={{ fontSize: 11 }}>{v.model}</span>
+                <span className="muted" style={{ fontSize: 11 }}>{new Date(v.createdAt).toLocaleString()}</span>
+                {v.isActive && <span className="muted" style={{ fontSize: 11 }}>· Current</span>}
+                <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                  <button style={{ fontSize: 10 }} onClick={() => setExpanded(x => (x === v.id ? null : v.id))}>
+                    {expanded === v.id ? 'Hide text' : 'Show text'}
+                  </button>
+                  {!v.isActive && (
+                    <button style={{ fontSize: 10 }} disabled={activating === v.id} onClick={() => void activate(v.id)}>
+                      {activating === v.id ? 'Keeping…' : 'Keep this version'}
+                    </button>
+                  )}
+                </span>
+              </div>
+              {expanded === v.id && (
+                <div className="muted" style={{ fontSize: 12, whiteSpace: 'pre-wrap', marginTop: 6 }}>{v.summaryText}</div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

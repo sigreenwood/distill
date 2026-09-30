@@ -40,6 +40,13 @@ const api = {
       ipcRenderer.invoke(Channels.RegisterSetStatus, id, status),
     delete: (id: string) => ipcRenderer.invoke(Channels.RegisterDelete, id),
   },
+  summaryVersions: {
+    list: (recordingId: string) => ipcRenderer.invoke(Channels.SummaryVersionsList, recordingId),
+    generate: (payload: { recordingId: string; model?: string; meetingTypeId?: string }) =>
+      ipcRenderer.invoke(Channels.SummaryVersionsGenerate, payload),
+    cancel: () => ipcRenderer.invoke(Channels.SummaryVersionsCancel),
+    activate: (id: string) => ipcRenderer.invoke(Channels.SummaryVersionsActivate, id),
+  },
   inbox: {
     search: (query: string, scope: 'summary' | 'transcript') => ipcRenderer.invoke(Channels.InboxSearch, query, scope),
     list: () => ipcRenderer.invoke(Channels.InboxList),

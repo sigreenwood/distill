@@ -11,16 +11,19 @@ export interface MeetingDetail {
   client: string | null;
   clientId: string | null;
   meetingType: string | null;
+  meetingTypeId: string | null;
   summary: MeetingText | null;
   transcript: MeetingText | null;
   truncationWarning: boolean;
   warning: string | null;
   canReveal: boolean;
   /**
-   * Whether a transcript correction can be applied: the recording is
-   * finished (complete/skipped, not still processing) and has a stored
-   * transcript to correct — a Markdown-fallback transcript can't be
-   * written back to, so correction stays unavailable for it.
+   * Whether the stored transcript can be acted on directly: the
+   * recording is finished (complete/skipped, not still processing) and
+   * has a stored transcript — a Markdown-fallback transcript can't be
+   * written back to. Gates both "Correct a word or phrase…" and
+   * "Versions…" (generating an alternative summary needs the same
+   * stored transcript a correction does).
    */
   canCorrect: boolean;
 }

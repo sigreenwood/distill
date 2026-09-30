@@ -24,6 +24,7 @@ export type RecordingStatus =
 
 import type { BriefCandidate, ClientBrief } from '../../shared/brief';
 import type { RegisterItem } from '../../shared/register';
+import type { SummaryVersionDTO } from '../../shared/summaryVersion';
 
 export type PipelineStep = 'download' | 'transcribe' | 'summarise' | 'write';
 
@@ -275,6 +276,17 @@ export interface DistillApi {
     }): Promise<RegisterItem>;
     setStatus(id: string, status: 'open' | 'done'): Promise<void>;
     delete(id: string): Promise<void>;
+  };
+  summaryVersions: {
+    /** Newest first; always includes the live summary, synthesised if it predates this feature. */
+    list(recordingId: string): Promise<SummaryVersionDTO[]>;
+    generate(payload: {
+      recordingId: string;
+      model?: string;
+      meetingTypeId?: string;
+    }): Promise<{ version: SummaryVersionDTO; warning: string | null }>;
+    cancel(): Promise<void>;
+    activate(id: string): Promise<void>;
   };
   inbox: {
     search(query: string, scope: SearchScope): Promise<MeetingSearchResponse>;
