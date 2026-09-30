@@ -9,6 +9,7 @@ export interface MeetingDetail {
   date: number;
   durationSeconds: number | null;
   client: string | null;
+  clientId: string | null;
   meetingType: string | null;
   summary: MeetingText | null;
   transcript: MeetingText | null;

@@ -2,6 +2,9 @@ import { searchMeetings, validateSearch } from './meetingSearch.js';
 import { loadMeetingDetail } from './meetingContent.js';
 import { generateClientBrief, type BriefInputMeeting } from './clientBrief.js';
 import type { BriefCandidate } from '../shared/brief.js';
+import { checkRegisterAdd } from '../shared/register.js';
+import type { RegisterItem, RegisterItemKind } from '../shared/register.js';
+import type { JoinedRegisterItemRow } from './state.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -159,6 +162,70 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(Channels.BriefCancel, (evt) => {
     briefRuns.get(evt.sender.id)?.abort();
+  });
+
+  // --- action/decision register --------------------------------------------
+  // See shared/register.ts. Every row here was added by an explicit user
+  // click (from a brief point or the meeting reader); nothing here is ever
+  // inferred or written automatically.
+
+  function toRegisterItemDTO(row: JoinedRegisterItemRow): RegisterItem {
+    return {
+      id: row.id, clientId: row.client_id, clientName: row.client_name,
+      kind: row.kind, text: row.text, owner: row.owner, dueAt: row.due_at, status: row.status,
+      sourceRecordingId: row.source_recording_id, sourceTitle: row.source_title, sourceDate: row.source_date,
+      createdAt: row.created_at, completedAt: row.completed_at,
+    };
+  }
+
+  ipcMain.handle(Channels.RegisterList, (_evt, clientId) => {
+    if (clientId !== undefined && typeof clientId !== 'string') throw new Error('clientId must be a string');
+    return ctx.state.listRegisterItemsJoined(clientId).map(toRegisterItemDTO);
+  });
+
+  ipcMain.handle(Channels.RegisterAdd, (_evt, payload) => {
+    const p = payload as {
+      clientId?: unknown; kind?: unknown; text?: unknown;
+      owner?: unknown; dueAt?: unknown; sourceRecordingId?: unknown;
+    } | undefined;
+    const kind = p?.kind;
+    const input = {
+      clientId: typeof p?.clientId === 'string' ? p.clientId : '',
+      kind: (kind === 'action' || kind === 'decision' ? kind : 'action') as RegisterItemKind,
+      text: typeof p?.text === 'string' ? p.text : '',
+      owner: typeof p?.owner === 'string' ? p.owner : null,
+      dueAt: typeof p?.dueAt === 'number' ? p.dueAt : null,
+      sourceRecordingId: typeof p?.sourceRecordingId === 'string' ? p.sourceRecordingId : '',
+    };
+    const check = checkRegisterAdd(input);
+    if (!check.ok) throw new Error(check.reason ?? 'Invalid register item.');
+    if (!ctx.state.listClients().some((c) => c.id === input.clientId)) {
+      throw new Error('That client no longer exists.');
+    }
+    if (!ctx.state.getRecordingJoined(input.sourceRecordingId)) {
+      throw new Error('The source meeting is no longer in the library.');
+    }
+    const owner = input.kind === 'action' && input.owner?.trim() ? input.owner.trim() : null;
+    const id = crypto.randomUUID();
+    ctx.state.addRegisterItem({
+      id, client_id: input.clientId, kind: input.kind, text: input.text.trim(),
+      owner, due_at: input.kind === 'action' ? input.dueAt : null,
+      source_recording_id: input.sourceRecordingId,
+    });
+    return toRegisterItemDTO(ctx.state.listRegisterItemsJoined(input.clientId).find((r) => r.id === id)!);
+  });
+
+  ipcMain.handle(Channels.RegisterSetStatus, (_evt, id, status) => {
+    if (typeof id !== 'string') throw new Error('id must be a string');
+    if (status !== 'open' && status !== 'done') throw new Error('Invalid status');
+    if (!ctx.state.setRegisterItemStatus(id, status)) {
+      throw new Error('That register item is no longer available.');
+    }
+  });
+
+  ipcMain.handle(Channels.RegisterDelete, (_evt, id) => {
+    if (typeof id !== 'string') throw new Error('id must be a string');
+    ctx.state.deleteRegisterItem(id);
   });
 
   ipcMain.handle(Channels.InboxSearch, async (_evt, query, scope) => {

@@ -20,6 +20,20 @@ const api = {
       ipcRenderer.invoke(Channels.BriefGenerate, payload),
     cancel: () => ipcRenderer.invoke(Channels.BriefCancel),
   },
+  register: {
+    list: (clientId?: string) => ipcRenderer.invoke(Channels.RegisterList, clientId),
+    add: (payload: {
+      clientId: string;
+      kind: 'action' | 'decision';
+      text: string;
+      owner?: string | null;
+      dueAt?: number | null;
+      sourceRecordingId: string;
+    }) => ipcRenderer.invoke(Channels.RegisterAdd, payload),
+    setStatus: (id: string, status: 'open' | 'done') =>
+      ipcRenderer.invoke(Channels.RegisterSetStatus, id, status),
+    delete: (id: string) => ipcRenderer.invoke(Channels.RegisterDelete, id),
+  },
   inbox: {
     search: (query: string, scope: 'summary' | 'transcript') => ipcRenderer.invoke(Channels.InboxSearch, query, scope),
     list: () => ipcRenderer.invoke(Channels.InboxList),

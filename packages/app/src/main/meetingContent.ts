@@ -34,7 +34,7 @@ export async function loadMeetingDetail(row: JoinedRecordingRow): Promise<Meetin
   }
   return {
     id: row.id, title: row.filename, date: row.start_time ?? row.synced_at,
-    durationSeconds: row.duration_seconds, client: row.client_name, meetingType: row.meeting_type_name,
+    durationSeconds: row.duration_seconds, client: row.client_name, clientId: row.client_id, meetingType: row.meeting_type_name,
     summary, transcript, warning, truncationWarning: row.truncation_warning === 1,
     canReveal: Boolean(row.markdown_path || row.html_path || row.apple_note_id),
   };

@@ -97,6 +97,25 @@ export interface MeetingTypeRow {
   updated_at: number;
 }
 
+export interface RegisterItemRow {
+  id: string;
+  client_id: string;
+  kind: 'action' | 'decision';
+  text: string;
+  owner: string | null;
+  due_at: number | null;
+  status: 'open' | 'done' | null;
+  source_recording_id: string;
+  created_at: number;
+  completed_at: number | null;
+}
+
+export interface JoinedRegisterItemRow extends RegisterItemRow {
+  client_name: string;
+  source_title: string;
+  source_date: number;
+}
+
 export interface ProcessingSummary {
   currentStatus: RecordingStatus | null;
   running: number;
@@ -381,6 +400,41 @@ const MIGRATIONS: Migration[] = [
       -- (no extra Whisper hints, no roster in the summarise prompt).
       -- See src/shared/attendees.ts.
       ALTER TABLE recordings ADD COLUMN attendees_json TEXT;
+    `,
+  },
+  {
+    version: 13,
+    sql: `
+      -- Confirmed action/decision register (see shared/register.ts). Every
+      -- row is added by an explicit user action -- from a client brief
+      -- point or the meeting reader -- never inferred automatically.
+      --
+      -- status is meaningful only for actions: an action starts 'open'
+      -- and the user marks it 'done' themselves; absence from a later
+      -- meeting is never treated as completion. Decisions are a
+      -- historical record, not something to complete, so their status
+      -- is NULL rather than a permanently-'done' action.
+      --
+      -- source_recording_id is a hard reference: recordings are never
+      -- deleted by this app (only skipped/hidden), so "linked to its
+      -- source meeting" can stay a real foreign key rather than a
+      -- best-effort label.
+      CREATE TABLE register_items (
+        id                  TEXT PRIMARY KEY,
+        client_id           TEXT NOT NULL REFERENCES clients(id),
+        kind                TEXT NOT NULL CHECK (kind IN ('action','decision')),
+        text                TEXT NOT NULL,
+        owner               TEXT,
+        due_at              INTEGER,
+        status              TEXT CHECK (
+                               (kind = 'action'   AND status IN ('open','done')) OR
+                               (kind = 'decision' AND status IS NULL)
+                             ),
+        source_recording_id TEXT NOT NULL REFERENCES recordings(id),
+        created_at          INTEGER NOT NULL,
+        completed_at        INTEGER
+      );
+      CREATE INDEX idx_register_items_client ON register_items(client_id, kind);
     `,
   },
 ];
@@ -1157,5 +1211,66 @@ export class State {
          ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
       )
       .run(key, value);
+  }
+
+  // --- register items --------------------------------------------------------
+
+  private registerJoinSelect = `SELECT ri.*, c.name AS client_name,
+           r.filename AS source_title, COALESCE(r.start_time, r.synced_at) AS source_date
+     FROM register_items ri
+     JOIN clients    c ON c.id = ri.client_id
+     JOIN recordings r ON r.id = ri.source_recording_id`;
+
+  /**
+   * Add a confirmed register item. Callers (IPC) validate with
+   * checkRegisterAdd first; this only enforces what the DB schema
+   * already would (status null for a decision, set for an action).
+   */
+  addRegisterItem(row: {
+    id: string;
+    client_id: string;
+    kind: 'action' | 'decision';
+    text: string;
+    owner: string | null;
+    due_at: number | null;
+    source_recording_id: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO register_items (
+           id, client_id, kind, text, owner, due_at, status, source_recording_id, created_at
+         ) VALUES (
+           @id, @client_id, @kind, @text, @owner, @due_at, @status, @source_recording_id, @created_at
+         )`,
+      )
+      .run({ ...row, status: row.kind === 'action' ? 'open' : null, created_at: Date.now() });
+  }
+
+  /** Newest first. `clientId` narrows to one client; omit to list every client. */
+  listRegisterItemsJoined(clientId?: string): JoinedRegisterItemRow[] {
+    const where = clientId ? 'WHERE ri.client_id = ?' : '';
+    return this.db
+      .prepare(`${this.registerJoinSelect} ${where} ORDER BY ri.created_at DESC`)
+      .all(...(clientId ? [clientId] : [])) as JoinedRegisterItemRow[];
+  }
+
+  /**
+   * Set an action's open/done state. Refuses decisions (no status to
+   * set) so the only way status ever changes is the user's own click.
+   * Returns false if the id doesn't exist or names a decision.
+   */
+  setRegisterItemStatus(id: string, status: 'open' | 'done'): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE register_items
+         SET status = @status, completed_at = @completed_at
+         WHERE id = @id AND kind = 'action'`,
+      )
+      .run({ id, status, completed_at: status === 'done' ? Date.now() : null });
+    return result.changes > 0;
+  }
+
+  deleteRegisterItem(id: string): boolean {
+    return this.db.prepare('DELETE FROM register_items WHERE id = ?').run(id).changes > 0;
   }
 }

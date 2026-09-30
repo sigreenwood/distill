@@ -145,7 +145,7 @@ function Brief() {
           <MeetingPicker candidates={candidates} selected={selected} onToggle={toggle} disabled={busy} />
         )}
         {error && <div style={{ color: 'var(--danger)', fontSize: 12, margin: '10px 0' }}>{error}</div>}
-        {brief && <BriefView brief={brief} />}
+        {brief && <BriefView brief={brief} clientId={clientId} onError={setError} />}
       </main>
       <footer
         style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center' }}
@@ -234,20 +234,31 @@ function MeetingPicker(props: {
   );
 }
 
-function BriefView({ brief }: { brief: ClientBrief }) {
+function BriefView({
+  brief,
+  clientId,
+  onError,
+}: {
+  brief: ClientBrief;
+  clientId: string;
+  onError: (message: string) => void;
+}) {
   const empty =
     !brief.decisions.length && !brief.commitments.length && !brief.openQuestions.length && !brief.suggestedQuestions.length;
   return (
     <div style={{ fontSize: 13, lineHeight: 1.5 }}>
       <h2 style={{ fontSize: 16, margin: '4px 0 12px' }}>{brief.clientName} — preparation brief</h2>
       {empty && <p className="muted">The model found nothing citable in these summaries.</p>}
-      <Section title="Decisions" items={brief.decisions} brief={brief} />
+      <Section title="Decisions" items={brief.decisions} brief={brief} clientId={clientId} registerKind="decision" onError={onError} />
       <Section
         title="Commitments made"
         note="As stated in the meetings. Whether each was done is not tracked."
         items={brief.commitments}
         brief={brief}
         owner={(i) => (i as { owner?: string | null }).owner ?? null}
+        clientId={clientId}
+        registerKind="action"
+        onError={onError}
       />
       <Section title="Questions raised" items={brief.openQuestions} brief={brief} />
       <Section
@@ -282,6 +293,10 @@ function Section(props: {
   items: BriefItem[];
   brief: ClientBrief;
   owner?: (i: BriefItem) => string | null;
+  clientId?: string;
+  /** Present only for decisions/commitments — enables "Add to register". */
+  registerKind?: 'action' | 'decision';
+  onError?: (message: string) => void;
 }) {
   if (props.items.length === 0) return null;
   return (
@@ -308,11 +323,69 @@ function Section(props: {
                   </button>
                 );
               })}
+              {props.registerKind && props.clientId && (
+                <AddToRegisterButton
+                  clientId={props.clientId}
+                  kind={props.registerKind}
+                  text={item.text}
+                  owner={owner ?? null}
+                  sourceRecordingId={props.brief.sources.find((s) => s.ref === item.sources[0])?.id ?? null}
+                  onError={props.onError ?? (() => {})}
+                />
+              )}
             </li>
           );
         })}
       </ul>
     </section>
+  );
+}
+
+/**
+ * Confirms one brief point into the persistent register (shared/register.ts).
+ * Uses only the first cited meeting as the source — a point citing several
+ * meetings still needs exactly one "source meeting" for the register entry.
+ */
+function AddToRegisterButton(props: {
+  clientId: string;
+  kind: 'action' | 'decision';
+  text: string;
+  owner: string | null;
+  sourceRecordingId: string | null;
+  onError: (message: string) => void;
+}) {
+  const [state, setState] = useState<'idle' | 'busy' | 'added'>('idle');
+  if (!props.sourceRecordingId) return null;
+  if (state === 'added') {
+    return (
+      <span className="muted" style={{ fontSize: 10, marginLeft: 6 }}>
+        Added to register
+      </span>
+    );
+  }
+  return (
+    <button
+      disabled={state === 'busy'}
+      onClick={async () => {
+        setState('busy');
+        try {
+          await window.distill.register.add({
+            clientId: props.clientId,
+            kind: props.kind,
+            text: props.text,
+            owner: props.owner,
+            sourceRecordingId: props.sourceRecordingId!,
+          });
+          setState('added');
+        } catch (e) {
+          setState('idle');
+          props.onError(e instanceof Error ? e.message : String(e));
+        }
+      }}
+      style={{ fontSize: 10, padding: '0 6px', marginLeft: 6 }}
+    >
+      Add to register
+    </button>
   );
 }
 

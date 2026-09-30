@@ -23,6 +23,7 @@ export type RecordingStatus =
   | 'skipped';
 
 import type { BriefCandidate, ClientBrief } from '../../shared/brief';
+import type { RegisterItem } from '../../shared/register';
 
 export type PipelineStep = 'download' | 'transcribe' | 'summarise' | 'write';
 
@@ -254,6 +255,20 @@ export interface DistillApi {
     listMeetings(clientId: string, sinceDays: number | null): Promise<BriefCandidate[]>;
     generate(payload: { clientId: string; recordingIds: string[] }): Promise<ClientBrief>;
     cancel(): Promise<void>;
+  };
+  register: {
+    /** One client's items, newest first; omit clientId to list every client. */
+    list(clientId?: string): Promise<RegisterItem[]>;
+    add(payload: {
+      clientId: string;
+      kind: 'action' | 'decision';
+      text: string;
+      owner?: string | null;
+      dueAt?: number | null;
+      sourceRecordingId: string;
+    }): Promise<RegisterItem>;
+    setStatus(id: string, status: 'open' | 'done'): Promise<void>;
+    delete(id: string): Promise<void>;
   };
   inbox: {
     search(query: string, scope: SearchScope): Promise<MeetingSearchResponse>;

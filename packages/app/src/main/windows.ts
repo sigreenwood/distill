@@ -11,7 +11,7 @@ export interface WindowsContext {
   rendererDistDir: string;
 }
 
-type RendererEntry = 'inbox' | 'tag' | 'settings' | 'setup' | 'history' | 'reader' | 'brief';
+type RendererEntry = 'inbox' | 'tag' | 'settings' | 'setup' | 'history' | 'reader' | 'brief' | 'register';
 
 let ctx: WindowsContext | null = null;
 let inboxWin: BrowserWindow | null = null;
@@ -20,6 +20,7 @@ let settingsWin: BrowserWindow | null = null;
 let setupWin: BrowserWindow | null = null;
 let historyWin: BrowserWindow | null = null;
 let briefWin: BrowserWindow | null = null;
+let registerWin: BrowserWindow | null = null;
 let pendingFocusId: string | null = null;
 const readerWindows = new Map<string, BrowserWindow>();
 
@@ -120,7 +121,9 @@ export function closeAll(): void {
   if (setupWin && !setupWin.isDestroyed()) setupWin.close();
   if (historyWin && !historyWin.isDestroyed()) historyWin.close();
   if (briefWin && !briefWin.isDestroyed()) briefWin.close();
+  if (registerWin && !registerWin.isDestroyed()) registerWin.close();
   briefWin = null;
+  registerWin = null;
   inboxWin = null;
   tagWin = null;
   settingsWin = null;
@@ -260,6 +263,41 @@ export function openClientBrief(): void {
   });
   briefWin.on('closed', () => {
     briefWin = null;
+  });
+}
+
+/** Confirmed action/decision register — see shared/register.ts. */
+export function openClientRegister(): void {
+  if (!ctx) throw new Error('configureWindows must be called first');
+  if (registerWin && !registerWin.isDestroyed()) {
+    registerWin.show();
+    registerWin.focus();
+    return;
+  }
+  registerWin = new BrowserWindow({
+    width: 700,
+    height: 700,
+    show: false,
+    resizable: true,
+    minWidth: 480,
+    minHeight: 380,
+    fullscreenable: false,
+    title: 'distill — Client register',
+    webPreferences: {
+      preload: ctx.preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  centreOnCursorDisplay(registerWin);
+  void loadRendererEntry(registerWin, 'register');
+  registerWin.once('ready-to-show', () => {
+    registerWin?.show();
+    registerWin?.focus();
+  });
+  registerWin.on('closed', () => {
+    registerWin = null;
   });
 }
 

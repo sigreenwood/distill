@@ -101,6 +101,32 @@ preserved segment timestamps and a VAD-to-original-audio time map.
 
 ---
 
+## Client preparation brief — complete
+
+*Sep 2026 development checkpoint.* Tray → **Client brief…** generates an
+on-demand brief from selected meeting summaries for one client: decisions,
+commitments (with owner), questions raised, and suggested questions, every
+point cited to a source meeting. Summaries only, bounded to 8 meetings /
+48,000 characters. See [HANDOFF.md](./HANDOFF.md) for verification.
+
+---
+
+## Confirmed action/decision register — complete in source
+
+*Sep 2026 development checkpoint.* Tray → **Client register…** holds
+actions and decisions the user has explicitly confirmed — from a client
+brief point (an "Add to register" button on each decision/commitment) or
+directly from the meeting reader (a small manual-entry form). Each item
+is linked to its one source meeting; actions carry an open/done state the
+user sets themselves and an optional owner/due date; decisions have no
+status — they are a historical record, not something to complete.
+
+No automatic status inference anywhere: an action never flips to "done"
+because a later meeting didn't mention it again. See
+[HANDOFF.md](./HANDOFF.md) for checks and limitations.
+
+---
+
 ## Silent degradation — the theme of the Jul 2026 shakedown
 
 *Logged Jul 2026 after a day of real use.* Almost every bug found that

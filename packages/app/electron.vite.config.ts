@@ -65,6 +65,7 @@ export default defineConfig({
           history: resolve(__dirname, 'src/renderer/history/index.html'),
           reader: resolve(__dirname, 'src/renderer/reader/index.html'),
           brief: resolve(__dirname, 'src/renderer/brief/index.html'),
+          register: resolve(__dirname, 'src/renderer/register/index.html'),
         },
       },
     },

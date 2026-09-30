@@ -166,19 +166,68 @@ window inside the installed app, and real client meetings.
 Limitations: the brief is not saved (copy it if needed); each point
 cites whole meetings, not passages; no carry-over between briefs.
 
+## Step 4 — confirmed action/decision register: complete in source
+
+Checkpoint: the commit containing this update, titled
+`feat(register): add a confirmed action/decision register`.
+
+- Tray → **Client register…** opens a resizable window: pick a client,
+  see its actions (filterable open/done/all) and decisions, newest first.
+- Two entry points add a confirmed item, both calling the same
+  `register.add` IPC handler — nothing is ever added automatically:
+  - **Client brief window**: an "Add to register" button on each
+    decision and commitment. A point citing several meetings still
+    attaches to a single source meeting — the first one it cites.
+  - **Meeting reader**: an "Add to register…" toggle reveals a small
+    manual form (kind, text, and for actions an optional owner/due
+    date), attributed to that reader's own recording. Hidden when the
+    recording has no client (nothing to attribute the item to).
+- Actions have an open/done state the user sets from a checkbox in the
+  register window; toggling is the only thing that ever changes status.
+  Decisions have no status column value at all (DB CHECK constraint
+  enforces this) — they're a historical record, not completable.
+- Register items are a hard foreign key to their source recording (never
+  deleted by this app) and to the client; clicking a source opens it in
+  the meeting reader.
+- Migration 13 adds `register_items`. Deleting an item is user-initiated
+  and confirmed with a native `confirm()` dialog in the register window.
+
+Main files: `shared/register.ts` (types + `checkRegisterAdd`/`isOverdue`,
+both pure and tested), `main/state.ts` (migration 13 + CRUD), `main/ipc.ts`
+register handlers, `renderer/register/*`, plus edits to
+`renderer/brief/main.tsx` and `renderer/reader/MeetingReader.tsx` for the
+two entry points, and `shared/meeting.ts`/`main/meetingContent.ts` to add
+`clientId` to `MeetingDetail` (needed so the reader knows which client to
+attribute a manual entry to).
+
+Verification: 186 tests (10 new, covering `checkRegisterAdd` and
+`isOverdue`), both typechecks, production build — all run directly on
+this working copy. **Not exercised: the actual window inside a running
+app.** `State`'s new SQL methods have no direct test, consistent with
+the rest of `state.ts` (see CLAUDE.md's `better-sqlite3` ABI note — this
+session's shell was on Node 26, and the project's native module needs
+Node 22, so the dev app wasn't launched here). Before relying on this in
+real use: run `npm run dev` under Node 22 and click through both entry
+points and the register window once.
+
+Limitations worth retaining:
+
+- A brief point that cites multiple meetings only attaches to the first
+  one when added to the register — the register's "source meeting" is
+  deliberately singular, not a list.
+- No decision supersession/versioning: a later, contradicting decision
+  is just another row, not linked to or replacing the earlier one.
+- No bulk actions (mark several done at once), no edit-in-place (only
+  add / toggle status / delete), no export.
+
 ## Next step
 
-Suggested: a confirmed action/decision register — the persistent
-"status" the brief deliberately does not claim. Let the user confirm
-items from a brief (or a meeting) into a per-client register with
-open/done state they set, each linked to its source meeting. Keep it
-user-confirmed: no automatic status inference. Same rules as before —
-one bounded slice, tests, build, UI check, handoff in the same commit.
-
-Later ideas, not implemented or fully specified: confirmed action/decision
-register; correction-to-vocabulary suggestions; versioned re-summarisation;
-long-meeting chunking/coverage; idle/overnight processing; diagnostics and
-backup/restore. Source-linked audio is also later work.
+Later ideas, not implemented or fully specified: correction-to-vocabulary
+suggestions; versioned re-summarisation; long-meeting chunking/coverage;
+idle/overnight processing; diagnostics and backup/restore. Source-linked
+audio is also later work. Decision supersession/versioning (see the
+register's limitations above) could also extend this step rather than
+starting a new one.
 
 No package has been installed or release published as part of this work.
 The known unrelated untracked files are intentionally left in the working
