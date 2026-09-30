@@ -30,6 +30,21 @@ describe('prettifyError fallback for unmatched errors', () => {
 });
 
 describe('prettifyError known causes', () => {
+  it('explains Ollama GPU memory failures', () => {
+    const { message } = prettifyError(
+      'Ollama 500: Insufficient Memory (kIOGPUCommandBufferCallbackErrorOutOfMemory)',
+      { ollamaModel: 'qwen3.8:27b' },
+    );
+    expect(message).toMatch(/ran out of GPU memory/i);
+    expect(message).toContain('qwen3.8:27b');
+  });
+
+  it('explains Plaud HTML responses as an auth/API problem', () => {
+    const result = prettifyError('Plaud API returned a non-JSON response (HTTP 200)');
+    expect(result.message).toMatch(/sign in again/i);
+    expect(result.isAuthError).toBe(true);
+  });
+
   it('explains an Ollama connection death as a memory problem', () => {
     const { message } = prettifyError('fetch failed', { ollamaModel: 'qwen3.5:27b' });
     expect(message).toMatch(/contextWindow|memory/i);

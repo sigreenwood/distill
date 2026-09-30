@@ -10,7 +10,7 @@ If you're trying to plan the eventual `.pkg` installer, see `07-install.md` inst
 
 Apple Silicon only, because MLX Whisper only runs on M-series chips. Tested on M4 Pro (48GB) and M5 (24GB); any M1 or later should work but 16GB RAM with the 32B Ollama model will swap heavily. macOS Sequoia or newer is assumed; older releases may work but aren't exercised.
 
-Node.js 20 or later for the Electron and the app package. Python 3.11 or 3.12 for the transcription subprocess — Python 3.13 may work but hasn't been tried. ffmpeg is optional and only needed if you want to drag-and-drop video files (mp4, mov, m4v, mkv, webm) rather than pre-extracted audio.
+Node.js 22 is the recommended runtime (Node.js 20 also works) for the Electron and app packages. Do not use Node.js 26 or newer: the current `better-sqlite3` version does not build against Node 26's V8 API. The repository includes `.nvmrc` so `nvm use` selects Node 22. Python 3.11 or 3.12 is required for the transcription subprocess — Python 3.13 may work but hasn't been tried. ffmpeg is optional and only needed if you want to drag-and-drop video files (mp4, mov, m4v, mkv, webm) rather than pre-extracted audio.
 
 ---
 
@@ -80,10 +80,19 @@ From a clean clone:
 
 ```sh
 cd ~/plaud-toolkit
-npm install
+nvm use
+npm ci
 npm run --workspace @distill/app rebuild   # rebuilds better-sqlite3 for Electron's ABI
 python3 packages/app/scripts/generate-tray-icons.py   # generates tray PNGs
 npm run --workspace @distill/app dev
+```
+
+If `nvm` is not installed, install Node.js 22 LTS before running `npm ci`. A failed install under Node.js 26 commonly appears as C++ errors such as `no member named 'GetPrototype'` while compiling `better-sqlite3`; switch Node versions and remove `node_modules` before retrying:
+
+```sh
+rm -rf node_modules
+nvm use 22
+npm ci
 ```
 
 The `rebuild` step is a recurring trap: `better-sqlite3` is a native module and its compiled binary has to match Electron's Node ABI, not the system Node. Running tests (`vitest`) uses system Node, so you can't reuse the same binary. Skip `rebuild` and the app will fail to start with an ABI mismatch; skip a later rebuild after upgrading Electron and same thing.

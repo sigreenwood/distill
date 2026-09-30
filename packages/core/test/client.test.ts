@@ -156,4 +156,16 @@ describe('PlaudClient', () => {
 
     await expect(client.listRecordings()).rejects.toThrow('403');
   });
+
+  it('explains an HTML response instead of exposing a JSON parse error', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError(`Unexpected token '<'`);
+      },
+    });
+
+    await expect(client.listRecordings()).rejects.toThrow(/non-JSON response.*sign in again/i);
+  });
 });
