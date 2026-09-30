@@ -1,5 +1,7 @@
 import { searchMeetings, validateSearch } from './meetingSearch.js';
 import { loadMeetingDetail } from './meetingContent.js';
+import { generateClientBrief, type BriefInputMeeting } from './clientBrief.js';
+import type { BriefCandidate } from '../shared/brief.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -73,6 +75,9 @@ export interface IpcContext {
   onSetupComplete?: () => void;
 }
 
+/** In-flight client briefs, one per brief window (keyed by webContents id). */
+const briefRuns = new Map<number, AbortController>();
+
 export function registerIpcHandlers(ctx: IpcContext): void {
   function requireMeeting(recordingId: unknown): JoinedRecordingRow {
     if (typeof recordingId !== 'string' || !recordingId.trim()) throw new Error('Invalid recording ID');
@@ -86,6 +91,76 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     openMeetingReader(row.id, scope);
   });
   ipcMain.handle(Channels.MeetingGet, (_evt, recordingId) => loadMeetingDetail(requireMeeting(recordingId)));
+  // --- client brief --------------------------------------------------------
+
+  ipcMain.handle(Channels.BriefListMeetings, async (_evt, clientId, sinceDays) => {
+    if (typeof clientId !== 'string') throw new Error('clientId must be a string');
+    if (sinceDays !== null && (typeof sinceDays !== 'number' || sinceDays <= 0)) {
+      throw new Error('sinceDays must be a positive number or null');
+    }
+    const cutoff = sinceDays === null ? 0 : Date.now() - sinceDays * 86_400_000;
+    const rows = ctx.state
+      .listSearchableJoined()
+      .filter((r) => r.client_id === clientId && (r.start_time ?? r.synced_at) >= cutoff);
+    const out: BriefCandidate[] = [];
+    for (const row of rows) {
+      const detail = await loadMeetingDetail(row);
+      out.push({
+        id: row.id,
+        title: row.filename,
+        date: row.start_time ?? row.synced_at,
+        meetingType: row.meeting_type_name,
+        summaryChars: detail.summary?.text.trim().length ?? 0,
+      });
+    }
+    return out;
+  });
+
+  ipcMain.handle(Channels.BriefGenerate, async (evt, payload) => {
+    const p = payload as { clientId?: unknown; recordingIds?: unknown } | undefined;
+    if (typeof p?.clientId !== 'string') throw new Error('clientId must be a string');
+    if (!Array.isArray(p.recordingIds) || p.recordingIds.some((id) => typeof id !== 'string')) {
+      throw new Error('recordingIds must be an array of strings');
+    }
+    const client = ctx.state.listClients().find((c) => c.id === p.clientId);
+    if (!client) throw new Error('That client no longer exists.');
+    const meetings: BriefInputMeeting[] = [];
+    for (const id of p.recordingIds as string[]) {
+      const row = ctx.state.getRecordingJoined(id);
+      if (!row || row.client_id !== client.id) throw new Error('A selected meeting is no longer available.');
+      const detail = await loadMeetingDetail(row);
+      if (!detail.summary) throw new Error(`"${row.filename}" has no summary to draw on.`);
+      meetings.push({
+        id: row.id,
+        title: row.filename,
+        date: row.start_time ?? row.synced_at,
+        meetingType: row.meeting_type_name,
+        summary: detail.summary.text,
+      });
+    }
+    briefRuns.get(evt.sender.id)?.abort();
+    const controller = new AbortController();
+    briefRuns.set(evt.sender.id, controller);
+    ctx.logger.info({ clientId: client.id, meetings: meetings.length }, 'client brief started');
+    try {
+      const brief = await generateClientBrief(client.name, meetings, ctx.getConfig().ollama, controller.signal);
+      ctx.logger.info(
+        { clientId: client.id, dropped: brief.dropped, model: brief.model },
+        'client brief complete',
+      );
+      return brief;
+    } catch (e) {
+      if (controller.signal.aborted) throw new Error('Cancelled.');
+      throw e;
+    } finally {
+      if (briefRuns.get(evt.sender.id) === controller) briefRuns.delete(evt.sender.id);
+    }
+  });
+
+  ipcMain.handle(Channels.BriefCancel, (evt) => {
+    briefRuns.get(evt.sender.id)?.abort();
+  });
+
   ipcMain.handle(Channels.InboxSearch, async (_evt, query, scope) => {
     validateSearch(query, scope);
     return searchMeetings(ctx.state.listSearchableJoined(), query, scope, ctx.getConfig().ollama);

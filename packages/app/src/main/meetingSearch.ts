@@ -4,6 +4,7 @@ import { OllamaClient } from './ollama.js';
 import type { OllamaConfig } from './config.js';
 import type { MeetingSearchResponse, SearchScope } from '../shared/search.js';
 import { markdownContent } from './meetingContent.js';
+import { assertLocalInference } from './localInference.js';
 export { markdownContent } from './meetingContent.js';
 
 const SEARCH_TERMS_SCHEMA = {
@@ -59,11 +60,7 @@ export async function searchMeetings(
 ): Promise<MeetingSearchResponse> {
   validateSearch(query, scope);
   // Never send queries to a configured remote Ollama server or a cloud model.
-  const host = new URL(config.host);
-  if (!['http:', 'https:'].includes(host.protocol)
-    || !['localhost', '127.0.0.1', '[::1]'].includes(host.hostname) || /cloud/i.test(config.model)) {
-    throw new Error('Meeting search requires a local Ollama server and a downloaded local model.');
-  }
+  assertLocalInference(config, 'Meeting search');
   let terms: string[][];
   let warning: string | null = null;
   try {

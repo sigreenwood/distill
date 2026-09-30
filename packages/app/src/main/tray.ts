@@ -32,6 +32,7 @@ export interface TrayContext {
   onDismissErrors?: () => void;
   onOpenSettings: () => void;
   onOpenHistory: () => void;
+  onOpenClientBrief: () => void;
   onSyncNow: () => Promise<void> | void;
   onPauseChange: (next: PauseConfig) => void;
 }
@@ -139,6 +140,10 @@ export function createTray(ctx: TrayContext): TrayHandle {
       {
         label: 'History…',
         click: () => ctx.onOpenHistory(),
+      },
+      {
+        label: 'Client brief…',
+        click: () => ctx.onOpenClientBrief(),
       },
       {
         label: 'Open logs folder',

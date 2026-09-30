@@ -11,7 +11,7 @@ export interface WindowsContext {
   rendererDistDir: string;
 }
 
-type RendererEntry = 'inbox' | 'tag' | 'settings' | 'setup' | 'history' | 'reader';
+type RendererEntry = 'inbox' | 'tag' | 'settings' | 'setup' | 'history' | 'reader' | 'brief';
 
 let ctx: WindowsContext | null = null;
 let inboxWin: BrowserWindow | null = null;
@@ -19,6 +19,7 @@ let tagWin: BrowserWindow | null = null;
 let settingsWin: BrowserWindow | null = null;
 let setupWin: BrowserWindow | null = null;
 let historyWin: BrowserWindow | null = null;
+let briefWin: BrowserWindow | null = null;
 let pendingFocusId: string | null = null;
 const readerWindows = new Map<string, BrowserWindow>();
 
@@ -118,6 +119,8 @@ export function closeAll(): void {
   if (settingsWin && !settingsWin.isDestroyed()) settingsWin.close();
   if (setupWin && !setupWin.isDestroyed()) setupWin.close();
   if (historyWin && !historyWin.isDestroyed()) historyWin.close();
+  if (briefWin && !briefWin.isDestroyed()) briefWin.close();
+  briefWin = null;
   inboxWin = null;
   tagWin = null;
   settingsWin = null;
@@ -222,6 +225,41 @@ export function openHistory(): void {
   });
   historyWin.on('closed', () => {
     historyWin = null;
+  });
+}
+
+/** Client preparation brief — see clientBrief.ts. */
+export function openClientBrief(): void {
+  if (!ctx) throw new Error('configureWindows must be called first');
+  if (briefWin && !briefWin.isDestroyed()) {
+    briefWin.show();
+    briefWin.focus();
+    return;
+  }
+  briefWin = new BrowserWindow({
+    width: 760,
+    height: 760,
+    show: false,
+    resizable: true,
+    minWidth: 520,
+    minHeight: 420,
+    fullscreenable: false,
+    title: 'distill — Client brief',
+    webPreferences: {
+      preload: ctx.preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  centreOnCursorDisplay(briefWin);
+  void loadRendererEntry(briefWin, 'brief');
+  briefWin.once('ready-to-show', () => {
+    briefWin?.show();
+    briefWin?.focus();
+  });
+  briefWin.on('closed', () => {
+    briefWin = null;
   });
 }
 
