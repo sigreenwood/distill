@@ -1548,6 +1548,7 @@ export function PerformancePane(props: {
   const isDirty =
     draft.ollamaModel !== props.initial.ollamaModel ||
     draft.ollamaKeepAlive !== props.initial.ollamaKeepAlive ||
+    draft.adaptiveContextWindow !== props.initial.adaptiveContextWindow ||
     draft.whisperModel !== props.initial.whisperModel ||
     draft.transcriptionEngine !== props.initial.transcriptionEngine;
   const ollamaUnreachable = ollamaError !== null;
@@ -1676,6 +1677,33 @@ export function PerformancePane(props: {
               </option>
             ))}
           </select>
+        </section>
+        <section
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Adaptive context sizing</div>
+          <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>
+            Sizes each summary's context window to that meeting's actual length instead of always
+            allocating the full configured ceiling — a short meeting uses less memory, a long one still
+            gets up to the same limit. Turn off to always request the full configured context window,
+            for one predictable number instead of a variable one.
+          </div>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12 }}>
+            <input
+              type="checkbox"
+              checked={draft.adaptiveContextWindow}
+              onChange={(e) => {
+                setDraft({ ...draft, adaptiveContextWindow: e.target.checked });
+                setSavedAt(null);
+              }}
+            />
+            Size context to each meeting
+          </label>
         </section>
         <section
           style={{

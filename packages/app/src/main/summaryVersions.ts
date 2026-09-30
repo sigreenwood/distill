@@ -14,7 +14,7 @@
 import { OllamaClient } from './ollama.js';
 import type { OllamaConfig } from './config.js';
 import { assertLocalInference } from './localInference.js';
-import { estimateTokenBudget } from './tokenBudget.js';
+import { estimateTokenBudget, computeAdaptiveContextWindow } from './tokenBudget.js';
 import { parseStoredAttendees, buildAttendeeRoster } from '../shared/attendees.js';
 import type { SummaryVersionRow } from './state.js';
 import type { SummaryVersionDTO } from '../shared/summaryVersion.js';
@@ -41,6 +41,9 @@ export async function generateSummaryVersion(
   const roster = buildAttendeeRoster(parseStoredAttendees(input.attendeesJson));
   const userContent = roster ? `${roster}\n\n${input.transcriptText}` : input.transcriptText;
   const budget = estimateTokenBudget(input.meetingType.prompt, userContent, config.contextWindow);
+  const numCtx = config.adaptiveContextWindow
+    ? computeAdaptiveContextWindow(budget.estimatedInputTokens, config.contextWindow)
+    : config.contextWindow;
 
   const response = await new OllamaClient(config.host).chat(
     {
@@ -51,7 +54,7 @@ export async function generateSummaryVersion(
       ],
       think: false,
       keep_alive: config.keepAlive,
-      options: { num_ctx: config.contextWindow, temperature: config.temperature },
+      options: { num_ctx: numCtx, temperature: config.temperature },
     },
     signal,
   );

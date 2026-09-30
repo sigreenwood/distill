@@ -134,6 +134,8 @@ export interface GeneralDTO {
 export interface PerformanceDTO {
   ollamaModel: string;
   ollamaKeepAlive: string;
+  /** When true, num_ctx is sized per-recording instead of always allocating the full configured ceiling. */
+  adaptiveContextWindow: boolean;
   whisperModel: string;
   transcriptionEngine: 'whisper' | 'parakeet';
   parakeetModel: string;

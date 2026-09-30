@@ -9,7 +9,7 @@ import { bundledPythonDir, bundledTranscribeScript } from './bundledResources.js
 import { venvPython } from './pythonEnv.js';
 import { loadVocabulary, applyReplacements } from './vocabulary.js';
 import { cleanWhisperRepetitions } from './transcriptCleanup.js';
-import { estimateTokenBudget } from './tokenBudget.js';
+import { estimateTokenBudget, computeAdaptiveContextWindow } from './tokenBudget.js';
 import { writeOutputs } from './outputs.js';
 import { CancelledError, isCancelled, throwIfAborted } from './cancellation.js';
 import type { Logger } from './logger.js';
@@ -289,12 +289,21 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
       'transcript + prompt likely to exceed Ollama context budget; summary may be truncated',
     );
   }
+  // Size the actual Ollama call to what this transcript needs rather than
+  // always allocating contextWindow's full KV cache — a 10-minute meeting
+  // and a 3-hour one shouldn't cost the same memory. Still bounded by
+  // contextWindow: this never raises the effective limit, so the warning
+  // above still fires exactly when it used to. See tokenBudget.ts.
+  const numCtx = cfg.ollama.adaptiveContextWindow
+    ? computeAdaptiveContextWindow(budget.estimatedInputTokens, cfg.ollama.contextWindow)
+    : cfg.ollama.contextWindow;
   ctx.logger.info(
     {
       id,
       model: cfg.ollama.model,
       transcriptChars: row.transcript_text.length,
       estimatedInputTokens: budget.estimatedInputTokens,
+      numCtx,
     },
     'starting summarisation',
   );
@@ -310,7 +319,7 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
         think: false,
         keep_alive: cfg.ollama.keepAlive,
         options: {
-          num_ctx: cfg.ollama.contextWindow,
+          num_ctx: numCtx,
           temperature: cfg.ollama.temperature,
         },
       },

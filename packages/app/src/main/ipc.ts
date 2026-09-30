@@ -1203,6 +1203,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         ...cfg.ollama,
         model: perf.ollamaModel,
         keepAlive: perf.ollamaKeepAlive,
+        adaptiveContextWindow: perf.adaptiveContextWindow,
       },
       whisperModel: perf.whisperModel,
       transcriptionEngine: perf.transcriptionEngine,
@@ -1213,6 +1214,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       {
         ollamaModel: updated.ollama.model,
         ollamaKeepAlive: updated.ollama.keepAlive,
+        adaptiveContextWindow: updated.ollama.adaptiveContextWindow,
         whisperModel: updated.whisperModel,
         transcriptionEngine: updated.transcriptionEngine,
         parakeetModel: updated.parakeetModel,
@@ -1600,6 +1602,7 @@ function toPerformanceDTO(cfg: AppConfig) {
   return {
     ollamaModel: cfg.ollama.model,
     ollamaKeepAlive: cfg.ollama.keepAlive,
+    adaptiveContextWindow: cfg.ollama.adaptiveContextWindow,
     whisperModel: cfg.whisperModel,
     transcriptionEngine: cfg.transcriptionEngine,
     parakeetModel: cfg.parakeetModel,
@@ -2029,6 +2032,7 @@ function assertGeneralDTO(v: unknown): {
 function assertPerformanceDTO(v: unknown): {
   ollamaModel: string;
   ollamaKeepAlive: string;
+  adaptiveContextWindow: boolean;
   whisperModel: string;
   transcriptionEngine: 'whisper' | 'parakeet';
   parakeetModel: string;
@@ -2050,6 +2054,10 @@ function assertPerformanceDTO(v: unknown): {
   if (!(allowedKeepAlive as string[]).includes(keepAlive)) {
     throw new Error(`ollamaKeepAlive must be one of: ${allowedKeepAlive.join(', ')}`);
   }
+  if (typeof o.adaptiveContextWindow !== 'boolean') {
+    throw new Error('adaptiveContextWindow must be a boolean');
+  }
+  const adaptiveContextWindow = o.adaptiveContextWindow;
   if (typeof o.whisperModel !== 'string') {
     throw new Error('whisperModel must be a string');
   }
@@ -2068,7 +2076,9 @@ function assertPerformanceDTO(v: unknown): {
     throw new Error('parakeetModel must be a non-empty string');
   }
   const parakeetModel = o.parakeetModel.trim();
-  return { ollamaModel, ollamaKeepAlive: keepAlive, whisperModel, transcriptionEngine, parakeetModel };
+  return {
+    ollamaModel, ollamaKeepAlive: keepAlive, adaptiveContextWindow, whisperModel, transcriptionEngine, parakeetModel,
+  };
 }
 
 function assertPlaudSignInPayload(v: unknown): {

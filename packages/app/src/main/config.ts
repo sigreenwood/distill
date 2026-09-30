@@ -43,6 +43,17 @@ export interface OllamaConfig {
   host: string;
   model: string;
   contextWindow: number;
+  /**
+   * When true (the default), num_ctx for a summarise call is sized to
+   * what that transcript actually needs (rounded up, capped at
+   * contextWindow) instead of always allocating the full configured
+   * ceiling's KV cache — see computeAdaptiveContextWindow in
+   * tokenBudget.ts. contextWindow itself is never rewritten either way;
+   * this only changes how it's used at call time. Turning this off
+   * restores the old always-allocate-the-ceiling behaviour, for anyone
+   * who'd rather have one predictable number than a variable one.
+   */
+  adaptiveContextWindow: boolean;
   temperature: number;
   keepAlive: string;
 }
@@ -193,6 +204,8 @@ export function normaliseConfig(cfg: any): AppConfig {
       // written in config.json always wins — this only fills the gap.
       model: cfg.ollama?.model ?? recommendModelForRam(os.totalmem()).model,
       contextWindow: resolveContextWindow(cfg.ollama?.contextWindow, os.totalmem()),
+      adaptiveContextWindow:
+        typeof cfg.ollama?.adaptiveContextWindow === 'boolean' ? cfg.ollama.adaptiveContextWindow : true,
       // Zero, deliberately. Summarising a meeting is an extraction task,
       // not a creative one: the same transcript should give the same
       // answer twice. Measured on a real 4,670-token meeting, same model,

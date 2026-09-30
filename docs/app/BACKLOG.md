@@ -178,6 +178,24 @@ implicit "Current" entry rather than being backfilled. See
 
 ---
 
+## Adaptive context sizing — complete in source
+
+*Sep 2026 development checkpoint.* Raised as "would a bigger context
+window help long meetings" while considering full transcript chunking
+(deliberately not built — split-and-remerge was already rejected once,
+see "Truncation guard" in the Shipped appendix below). Each summarise
+call now sizes Ollama's `num_ctx` to what that transcript
+actually needs — rounded up, capped at the configured `contextWindow`
+ceiling — instead of always allocating the ceiling's full KV cache for
+every meeting regardless of length. A short meeting costs less memory;
+a long one still gets exactly the same ceiling and the same truncation
+warning as before. Settings → Performance → "Size context to each
+meeting" turns it off, restoring the old always-allocate-the-ceiling
+behaviour. See [HANDOFF.md](./HANDOFF.md) for the reasoning against
+simply raising the default ceiling instead.
+
+---
+
 ## Silent degradation — the theme of the Jul 2026 shakedown
 
 *Logged Jul 2026 after a day of real use.* Almost every bug found that

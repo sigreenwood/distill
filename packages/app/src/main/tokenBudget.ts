@@ -31,3 +31,22 @@ export function estimateTokenBudget(
     contextWindow,
   };
 }
+
+/** Smallest num_ctx this app will ever request, regardless of how short the input is. */
+export const MIN_ADAPTIVE_CONTEXT = 8192;
+/** Rounding granularity for the adaptive value, so nearby transcript lengths converge on the same number rather than each provoking a distinct Ollama (re)allocation. */
+const ADAPTIVE_CONTEXT_STEP = 4096;
+
+/**
+ * Size num_ctx to what one summarise call actually needs instead of
+ * always allocating `ceiling`'s full KV cache, even for a 10-minute
+ * meeting. Still bounded by `ceiling` — a transcript that needs more
+ * than that relies on the existing truncation warning exactly as
+ * before; this never raises the effective limit, only lowers the
+ * typical cost of staying under it. See OllamaConfig.adaptiveContextWindow.
+ */
+export function computeAdaptiveContextWindow(estimatedInputTokens: number, ceiling: number): number {
+  const needed = estimatedInputTokens + OUTPUT_TOKEN_RESERVE;
+  const rounded = Math.ceil(needed / ADAPTIVE_CONTEXT_STEP) * ADAPTIVE_CONTEXT_STEP;
+  return Math.min(ceiling, Math.max(MIN_ADAPTIVE_CONTEXT, rounded));
+}

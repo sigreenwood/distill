@@ -449,16 +449,96 @@ Limitations worth retaining:
   `complete`/`skipped`) is refused outright rather than queued — the
   version stays logged and can be activated once processing finishes.
 
+## Step 8 — adaptive context sizing: complete in source
+
+Checkpoint: the commit containing this update, titled
+`feat(ollama): size the context window to each transcript`.
+
+Came out of asking whether long-meeting chunking (item 7 from the
+original ten-item scope) was worth building. It wasn't reconsidered:
+split-and-remerge was already proposed and rejected once, documented in
+BACKLOG.md's "Truncation guard" entry, on the grounds that the
+bump-to-64k-and-warn fix was cheap and good enough. The follow-up
+question — would raising the ceiling further help — has a real but
+narrow answer: yes for the rare meeting that exceeds it, but
+`contextWindow` is one global number, so raising it raises the KV-cache
+memory cost of *every* summarise call, including a 10-minute one, not
+just the long ones. That's the same class of problem as the 27B-on-24GB
+swapping incident CLAUDE.md already documents (model size isn't the
+constraint; headroom is).
+
+What shipped instead is narrower than either option: size `num_ctx` to
+what each call actually needs, capped at the existing `contextWindow`
+ceiling, rather than raising that ceiling at all.
+
+- `main/tokenBudget.ts`: `computeAdaptiveContextWindow(estimatedInputTokens, ceiling)`
+  — rounds up to a 4096-token step (so nearby transcript lengths
+  converge on one value instead of each provoking a distinct Ollama
+  reallocation), floors at 8192, caps at `ceiling`. Pure, tested.
+- `OllamaConfig.adaptiveContextWindow: boolean` (default `true`).
+  `contextWindow` itself is never rewritten either way — this only
+  changes which `num_ctx` value a given call sends. Settings →
+  Performance → "Size context to each meeting" toggles it; turning it
+  off restores the exact old behaviour (`num_ctx` always equals
+  `contextWindow`).
+- Wired into both places that resummarise a full transcript:
+  `pipelineSteps.ts`'s `doSummarise` (the normal pipeline) and
+  `summaryVersions.ts`'s `generateSummaryVersion` (Step 7's "generate an
+  alternative"). The existing truncation-warning check
+  (`estimateTokenBudget`) is unchanged — it already checks against the
+  ceiling, and the adaptive value is never larger than the ceiling, so
+  the warning still fires at exactly the same point it always did.
+
+Also discussed this session, deliberately **not changed**: making
+`temperature` (currently hardcoded default `0`) configurable up to 0.3.
+`CLAUDE.md` already documents why 0 is a settled constraint, not an
+oversight — at 0.3, four runs of the same transcript agreed on only 18%
+of named entities. Exposing a slider up to 0.3 would let that regression
+back in by hand. `temperature` is technically still readable from
+`config.json` (`cfg.ollama?.temperature ?? 0`, same as before) for
+advanced/debugging use, but no Settings UI was added for it, on purpose.
+
+Verification: 216 tests (11 new — `computeAdaptiveContextWindow` and
+`estimateTokenBudget`, the latter previously untested despite being
+load-bearing for the existing truncation warning; plus
+`normaliseConfig`'s new-field default/override/garbage-value handling,
+also a previously-untested function), both typechecks, production
+build. **Not exercised: the Settings checkbox or an actual varying
+`num_ctx` value against a running Ollama server** — same Node-version
+verification gap as every step this session; this one is also easy to
+confirm indirectly by watching the `numCtx` field now logged alongside
+"starting summarisation".
+
+Limitations worth retaining:
+
+- The adaptive value is recomputed fresh per call from the estimated
+  token count — there's no caching or reuse across calls, so back-to-back
+  summarise runs on similarly-sized transcripts each still go through
+  the same cheap arithmetic (not a real cost, just noting it's not
+  memoised).
+- Only `doSummarise` and `generateSummaryVersion` were touched.
+  `clientBrief.ts` also sends a variable-length input (concatenated
+  summaries, up to 48,000 chars) using the flat `contextWindow`, but its
+  own selection limits already bound it well under the default ceiling
+  — left as-is rather than adding adaptive sizing somewhere it wasn't
+  asked for and isn't clearly needed.
+- No new floor/ceiling configuration beyond the existing `contextWindow`
+  — `MIN_ADAPTIVE_CONTEXT` (8192) and the 4096 rounding step are
+  constants in `tokenBudget.ts`, not user-configurable. Revisit only if
+  real use shows the rounding granularity matters.
+
 ## Next step
 
-Later ideas, not implemented or fully specified: long-meeting
-chunking/coverage; idle/overnight processing; diagnostics and
-backup/restore. Source-linked audio is also later work. Decision
-supersession/versioning (see the register's limitations above), a
-tray-level completion pulse and native Dock switching (see Step 6's
-limitations), and a real side-by-side diff view or a retention policy
-for summary versions (see Step 7's limitations) are optional follow-ons
-to already-shipped steps, not required by them.
+Later ideas, not implemented or fully specified: idle/overnight
+processing; diagnostics and backup/restore. Source-linked audio is also
+later work. Decision supersession/versioning (see the register's
+limitations above), a tray-level completion pulse and native Dock
+switching (see Step 6's limitations), a real side-by-side diff view or
+a retention policy for summary versions (see Step 7's limitations), and
+configurable adaptive-context tuning (see Step 8's limitations) are
+optional follow-ons to already-shipped steps, not required by them.
+Long-meeting chunking (the original item 7) remains deliberately
+un-built — see Step 8 and BACKLOG.md's "Truncation guard" for why.
 
 No package has been installed or release published as part of this work.
 The known unrelated untracked files are intentionally left in the working
