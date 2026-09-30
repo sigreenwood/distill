@@ -1,0 +1,26 @@
+.distill-essence { display: inline-block; flex: none; vertical-align: middle; overflow: visible; }
+.distill-essence .essence__start { stop-color: var(--essence-start, #FFBE45); }
+.distill-essence .essence__end { stop-color: var(--essence-end, #D47506); }
+.distill-essence .essence__body { transform-origin: 128px 164px; }
+.distill-essence .essence__fill { fill: #fff; opacity: 0; transform-origin: 128px 236px; }
+.distill-essence .essence__glow { fill: none; stroke: #fff; stroke-width: 10; opacity: 0; transform-origin: 128px 164px; }
+.distill-essence[data-activity="downloading"] .essence__fill { opacity: .28; }
+.distill-essence[data-activity="downloading"][data-progress="indeterminate"] .essence__fill { animation: essence-fill 2.8s ease-in-out infinite; }
+.distill-essence[data-activity="transcribing"] .essence__quote-left { animation: essence-listen 1.6s ease-in-out infinite; }
+.distill-essence[data-activity="transcribing"] .essence__quote-right { animation: essence-listen 1.6s .8s ease-in-out infinite; }
+.distill-essence[data-activity="summarising"] .essence__glow { animation: essence-focus 2.4s ease-in-out infinite; }
+.distill-essence[data-activity="complete"] .essence__body { animation: essence-complete 1.8s ease-out both; }
+.distill-essence[data-activity="complete"] .essence__start { animation: essence-ready-start 1.8s ease-out both; }
+.distill-essence[data-activity="complete"] .essence__end { animation: essence-ready-end 1.8s ease-out both; }
+.distill-essence[data-activity="complete"] .essence__badge { animation: essence-badge-done 1.8s ease-out both; }
+@keyframes essence-fill { 0%, 10% { transform: scaleY(.12); } 85%, 100% { transform: scaleY(1); } }
+@keyframes essence-listen { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2.5px); } }
+@keyframes essence-focus { 0% { transform: scale(1.05); opacity: 0; } 35% { opacity: .28; } 100% { transform: scale(.48); opacity: 0; } }
+@keyframes essence-complete { 0%, 100% { transform: scale(1); } 22% { transform: scale(1.035); } 45% { transform: scale(1); } }
+@keyframes essence-ready-start { 0%, 42% { stop-color: #4ADE80; } 100% { stop-color: #FFBE45; } }
+@keyframes essence-ready-end { 0%, 42% { stop-color: #16A34A; } 100% { stop-color: #D47506; } }
+@keyframes essence-badge-done { 0%, 65% { opacity: 1; } 100% { opacity: 0; } }
+.distill-essence[data-motion="off"] * { animation: none !important; transform: none !important; }
+@media (prefers-reduced-motion: reduce) {
+ .distill-essence * { animation: none !important; transform: none !important; }
+}

@@ -144,6 +144,22 @@ limitations, including the still-open "Regenerate outputs" and
 
 ---
 
+## Essence branding — tray icon, app icon, in-app logo — complete in source
+
+*Sep 2026, from an externally-supplied "Essence asset pack" (an amber
+drop with quotation marks cut out).* Replaces the ad hoc microphone tray
+glyphs with the approved mark: five real tray states (idle, waiting,
+active, paused, error) plus an unused-for-now sixth (complete) asset,
+all black/alpha templates. Sets the .app bundle icon (`build/icon.icns`),
+previously unset. Adds an animated `EssenceLogo` React component to the
+Inbox window header, driven by the window's own already-fetched
+recordings list — no new IPC. See [HANDOFF.md](./HANDOFF.md) for exactly
+what was and wasn't wired up (native Dock switching and a tray-level
+completion pulse were deliberately left out this pass) and for the
+asset pack's own source location.
+
+---
+
 ## Silent degradation — the theme of the Jul 2026 shakedown
 
 *Logged Jul 2026 after a day of real use.* Almost every bug found that

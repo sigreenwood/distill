@@ -165,9 +165,11 @@ mac:
   # category for the installer UI
   category: public.app-category.productivity
 
-  # We don't ship a custom icon yet. electron-builder uses Electron's
-  # default if `icon` is unset. May want to set this later but it's
-  # not blocking.
+  # build/icon.icns — the Essence drop mark (see docs/app/HANDOFF.md).
+  # This is the static .app bundle icon (Finder, Get Info, the installer);
+  # it has no connection to the menu-bar tray icon or the (hidden) Dock
+  # icon at runtime, which are separate NativeImage code paths.
+  icon: build/icon.icns
 
 # .pkg-specific settings.
 pkg:

@@ -282,6 +282,105 @@ Limitations worth retaining:
   Stage 3 could eventually generate the `{from, to}` pairs this feature
   now knows how to apply and offer to remember.
 
+## Step 6 — Essence branding: complete in source
+
+Checkpoint: the commit containing this update, titled
+`feat(branding): incorporate the Essence logo pack`.
+
+Source: an externally-produced "Essence asset pack" (v1.1) — an editable
+amber-drop-with-quotation-marks mark, supplied as a full pack (React
+component, CSS, PNG/SVG/ICNS assets, a starting activity resolver, and
+its own README/IMPLEMENTATION/VALIDATION docs) via
+`~/Library/Mobile Documents/com~apple~CloudDocs/distill-essence-assets-v1-1`
+— an iCloud path, but only the pack lived there, not this repo; nothing
+was run from or referenced against that directory at runtime. Only the
+files actually wired up were copied into the repo; the rest of the pack
+(design/, tools/, reference/, preview.html, the wordmark SVG, per-state
+Dock PNGs, the raw colour/black/white master SVGs) was deliberately not
+copied in — no current UI slot uses them. Re-copy from the pack's
+`assets/`/`src/` if a future step needs them.
+
+- **Tray icon** (`main/tray.ts`): `resources/icons/trayTemplate*.png`
+  etc. (a plain microphone glyph) replaced by the pack's six
+  `Essence*Template.png`/`@2x` files — five wired up (idle, waiting,
+  active, paused, error), one copied but currently unused (complete;
+  see limitations). All are black/alpha templates now, so
+  `setTemplateImage(true)` applies unconditionally, unlike the old
+  scheme where only `idle` was a template and the rest were
+  pre-coloured. `TrayState` gained `'waiting'` as a real icon state
+  (previously only reflected in the tray title's digit, not the glyph)
+  and `'processing'` was renamed `'active'` to match the asset
+  filenames. `computeTrayState`'s precedence — error > paused > active >
+  waiting > idle — matches the asset pack's own stated precedence minus
+  the completion step. The tooltip now updates every rebuild (not just
+  on an icon change) so the specific phase behind a steady "active"
+  glyph is still visible on hover, reusing the existing
+  `humanProcessingLabel`.
+- **App bundle icon**: `build/icon.icns` (the pack's `Distill.icns`,
+  1024×1024, PNG-backed per the pack's own `VALIDATION.md` — its
+  `iconutil` step failed in the pack's build environment, so the icns
+  was written directly from PNG payloads instead of a full multi-size
+  iconset). `electron-builder.yml`'s `mac.icon` now points at it,
+  replacing the "we don't ship a custom icon yet" comment. This is the
+  Finder/Get Info/installer icon only — unrelated to the tray or Dock
+  NativeImages at runtime.
+- **In-app logo** (`renderer/essence/`): `EssenceLogo.tsx`, `essence.css`
+  and `tokens.ts` copied from the pack largely as-is (generic, no
+  repo-specific coupling). `activity.ts` was NOT copied verbatim — its
+  placeholder `phase` union was rewritten against real
+  `InboxItemDTO['status']` values (`shared/register.ts`-style pure
+  function + a thin DTO-mapping function, `resolveEssenceActivity` /
+  `signalsFromInbox`), and a new `useEssenceActivity.ts` hook (not from
+  the pack) tracks a row transitioning into `'complete'` across
+  `inbox.list()` refreshes to drive the one-shot 1.8s completion pulse,
+  expiring it with a timer the same way the pack's own `StatusExample.tsx`
+  demo does. Mounted in the Inbox window header (`renderer/inbox/main.tsx`),
+  22px, `decorative` (the "Inbox" text label stays, satisfying "keep
+  visible labels"). No new IPC: everything is derived from the window's
+  own already-fetched recordings list.
+
+Verification: 197 tests (7 new: `resolveEssenceActivity` precedence
+including the completion-TTL boundary, and `signalsFromInbox`'s
+derivation), both typechecks, production build (`essence.css` correctly
+bundled into the inbox chunk's CSS output). **Not exercised: the actual
+tray icon, app icon, or in-app logo inside a running/packaged app** —
+same Node-version constraint as Steps 4–5 (this session stayed on Node
+26; the project's native modules need Node 22). `npm run package` was
+not attempted either, for the same reason plus the fact that packaging
+signs nothing and installs into `/Applications` — not something to do
+speculatively. Before trusting this in real use: `npm run dev` under
+Node 22 and watch the tray icon change through at least one real
+download/transcribe/summarise cycle, one paused state, and one error;
+open the Inbox and confirm the header logo's colour matches; and after
+`npm run package`, check Finder/Get Info shows the new app icon.
+
+Limitations worth retaining:
+
+- **No native Dock icon switching.** The app calls `app.dock?.hide()` at
+  startup (`main/index.ts`) — there is no persistent Dock icon to
+  switch at runtime, so the pack's `electron/native-status.ts` Dock-image
+  example was not adapted or wired up. Per-state Dock PNGs were not
+  copied into the repo for the same reason (see the pack's own
+  `assets/app/*-512.png` if this ever changes).
+- **No tray-level completion pulse.** `EssenceCompleteTemplate.png`/`@2x`
+  were copied but nothing in `tray.ts` uses them yet. Detecting "a
+  recording just finished successfully" reliably from `tray.ts`'s own
+  polling would need new signal plumbing from the worker/pipeline
+  completion path (not just tray.ts) — a real code change to
+  higher-risk, currently-untested code (see CLAUDE.md's "Where the
+  risk is" — `ipc.ts` and by extension the worker it wires up). The
+  in-app logo *does* get this pulse, from the Inbox window's own
+  higher-fidelity, lower-risk signal (diffing its own polled list).
+- **No `paused` activity in the in-app logo.** The Inbox renderer has no
+  IPC channel exposing pause state today; `resolveEssenceActivity`
+  structurally supports `'paused'` (used by the tray, which does have
+  the signal) but the in-app resolver never produces it rather than
+  guessing. Adding this would need a new `Settings`/`app`-style IPC
+  channel plus a push event for live updates when pause is toggled from
+  the tray menu while the Inbox window is open.
+- Wordmark, wordmark lockups, and an About/Settings-window use of the
+  logo were not added — no such screen currently exists to put one in.
+
 ## Next step
 
 Later ideas, not implemented or fully specified: versioned
@@ -289,7 +388,9 @@ re-summarisation; long-meeting chunking/coverage; idle/overnight
 processing; diagnostics and backup/restore. Source-linked audio is also
 later work. Decision supersession/versioning (see the register's
 limitations above) could also extend that step rather than starting a
-new one.
+new one. A tray-level completion pulse and native Dock switching (see
+Step 6's limitations) are optional follow-ons to the branding work,
+not required by it.
 
 No package has been installed or release published as part of this work.
 The known unrelated untracked files are intentionally left in the working

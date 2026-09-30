@@ -13,7 +13,13 @@ import type { Logger } from './logger.js';
 import type { ProcessingSummary, RecordingStatus, State } from './state.js';
 import { TIP_JAR_URL } from './tipJar.js';
 
-export type TrayState = 'idle' | 'processing' | 'paused' | 'error';
+/**
+ * 'active' collapses downloading/transcribing/summarising/writing into one
+ * glyph — the Essence tray templates share a small activity dot for all
+ * three (see resources/icons/EssenceActiveTemplate.png); the exact phase
+ * is distinguished by the tooltip text instead (see humanProcessingLabel).
+ */
+export type TrayState = 'idle' | 'waiting' | 'active' | 'paused' | 'error';
 
 export type LastPollResult =
   | { kind: 'ok'; at: number }
@@ -45,14 +51,23 @@ export interface TrayHandle {
   destroy: () => void;
 }
 
+/**
+ * Precedence: an actionable error always wins (it needs the user to do
+ * something), then effective pause (nothing will move until unpaused),
+ * then whatever is actually running, then "something's waiting for you
+ * to tag it", then idle. There is no transient "just completed" tray
+ * state — see HANDOFF.md for why that's deliberately out of scope here.
+ */
 export function computeTrayState(inputs: {
   processingRunning: boolean;
   paused: boolean;
   errorCount: number;
+  waitingCount: number;
 }): TrayState {
-  if (inputs.processingRunning) return 'processing';
-  if (inputs.paused) return 'paused';
   if (inputs.errorCount > 0) return 'error';
+  if (inputs.paused) return 'paused';
+  if (inputs.processingRunning) return 'active';
+  if (inputs.waitingCount > 0) return 'waiting';
   return 'idle';
 }
 
@@ -83,11 +98,16 @@ export function createTray(ctx: TrayContext): TrayHandle {
       processingRunning: processing.running > 0,
       paused: anyPaused,
       errorCount: errors,
+      waitingCount: inbox,
     });
     if (nextState !== currentState) {
       tray.setImage(iconFor(nextState));
       currentState = nextState;
     }
+    // Tooltip updates every rebuild, not only on an icon change: the phase
+    // behind a steady 'active' glyph (downloading -> transcribing -> ...)
+    // still moves, and the tooltip is the only place that says which.
+    tray.setToolTip(`distill — ${trayTooltipLabel(nextState, processing, errors)}`);
     let title = '';
     if (inbox > 0) title += ` ${inbox}`;
     if (errors > 0) title += ' ⚠';
@@ -207,6 +227,21 @@ export function createTray(ctx: TrayContext): TrayHandle {
   };
 }
 
+function trayTooltipLabel(state: TrayState, processing: ProcessingSummary, errors: number): string {
+  switch (state) {
+    case 'error':
+      return `Needs attention (${errors} error${errors === 1 ? '' : 's'})`;
+    case 'paused':
+      return 'Paused';
+    case 'active':
+      return processing.currentStatus ? humanProcessingLabel(processing.currentStatus).replace('…', '') : 'Working';
+    case 'waiting':
+      return 'New recordings waiting';
+    case 'idle':
+      return 'Ready';
+  }
+}
+
 function statusLine(
   inbox: number,
   errors: number,
@@ -300,44 +335,54 @@ function formatRelative(epochMs: number): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
-const STATE_COLOUR: Record<Exclude<TrayState, 'idle'>, string> = {
-  processing: '#22c55e', // green-500
+// Fallback-only glyph colours, used solely when an Essence tray PNG is
+// missing from resources/icons (see loadTrayIcon). The real assets are
+// all black/alpha templates; this fallback still uses colour so a broken
+// install is at least visually distinguishable at a glance.
+const STATE_COLOUR: Record<Exclude<TrayState, 'idle' | 'waiting'>, string> = {
+  active: '#22c55e', // green-500
   paused: '#f59e0b', // amber-500
   error: '#ef4444', // red-500
 };
 
 const PNG_FILENAME: Record<TrayState, string> = {
-  idle: 'trayTemplate.png',
-  processing: 'trayProcessing.png',
-  paused: 'trayPaused.png',
-  error: 'trayError.png',
+  idle: 'EssenceIdleTemplate.png',
+  waiting: 'EssenceWaitingTemplate.png',
+  active: 'EssenceActiveTemplate.png',
+  paused: 'EssencePausedTemplate.png',
+  error: 'EssenceErrorTemplate.png',
 };
 
+/**
+ * Every Essence tray PNG is a black/alpha template — unlike the old
+ * mic-glyph set, none of them carry colour, so setTemplateImage applies
+ * unconditionally and macOS handles light/dark menu bars itself.
+ */
 function loadTrayIcon(resourcesDir: string, state: TrayState, logger?: Logger): NativeImage {
   const filename = PNG_FILENAME[state];
   const iconPath = path.join(resourcesDir, 'icons', filename);
   const fromFile = nativeImage.createFromPath(iconPath);
   if (!fromFile.isEmpty()) {
-    if (state === 'idle') fromFile.setTemplateImage(true);
+    fromFile.setTemplateImage(true);
     return fromFile;
   }
   logger?.warn(
     { state, iconPath },
-    `Tray icon PNG not found. Run: python3 scripts/generate-tray-icons.py (from packages/app) to generate all four state icons at 22px + @2x.`,
+    'Tray icon PNG not found in resources/icons — falling back to a plain glyph. Re-copy the Essence asset pack\'s tray/ files into resources/icons/.',
   );
-  return renderMicrophoneIconSvg(state, logger);
+  return renderFallbackIconSvg(state, logger);
 }
 
-function renderMicrophoneIconSvg(state: TrayState, logger?: Logger): NativeImage {
-  const isTemplate = state === 'idle';
-  const fill = isTemplate ? 'black' : STATE_COLOUR[state as Exclude<TrayState, 'idle'>];
+function renderFallbackIconSvg(state: TrayState, logger?: Logger): NativeImage {
+  const isTemplate = state === 'idle' || state === 'waiting';
+  const fill = isTemplate ? 'black' : STATE_COLOUR[state];
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><rect x="5" y="1.5" width="6" height="9" rx="3" fill="${fill}"/><path d="M3 7.5 v1 a5 5 0 0 0 10 0 v-1" stroke="${fill}" stroke-width="1.5" fill="none" stroke-linecap="round"/><rect x="7" y="13" width="2" height="2" fill="${fill}"/></svg>`;
   const dataUrl = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
   const img = nativeImage.createFromDataURL(dataUrl);
   if (img.isEmpty()) {
     logger?.warn(
       { state, svgLen: svg.length },
-      'tray icon: SVG fallback also produced an empty NativeImage. Run the Python generator to produce PNG files (see previous warning).',
+      'tray icon: SVG fallback also produced an empty NativeImage.',
     );
     return nativeImage.createEmpty();
   }

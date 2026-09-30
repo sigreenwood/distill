@@ -1,4 +1,7 @@
 import { MeetingSearch } from './MeetingSearch.js';
+import { EssenceLogo } from '../essence/EssenceLogo.js';
+import { useEssenceActivity } from '../essence/useEssenceActivity.js';
+import type { EssenceActivity } from '../essence/tokens.js';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type {
@@ -293,6 +296,7 @@ function Inbox() {
   }, []);
 
   const sections = useMemo(() => bucket(state), [state]);
+  const { activity, completionKey } = useEssenceActivity(state.kind === 'ready' ? state.recordings : []);
 
   const shellProps = {
     refreshing,
@@ -307,6 +311,8 @@ function Inbox() {
     tipJar,
     onDismissTipJar,
     onOpenTipJar,
+    activity,
+    completionKey,
   };
 
   if (state.kind === 'loading') {
@@ -611,6 +617,8 @@ interface ShellProps {
   tipJar: TipJarStatusDTO | null;
   onDismissTipJar: () => Promise<void>;
   onOpenTipJar: () => void;
+  activity: EssenceActivity;
+  completionKey: string;
   children: React.ReactNode;
 }
 
@@ -639,6 +647,7 @@ function Shell(props: ShellProps) {
           gap: 8,
         }}
       >
+        <EssenceLogo activity={props.activity} completionKey={props.completionKey} size={22} decorative />
         <div style={{ fontWeight: 600 }}>Inbox</div>
         <div className="muted" style={{ marginLeft: 'auto', fontSize: 11 }}>
           {props.total > 0 ? `${props.total} total` : ''}
