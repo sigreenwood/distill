@@ -50,6 +50,9 @@ describe('PlaudClient', () => {
     const recs = await client.listRecordings();
     expect(recs).toHaveLength(1);
     expect(recs[0].id).toBe('rec1');
+    expect(mockFetch.mock.calls[0][0]).toContain(
+      '/file/simple/web?skip=0&limit=99999&is_trash=2&sort_by=start_time&is_desc=true',
+    );
   });
 
   it('gets recording detail with transcript', async () => {
@@ -155,5 +158,17 @@ describe('PlaudClient', () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 403, json: async () => ({}) });
 
     await expect(client.listRecordings()).rejects.toThrow('403');
+  });
+
+  it('explains an HTML response instead of exposing a JSON parse error', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError(`Unexpected token '<'`);
+      },
+    });
+
+    await expect(client.listRecordings()).rejects.toThrow(/non-JSON response.*sign in again/i);
   });
 });

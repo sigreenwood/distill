@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { BrowserWindow, screen, type Rectangle } from 'electron';
 import { Channels } from '../shared/ipcChannels.js';
+import type { SearchScope } from '../shared/search.js';
 
 export interface WindowsContext {
   preloadPath: string;
@@ -10,14 +11,17 @@ export interface WindowsContext {
   rendererDistDir: string;
 }
 
-type RendererEntry = 'inbox' | 'tag' | 'settings' | 'setup';
+type RendererEntry = 'inbox' | 'tag' | 'settings' | 'setup' | 'history' | 'reader' | 'brief';
 
 let ctx: WindowsContext | null = null;
 let inboxWin: BrowserWindow | null = null;
 let tagWin: BrowserWindow | null = null;
 let settingsWin: BrowserWindow | null = null;
 let setupWin: BrowserWindow | null = null;
+let historyWin: BrowserWindow | null = null;
+let briefWin: BrowserWindow | null = null;
 let pendingFocusId: string | null = null;
+const readerWindows = new Map<string, BrowserWindow>();
 
 export function configureWindows(c: WindowsContext): void {
   ctx = c;
@@ -75,7 +79,10 @@ export function openTagSheet(recordingId: string): void {
   }
   tagWin = new BrowserWindow({
     width: 420,
-    height: 420,
+    // Taller than 560 to fit the clipboard offer and past-attendee chips
+    // under the attendees box. The body scrolls if a long list still
+    // doesn't fit.
+    height: 640,
     show: false,
     frame: false,
     resizable: false,
@@ -105,14 +112,45 @@ export function openTagSheet(recordingId: string): void {
 }
 
 export function closeAll(): void {
+  for (const win of readerWindows.values()) if (!win.isDestroyed()) win.close();
+  readerWindows.clear();
   if (inboxWin && !inboxWin.isDestroyed()) inboxWin.close();
   if (tagWin && !tagWin.isDestroyed()) tagWin.close();
   if (settingsWin && !settingsWin.isDestroyed()) settingsWin.close();
   if (setupWin && !setupWin.isDestroyed()) setupWin.close();
+  if (historyWin && !historyWin.isDestroyed()) historyWin.close();
+  if (briefWin && !briefWin.isDestroyed()) briefWin.close();
+  briefWin = null;
   inboxWin = null;
   tagWin = null;
   settingsWin = null;
   setupWin = null;
+  historyWin = null;
+}
+
+export function openMeetingReader(recordingId: string, scope: SearchScope = 'summary'): void {
+  if (!ctx) throw new Error('configureWindows must be called first');
+  const hash = `#${new URLSearchParams({ recordingId, scope })}`;
+  const existing = readerWindows.get(recordingId);
+  if (existing && !existing.isDestroyed()) {
+    void loadRendererEntry(existing, 'reader', hash);
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    return;
+  }
+  const win = new BrowserWindow({
+    width: 900, height: 740, minWidth: 480, minHeight: 400,
+    show: false, resizable: true, title: 'distill — Meeting',
+    webPreferences: {
+      preload: ctx.preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: false,
+    },
+  });
+  readerWindows.set(recordingId, win);
+  centreOnCursorDisplay(win);
+  void loadRendererEntry(win, 'reader', hash);
+  win.once('ready-to-show', () => { win.show(); win.focus(); });
+  win.on('closed', () => { readerWindows.delete(recordingId); });
 }
 
 export function openSettings(opts?: { initialTab?: string }): void {
@@ -152,6 +190,76 @@ export function openSettings(opts?: { initialTab?: string }): void {
   });
   settingsWin.on('closed', () => {
     settingsWin = null;
+  });
+}
+
+export function openHistory(): void {
+  if (!ctx) throw new Error('configureWindows must be called first');
+  if (historyWin && !historyWin.isDestroyed()) {
+    historyWin.show();
+    historyWin.focus();
+    return;
+  }
+  historyWin = new BrowserWindow({
+    width: 700,
+    height: 600,
+    show: false,
+    // Unlike the other windows, a searchable list wants room to grow.
+    resizable: true,
+    minWidth: 480,
+    minHeight: 360,
+    fullscreenable: false,
+    title: 'distill — History',
+    webPreferences: {
+      preload: ctx.preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  centreOnCursorDisplay(historyWin);
+  void loadRendererEntry(historyWin, 'history');
+  historyWin.once('ready-to-show', () => {
+    historyWin?.show();
+    historyWin?.focus();
+  });
+  historyWin.on('closed', () => {
+    historyWin = null;
+  });
+}
+
+/** Client preparation brief — see clientBrief.ts. */
+export function openClientBrief(): void {
+  if (!ctx) throw new Error('configureWindows must be called first');
+  if (briefWin && !briefWin.isDestroyed()) {
+    briefWin.show();
+    briefWin.focus();
+    return;
+  }
+  briefWin = new BrowserWindow({
+    width: 760,
+    height: 760,
+    show: false,
+    resizable: true,
+    minWidth: 520,
+    minHeight: 420,
+    fullscreenable: false,
+    title: 'distill — Client brief',
+    webPreferences: {
+      preload: ctx.preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  centreOnCursorDisplay(briefWin);
+  void loadRendererEntry(briefWin, 'brief');
+  briefWin.once('ready-to-show', () => {
+    briefWin?.show();
+    briefWin?.focus();
+  });
+  briefWin.on('closed', () => {
+    briefWin = null;
   });
 }
 

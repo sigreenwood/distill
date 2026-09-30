@@ -31,6 +31,8 @@ export interface TrayContext {
   /** Clear every errored recording (marks them skipped). */
   onDismissErrors?: () => void;
   onOpenSettings: () => void;
+  onOpenHistory: () => void;
+  onOpenClientBrief: () => void;
   onSyncNow: () => Promise<void> | void;
   onPauseChange: (next: PauseConfig) => void;
 }
@@ -134,6 +136,14 @@ export function createTray(ctx: TrayContext): TrayHandle {
       {
         label: 'Settings…',
         click: () => ctx.onOpenSettings(),
+      },
+      {
+        label: 'History…',
+        click: () => ctx.onOpenHistory(),
+      },
+      {
+        label: 'Client brief…',
+        click: () => ctx.onOpenClientBrief(),
       },
       {
         label: 'Open logs folder',

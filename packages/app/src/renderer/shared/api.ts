@@ -1,9 +1,14 @@
+import type { MeetingSearchResponse, SearchScope } from '../../shared/search.js';
+import type { MeetingDetail } from '../../shared/meeting.js';
 /**
  * Renderer-side view of the preload bridge (`window.distill`) and the
  * DTOs main sends over it. Kept in the renderer tree (not imported from
  * main) so tsconfig.web stays independent of Node types; shapes must
  * match main/ipc.ts DTO mappers.
  */
+
+import type { Attendee, FrequentAttendee } from '../../shared/attendees.js';
+export type { Attendee, FrequentAttendee };
 
 export type RecordingStatus =
   | 'inbox'
@@ -16,6 +21,8 @@ export type RecordingStatus =
   | 'error'
   | 'cancelled'
   | 'skipped';
+
+import type { BriefCandidate, ClientBrief } from '../../shared/brief';
 
 export type PipelineStep = 'download' | 'transcribe' | 'summarise' | 'write';
 
@@ -49,6 +56,10 @@ export interface InboxItemDTO {
   contextWindowAtSubmit: number | null;
   modelSnapshot: string | null;
   processedExternally: boolean;
+  /** Whether a "Full re-run" can re-transcribe this recording — a local audio file, or (Plaud only) a cloud copy to re-fetch. */
+  audioAvailable: boolean;
+  /** Effective per-destination targets: this row's override if it has one, else the current Settings -> Outputs default. */
+  outputTargets: { markdown: boolean; html: boolean; appleNote: boolean };
 }
 
 export interface ClientDTO {
@@ -107,12 +118,25 @@ export interface VocabularyFileDTO {
 
 export interface GeneralDTO {
   audioRetentionDays: number | null;
+  /** Minutes a completed recording stays in the Inbox's "Recent" section before it's auto-hidden. */
+  autoDismissCompleteMinutes: number;
+  /** Read from the OS, not from config — it can be changed in System Settings. */
+  launchAtLogin: boolean;
+  /**
+   * False when running unpackaged: the login item would point at the
+   * Electron dev binary rather than distill, so the toggle is inert.
+   */
+  launchAtLoginAvailable: boolean;
 }
 
 export interface PerformanceDTO {
   ollamaModel: string;
   ollamaKeepAlive: string;
   whisperModel: string;
+  transcriptionEngine: 'whisper' | 'parakeet';
+  parakeetModel: string;
+  /** Whether parakeet-mlx is importable in the venv right now — drives the Install button. */
+  parakeetInstalled: boolean;
 }
 
 export type PlaudStatusDTO =
@@ -156,12 +180,19 @@ export interface ModelPullProgressDTO {
   percent: number | null;
 }
 
+export interface ParakeetInstallProgressDTO {
+  phase: 'installing-packages' | 'verifying';
+  log?: { stream: 'stdout' | 'stderr'; text: string };
+}
+
 export interface VocabularyBudgetDTO {
+  /** Whisper's initial_prompt cap, in characters. */
   limit: number;
   used: number;
   hintsAvailable: number;
   hintsUsed: number;
-  droppedExamples: string[];
+  /** Every term that did not fit — these reach Whisper not at all. */
+  dropped: string[];
 }
 
 export interface SettingsDTO {
@@ -214,21 +245,55 @@ export interface SetupProgressDTO {
 }
 
 export interface DistillApi {
+  meeting: {
+    open(recordingId: string, scope?: SearchScope): Promise<void>;
+    get(recordingId: string): Promise<MeetingDetail>;
+  };
+  brief: {
+    /** The client's meetings in the period, newest first. */
+    listMeetings(clientId: string, sinceDays: number | null): Promise<BriefCandidate[]>;
+    generate(payload: { clientId: string; recordingIds: string[] }): Promise<ClientBrief>;
+    cancel(): Promise<void>;
+  };
   inbox: {
+    search(query: string, scope: SearchScope): Promise<MeetingSearchResponse>;
     list(): Promise<InboxItemDTO[]>;
     skip(recordingId: string): Promise<void>;
     revealInFinder(recordingId: string): Promise<void>;
     revealOutput(recordingId: string, kind: 'markdown' | 'html' | 'appleNote'): Promise<void>;
     listHidden(): Promise<{ total: number; items: InboxItemDTO[] }>;
     unhide(recordingId: string): Promise<{ status: RecordingStatus }>;
+    setOutputTargets(
+      recordingId: string,
+      targets: { markdown: boolean; html: boolean; appleNote: boolean },
+    ): Promise<void>;
   };
   pipeline: {
     cancel(recordingId: string): Promise<void>;
     retry(recordingId: string): Promise<void>;
+    fullRerun(recordingId: string): Promise<{ started: boolean }>;
+  };
+  history: {
+    list(payload: {
+      search?: string;
+      limit?: number;
+      offset?: number;
+    }): Promise<{ total: number; items: InboxItemDTO[] }>;
   };
   tag: {
     open(recordingId: string): Promise<void>;
-    save(payload: { recordingId: string; clientId: string; meetingTypeId: string }): Promise<void>;
+    save(payload: {
+      recordingId: string;
+      clientId: string;
+      meetingTypeId: string;
+      attendees?: Attendee[];
+    }): Promise<void>;
+    /** People from this client's past meetings, most frequent first. */
+    frequentAttendees(clientId: string): Promise<FrequentAttendee[]>;
+    /** A client id when attendees' email domains clearly point to one. */
+    suggestClient(attendees: Attendee[]): Promise<string | null>;
+    /** Addresses found on the clipboard, if any. */
+    clipboardAttendees(): Promise<Attendee[]>;
     getSheetRecordingId(): string | null;
   };
   clients: {
@@ -255,7 +320,13 @@ export interface DistillApi {
     saveVocabulary(payload: { scopeId: string; file: VocabularyFileDTO }): Promise<VocabularyScopeDTO>;
     importVocabulary(scopeId: string): Promise<VocabularyFileDTO | null>;
     exportVocabulary(scopeId: string): Promise<{ path: string } | null>;
-    saveGeneral(payload: GeneralDTO): Promise<void>;
+    /** Budget for hints currently in the editor, saved or not. */
+    previewVocabularyBudget(payload: {
+      scopeId: string;
+      hints: string[];
+    }): Promise<VocabularyBudgetDTO>;
+    /** Resolves with the state that actually applied, which may differ from the request. */
+    saveGeneral(payload: GeneralDTO): Promise<GeneralDTO>;
     savePerformance(payload: PerformanceDTO): Promise<void>;
     listOllamaModels(): Promise<OllamaModelsDTO>;
     browseFolder(currentPath?: string): Promise<string | null>;
@@ -263,6 +334,7 @@ export interface DistillApi {
     revealPath(dir: string): Promise<void>;
     dismissModelSuggestion(): Promise<void>;
     pullModel(model: string): Promise<{ ok: true } | { ok: false; error: string }>;
+    installParakeet(): Promise<{ ok: true } | { ok: false; error: string }>;
   };
   sources: {
     signInPlaud(payload: { email: string; password: string; region: string }): Promise<PlaudStatusDTO>;
@@ -285,6 +357,7 @@ export interface DistillApi {
   onLocalImportProgress(handler: (p: LocalImportProgressDTO) => void): () => void;
   onSetupProgress(handler: (e: SetupProgressDTO) => void): () => void;
   onModelPullProgress(handler: (p: ModelPullProgressDTO) => void): () => void;
+  onParakeetInstallProgress(handler: (p: ParakeetInstallProgressDTO) => void): () => void;
 }
 
 declare global {

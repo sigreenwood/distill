@@ -12,9 +12,11 @@ import { estimateTokenBudget } from './tokenBudget.js';
 import { writeOutputs } from './outputs.js';
 import { CancelledError, isCancelled, throwIfAborted } from './cancellation.js';
 import type { Logger } from './logger.js';
-import type { AppConfig } from './config.js';
+import type { AppConfig, OutputsConfig } from './config.js';
+import { effectiveOutputTargets } from './state.js';
 import type { RecordingRow, State } from './state.js';
 import type { OllamaClient } from './ollama.js';
+import { parseStoredAttendees, buildAttendeeRoster } from '../shared/attendees.js';
 
 /** The audio source the download step needs: just a temp-URL provider. */
 export interface AudioSource {
@@ -31,6 +33,16 @@ export interface PipelineContext {
   packageDir: string;
   appSupportDir?: string;
   isPackaged?: boolean;
+}
+
+/**
+ * Whether a recording's stored audio_path still points at a real file.
+ * Used to decide whether "full re-run" can go straight to transcribe, or
+ * (for Plaud recordings, which are never touched by audio retention) needs
+ * to fall back to re-downloading first.
+ */
+export function audioFileExists(row: Pick<RecordingRow, 'audio_path'>): boolean {
+  return row.audio_path !== null && fs.existsSync(row.audio_path);
 }
 
 export async function doDownload(id: string, signal: AbortSignal, ctx: PipelineContext): Promise<void> {
@@ -81,15 +93,55 @@ interface TranscribeOutput {
   };
 }
 
+/**
+ * The engine-specific slice of transcribe.py's CLI args — split out from
+ * doTranscribe so the "parakeet never gets --initial-prompt" rule (it has
+ * no prompt/hotword mechanism at all) is a pure, unit-testable function
+ * rather than something buried in a much larger one.
+ */
+export function buildTranscribeArgs(opts: {
+  engine: 'whisper' | 'parakeet';
+  whisperModel: string;
+  parakeetModel: string;
+  initialPrompt: string | null;
+}): string[] {
+  if (opts.engine === 'parakeet') {
+    return ['--engine', 'parakeet', '--parakeet-model', opts.parakeetModel];
+  }
+  const args = ['--whisper-model', opts.whisperModel];
+  if (opts.initialPrompt) args.push('--initial-prompt', opts.initialPrompt);
+  return args;
+}
+
 export async function doTranscribe(id: string, signal: AbortSignal, ctx: PipelineContext): Promise<void> {
   throwIfAborted(signal, 'transcribe');
   const row = ctx.state.getRecording(id);
   if (!row) throw new Error(`No such recording: ${id}`);
   if (!row.audio_path) throw new Error('Cannot transcribe without an audio file');
 
+  const attendees = parseStoredAttendees(row.attendees_json);
   const vocabularyDir = userVocabularyDir();
-  const vocab = loadVocabulary(vocabularyDir, row.client_id);
-  if (vocab.sources.length > 0) {
+  const vocab = loadVocabulary(
+    vocabularyDir,
+    row.client_id,
+    undefined,
+    attendees.map((a) => a.name),
+  );
+  const cfg = ctx.getConfig();
+
+  if (cfg.transcriptionEngine === 'parakeet') {
+    // Hints were still computed above (needed for vocab.replacements,
+    // which runs post-transcription regardless of engine) but never reach
+    // the subprocess — log that plainly rather than the usual
+    // hints-used/dropped breakdown, which would misleadingly imply they
+    // were attempted.
+    if (vocab.sources.length > 0 || attendees.length > 0) {
+      ctx.logger.info(
+        { id, sources: vocab.sources, attendeeNames: attendees.length, replacements: vocab.replacements.length },
+        'vocabulary loaded, but hints are not used — parakeet engine has no prompt/hotword mechanism (find-and-replace rules still apply)',
+      );
+    }
+  } else if (vocab.sources.length > 0) {
     ctx.logger.info(
       {
         id,
@@ -121,14 +173,19 @@ export async function doTranscribe(id: string, signal: AbortSignal, ctx: Pipelin
     }
   }
 
-  const cfg = ctx.getConfig();
   const pyBinary = resolvePythonBinary(ctx.packageDir);
   const script = bundledTranscribeScript();
-  const args = [script, '--audio', row.audio_path, '--whisper-model', cfg.whisperModel];
-  if (vocab.whisperPrompt) {
-    args.push('--initial-prompt', vocab.whisperPrompt);
-  }
-  ctx.logger.info({ id, pyBinary, model: cfg.whisperModel }, 'starting transcription');
+  const engineArgs = buildTranscribeArgs({
+    engine: cfg.transcriptionEngine,
+    whisperModel: cfg.whisperModel,
+    parakeetModel: cfg.parakeetModel,
+    initialPrompt: vocab.whisperPrompt || null,
+  });
+  const args = [script, '--audio', row.audio_path, ...engineArgs];
+  ctx.logger.info(
+    { id, pyBinary, engine: cfg.transcriptionEngine, model: cfg.transcriptionEngine === 'parakeet' ? cfg.parakeetModel : cfg.whisperModel },
+    'starting transcription',
+  );
   const proc = spawn(pyBinary, args, { signal });
   let stdout = '';
   let stderr = '';
@@ -210,8 +267,15 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
   const meetingType = ctx.state.getMeetingType(row.meeting_type_id);
   if (!meetingType) throw new Error(`Meeting type ${row.meeting_type_id} no longer exists`);
 
+  // The attendee roster (if any) goes in the user message ahead of the
+  // transcript, not the system prompt — meeting-type prompts are
+  // hash-tracked for the "modified from default" badge and must stay
+  // exactly what the meeting type says, independent of any one recording.
+  const roster = buildAttendeeRoster(parseStoredAttendees(row.attendees_json));
+  const userContent = roster ? `${roster}\n\n${row.transcript_text}` : row.transcript_text;
+
   const cfg = ctx.getConfig();
-  const budget = estimateTokenBudget(meetingType.prompt, row.transcript_text, cfg.ollama.contextWindow);
+  const budget = estimateTokenBudget(meetingType.prompt, userContent, cfg.ollama.contextWindow);
   if (budget.exceedsBudget) {
     ctx.logger.warn(
       {
@@ -240,8 +304,9 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
         model: cfg.ollama.model,
         messages: [
           { role: 'system', content: meetingType.prompt },
-          { role: 'user', content: row.transcript_text },
+          { role: 'user', content: userContent },
         ],
+        think: false,
         keep_alive: cfg.ollama.keepAlive,
         options: {
           num_ctx: cfg.ollama.contextWindow,
@@ -275,10 +340,16 @@ export async function doWriteOutputs(id: string, signal: AbortSignal, ctx: Pipel
   const row = ctx.state.getRecordingJoined(id);
   if (!row) throw new Error(`No such recording: ${id}`);
   if (!row.summary_text) throw new Error('Cannot write outputs without a summary');
-  const outputs = ctx.getConfig().outputs;
+  const globalOutputs = ctx.getConfig().outputs;
+  const targets = effectiveOutputTargets(row, globalOutputs);
+  const outputs: OutputsConfig = {
+    markdown: { ...globalOutputs.markdown, enabled: targets.markdown },
+    html: { ...globalOutputs.html, enabled: targets.html },
+    appleNotes: { ...globalOutputs.appleNotes, enabled: targets.appleNote },
+  };
   if (!outputs.markdown.enabled && !outputs.html.enabled && !outputs.appleNotes.enabled) {
     throw new Error(
-      'No output destinations are enabled. Open Settings and turn on at least one of Markdown, HTML, or Apple Notes.',
+      'No output destinations are enabled for this recording. Turn one on for this row, or in Settings → Outputs.',
     );
   }
   const skip = {

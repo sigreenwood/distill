@@ -14,7 +14,18 @@ export type VenvStatus =
   | { kind: 'missing' }
   | { kind: 'broken'; reason: string }
   | { kind: 'wrong-version'; pythonPath: string; foundVersion: string }
-  | { kind: 'incomplete'; pythonPath: string; pythonVersion: string };
+  | { kind: 'incomplete'; pythonPath: string; pythonVersion: string; reason: string };
+
+/**
+ * How long the startup import check may take. distill launches at login,
+ * when importing mlx and onnxruntime means paging them in from a cold
+ * disk while everything else is starting too. That was measured at
+ * 10–12s on a machine where the same import takes ~1.2s warm — so the
+ * old 10s limit failed on nearly every login, and the app sat in the
+ * setup window instead of processing recordings. The check only runs
+ * once, before any window exists, so waiting longer costs nothing.
+ */
+export const IMPORT_CHECK_TIMEOUT_MS = 60_000;
 
 export type SystemPythonResult =
   | { kind: 'found'; path: string; version: string }
@@ -68,12 +79,37 @@ export function detectVenv(): VenvStatus {
   // window, which pip-installs the current requirements.txt.
   const importResult = spawnSync(py, ['-c', 'import mlx_whisper, onnxruntime'], {
     encoding: 'utf-8',
-    timeout: 10_000,
+    timeout: IMPORT_CHECK_TIMEOUT_MS,
   });
   if (importResult.status !== 0) {
-    return { kind: 'incomplete', pythonPath: py, pythonVersion: versionLine };
+    return {
+      kind: 'incomplete',
+      pythonPath: py,
+      pythonVersion: versionLine,
+      reason: describeImportFailure(importResult),
+    };
   }
   return { kind: 'ready', pythonPath: py, pythonVersion: versionLine };
+}
+
+/**
+ * Why the import check failed, for the log. A timeout and a missing
+ * package both land in the setup window, but only one of them means
+ * anything is actually wrong with the environment.
+ */
+export function describeImportFailure(r: {
+  status: number | null;
+  signal?: NodeJS.Signals | null;
+  error?: Error;
+  stderr?: string | null;
+}): string {
+  if ((r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') {
+    return `import check timed out after ${IMPORT_CHECK_TIMEOUT_MS / 1000}s`;
+  }
+  if (r.error) return `import check could not run: ${r.error.message}`;
+  if (r.status === null) return `import check killed by ${r.signal ?? 'a signal'}`;
+  const lastLine = (r.stderr ?? '').trim().split('\n').pop() ?? '';
+  return lastLine ? `import failed: ${lastLine}` : `import exited ${r.status}`;
 }
 
 export function detectSystemPython(): SystemPythonResult {
@@ -180,6 +216,69 @@ export async function installVenv(opts: InstallVenvOptions): Promise<InstallVenv
       message:
         'Install completed but importing mlx_whisper / onnxruntime still failed. ' +
         verifyResult.message,
+    };
+  }
+  return { kind: 'success', pythonPath: venvPython() };
+}
+
+/**
+ * Whether parakeet-mlx is importable in the venv. Unlike mlx_whisper /
+ * onnxruntime (checked by detectVenv), this is never part of the base
+ * install — it's an optional, user-toggled engine (see
+ * Settings -> Performance), so a missing import here is a normal state,
+ * not a broken venv.
+ */
+export function isParakeetInstalled(): boolean {
+  const py = venvPython();
+  if (!fs.existsSync(py)) return false;
+  const result = spawnSync(py, ['-c', 'import parakeet_mlx'], { timeout: 5000 });
+  return !result.error && result.status === 0;
+}
+
+export interface InstallParakeetOptions {
+  signal?: AbortSignal;
+  onProgress: (e: SetupProgressEvent) => void;
+  logger?: Logger;
+}
+
+/**
+ * pip-install parakeet-mlx into the existing venv and verify it imports.
+ * Reuses spawnLineByLine exactly as installVenv does for the base
+ * install — the 'installing-packages'/'verifying' phase labels were named
+ * for the full venv setup but apply just as well to installing one more
+ * package into an already-working venv.
+ */
+export async function installParakeet(opts: InstallParakeetOptions): Promise<InstallVenvResult> {
+  const { signal, onProgress, logger } = opts;
+  if (!fs.existsSync(venvPython())) {
+    return { kind: 'failed', phase: 'installing-packages', message: 'No venv found — run setup first.' };
+  }
+
+  onProgress({ phase: 'installing-packages' });
+  logger?.info({ python: venvPython() }, 'installing parakeet-mlx');
+  const pipResult = await spawnLineByLine(
+    venvPython(),
+    ['-m', 'pip', 'install', '--no-input', '--disable-pip-version-check', 'parakeet-mlx'],
+    { signal, onProgress, phase: 'installing-packages' },
+  );
+  if (pipResult.kind === 'cancelled') return { kind: 'cancelled' };
+  if (pipResult.kind === 'failed') {
+    return { kind: 'failed', phase: 'installing-packages', message: pipResult.message };
+  }
+
+  onProgress({ phase: 'verifying' });
+  logger?.info('verifying parakeet_mlx import');
+  const verifyResult = await spawnLineByLine(
+    venvPython(),
+    ['-c', 'import parakeet_mlx; print("ok")'],
+    { signal, onProgress, phase: 'verifying' },
+  );
+  if (verifyResult.kind === 'cancelled') return { kind: 'cancelled' };
+  if (verifyResult.kind === 'failed') {
+    return {
+      kind: 'failed',
+      phase: 'verifying',
+      message: 'Install completed but importing parakeet_mlx still failed. ' + verifyResult.message,
     };
   }
   return { kind: 'success', pythonPath: venvPython() };

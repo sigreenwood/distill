@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
 """
-transcribe.py — MLX Whisper transcription for distill.
+transcribe.py — MLX Whisper / Parakeet MLX transcription for distill.
 
 Input (CLI args):
     --audio <path>            path to the audio file
+    --engine <whisper|parakeet>  which ASR engine to use (default whisper)
     --whisper-model <id>      HuggingFace model id, e.g. mlx-community/whisper-large-v3-mlx
-    --language <lang>         optional two-letter language hint
+                               (required when --engine whisper)
+    --parakeet-model <id>     HuggingFace model id for Parakeet MLX
+                               (default mlx-community/parakeet-tdt-0.6b-v3)
+    --language <lang>         optional two-letter language hint (whisper only)
+    --initial-prompt <text>   vocabulary primer (whisper only — see below)
     --no-vad                  disable Silero VAD speech gating
     --vad-threshold <p>       speech probability threshold (default 0.35)
 
 Output (stdout):
     A single JSON object with:
         text: the full transcript as plain text (paragraphs separated by blank lines)
-        language: detected language
-        model: model id used
+        language: detected language ("unknown" for parakeet, which doesn't report one)
+        model: model id actually used (whisper or parakeet, whichever ran)
         duration_seconds: audio duration (of the original file, pre-VAD)
         vad: {enabled, total_seconds, speech_seconds, speech_ratio,
               segments, removed_seconds} — present when VAD ran
@@ -22,14 +27,22 @@ Progress (stderr):
     One JSON line per update: {"phase": "transcribe", "progress": 0.42}
 
 v1 does not diarise. The transcript is a single continuous text, split into
-paragraphs on longer pauses between Whisper segments.
+paragraphs on longer pauses between segments.
 
 VAD: before transcription, Silero VAD (bundled silero_vad.onnx, run via
 onnxruntime) drops non-speech stretches. This removes the silence/noise
-regions where Whisper hallucinates, and cuts transcription time roughly in
+regions where the model hallucinates, and cuts transcription time roughly in
 proportion to the silence removed. If onnxruntime or the model file is
 missing, transcription proceeds without VAD (a warning goes to stderr) —
-old venvs keep working unchanged.
+old venvs keep working unchanged. Engine-agnostic: runs before either model.
+
+Parakeet MLX (--engine parakeet): an alternative, much faster ASR engine
+(NVIDIA Parakeet via https://github.com/senstella/parakeet-mlx). It has no
+prompt/hotword mechanism — --initial-prompt is accepted for CLI-contract
+symmetry but ignored (a warning is emitted) when this engine is selected.
+distill's vocabulary hints and pasted meeting attendees therefore do not
+bias Parakeet transcription; only the post-transcription find-and-replace
+rules still apply. See docs/app/BACKLOG.md.
 """
 
 from __future__ import annotations
@@ -66,10 +79,15 @@ VAD_MIN_SPEECH_SECONDS = 0.25    # shorter runs are discarded as blips
 VAD_JOIN_SILENCE_SECONDS = 2.0
 
 
+DEFAULT_PARAKEET_MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
+
+
 @dataclass
 class Args:
     audio: Path
-    whisper_model: str
+    engine: str
+    whisper_model: str | None
+    parakeet_model: str
     language: str | None
     initial_prompt: str | None
     vad: bool
@@ -77,19 +95,32 @@ class Args:
 
 
 def parse_args(argv: list[str]) -> Args:
-    p = argparse.ArgumentParser(description="Transcribe an audio file with MLX Whisper.")
+    p = argparse.ArgumentParser(description="Transcribe an audio file with MLX Whisper or Parakeet MLX.")
     p.add_argument("--audio", required=True, type=Path, help="Path to the audio file")
     p.add_argument(
-        "--whisper-model",
-        required=True,
-        help="MLX Whisper HuggingFace model id",
+        "--engine",
+        choices=["whisper", "parakeet"],
+        default="whisper",
+        help="ASR engine to use (default %(default)s)",
     )
-    p.add_argument("--language", default=None, help="Optional language hint (e.g. 'en')")
+    p.add_argument(
+        "--whisper-model",
+        default=None,
+        help="MLX Whisper HuggingFace model id (required when --engine whisper)",
+    )
+    p.add_argument(
+        "--parakeet-model",
+        default=DEFAULT_PARAKEET_MODEL,
+        help="Parakeet MLX HuggingFace model id (default %(default)s)",
+    )
+    p.add_argument("--language", default=None, help="Optional language hint (e.g. 'en'); whisper only")
     p.add_argument(
         "--initial-prompt",
         default=None,
         help="Optional vocabulary primer biasing Whisper's recognition. Typically a"
-        " short list of domain-specific proper nouns / acronyms the speaker uses.",
+        " short list of domain-specific proper nouns / acronyms the speaker uses."
+        " Ignored (with a warning) when --engine parakeet — Parakeet MLX has no"
+        " prompt/hotword mechanism.",
     )
     p.add_argument(
         "--no-vad",
@@ -103,9 +134,13 @@ def parse_args(argv: list[str]) -> Args:
         help="Speech probability threshold for VAD (default %(default)s)",
     )
     ns = p.parse_args(argv)
+    if ns.engine == "whisper" and not ns.whisper_model:
+        p.error("--whisper-model is required when --engine whisper")
     return Args(
         audio=ns.audio,
+        engine=ns.engine,
         whisper_model=ns.whisper_model,
+        parakeet_model=ns.parakeet_model,
         language=ns.language,
         initial_prompt=ns.initial_prompt,
         vad=not ns.no_vad,
@@ -279,19 +314,29 @@ def flatten_segments_to_paragraphs(segments: list[dict]) -> str:
 
 
 def decode_audio(path: Path) -> "np.ndarray":
-    """Decode to float32 mono 16k.
+    """Decode to float32 mono 16k, always as a real numpy array.
 
     Primary path is mlx_whisper's ffmpeg-based loader (identical samples
     to what plain `mlx_whisper.transcribe(path)` would see). Machines
     without the ffmpeg CLI fall back to soundfile (libsndfile handles
     mp3/wav/flac/ogg) with linear resampling to 16k — slightly lower
     resample quality, but it beats not transcribing at all.
+
+    load_audio returns an mlx.core.array, not numpy — silently different
+    from the soundfile fallback's real np.ndarray. VAD (SileroVad.speech_probs,
+    onnxruntime) requires actual numpy and fails with a TypeError on
+    mx.array's .astype() (it wants an mx.Dtype, not a numpy dtype class).
+    Discovered because that failure is caught and downgraded to "transcribing
+    without VAD" (apply_vad must never take transcription down with it) —
+    so on any machine with ffmpeg installed, VAD was silently never running
+    at all. Converting here, once, keeps every downstream consumer (VAD,
+    both ASR engines) on one real type.
     """
     import numpy as np
     from mlx_whisper.audio import load_audio
 
     try:
-        return load_audio(str(path))
+        return np.asarray(load_audio(str(path)))
     except FileNotFoundError:
         emit_warning("ffmpeg not found — decoding with soundfile instead.")
     except Exception as e:
@@ -315,12 +360,17 @@ def transcribe(args: Args) -> dict:
     if not args.audio.exists():
         raise FileNotFoundError(f"Audio file not found: {args.audio}")
 
-    # Import here (not at module top) so that `--help` and argument parsing
-    # stay fast and don't require mlx to be installed just to print help.
-    import mlx_whisper
+    if args.initial_prompt and args.engine == "parakeet":
+        emit_warning(
+            "--initial-prompt was given but --engine is parakeet — Parakeet MLX has no"
+            " prompt/hotword mechanism, so vocabulary hints and pasted attendees will not"
+            " bias this transcription. Ignoring."
+        )
 
-    # Decode once so VAD and Whisper share the same samples and the
-    # original file is never modified.
+    # Decode once so VAD and the ASR model share the same samples and the
+    # original file is never modified. Always via mlx_whisper's loader
+    # (mlx-whisper is a base dependency regardless of --engine) so decoding
+    # is identical either way.
     audio = decode_audio(args.audio)
     original_duration = len(audio) / WHISPER_SAMPLE_RATE
 
@@ -340,6 +390,35 @@ def transcribe(args: Args) -> dict:
             emit_warning(f"VAD failed ({e}) — transcribing without VAD.")
 
     emit_progress("transcribe", 0.0)
+
+    if args.engine == "parakeet":
+        text, model_used, language = transcribe_parakeet(audio, args)
+    else:
+        text, model_used, language = transcribe_whisper(audio, args)
+
+    emit_progress("transcribe", 1.0)
+
+    out: dict = {
+        "text": text,
+        "language": language,
+        "model": model_used,
+        # Duration of the source file, not the VAD-compacted audio —
+        # downstream consumers expect wall-clock meeting length.
+        "duration_seconds": round(original_duration, 2),
+    }
+    if vad_stats is not None:
+        out["vad"] = vad_stats
+    return out
+
+
+def transcribe_whisper(audio: "np.ndarray", args: Args) -> tuple[str, str, str]:
+    """Returns (text, model_id_used, language)."""
+    # Import here (not at module top) so that `--help` and argument parsing
+    # stay fast and don't require mlx_whisper to be installed just to print
+    # help, and so --engine parakeet never needs it importable at all.
+    import mlx_whisper
+
+    assert args.whisper_model is not None  # enforced in parse_args
 
     kwargs: dict = {}
     if args.language:
@@ -376,23 +455,54 @@ def transcribe(args: Args) -> dict:
         path_or_hf_repo=args.whisper_model,
         **kwargs,
     )
-
-    emit_progress("transcribe", 1.0)
-
     segments = result.get("segments", [])
     text = flatten_segments_to_paragraphs(segments)
+    return text, args.whisper_model, result.get("language", "unknown")
 
-    out: dict = {
-        "text": text,
-        "language": result.get("language", "unknown"),
-        "model": args.whisper_model,
-        # Duration of the source file, not the VAD-compacted audio —
-        # downstream consumers expect wall-clock meeting length.
-        "duration_seconds": round(original_duration, 2),
-    }
-    if vad_stats is not None:
-        out["vad"] = vad_stats
-    return out
+
+# Mirrors parakeet-mlx CLI's own --chunk-duration/--overlap-duration
+# defaults. These are NOT applied automatically by the Python API — unlike
+# the CLI, model.transcribe(path) with no kwargs tries to process the
+# entire file in one pass. Found the hard way: an unchunked ~94-minute
+# meeting blew past Metal's max buffer size (18.5GB requested vs a ~14GB
+# cap) and crashed outright. Passing these explicitly is load-bearing,
+# not a tuning knob.
+PARAKEET_CHUNK_DURATION_SECONDS = 120.0
+PARAKEET_OVERLAP_DURATION_SECONDS = 15.0
+
+
+def transcribe_parakeet(audio: "np.ndarray", args: Args) -> tuple[str, str, str]:
+    """Returns (text, model_id_used, language). Parakeet doesn't report a
+    detected language, so "unknown" is returned for parity with Whisper's
+    output contract rather than guessing.
+
+    Parakeet MLX's transcribe() takes a file path, not a raw array, so the
+    (possibly VAD-gated) audio is written to a temp WAV first — VAD itself
+    is engine-agnostic (see apply_vad) and applies here exactly as it does
+    for Whisper.
+    """
+    import tempfile
+
+    import soundfile as sf
+    from parakeet_mlx import from_pretrained
+
+    model = from_pretrained(args.parakeet_model)
+
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        sf.write(str(tmp_path), audio, WHISPER_SAMPLE_RATE)
+        result = model.transcribe(
+            str(tmp_path),
+            chunk_duration=PARAKEET_CHUNK_DURATION_SECONDS,
+            overlap_duration=PARAKEET_OVERLAP_DURATION_SECONDS,
+        )
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+
+    return result.text, args.parakeet_model, "unknown"
 
 
 def main() -> int:

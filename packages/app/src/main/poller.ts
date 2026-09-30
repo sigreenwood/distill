@@ -5,6 +5,16 @@ import type { Logger } from './logger.js';
 import type { State } from './state.js';
 
 const INITIAL_POLL_KEY = 'hasCompletedInitialPoll';
+const FULL_HISTORY_KEY = 'hasBackfilledFullHistory';
+
+/**
+ * How many recordings Plaud's list endpoint returned before
+ * listRecordings() asked for the full history. On the first poll after
+ * that change, unseen recordings outside the newest this-many (by start
+ * time) are treated as back catalogue. If the old listing wasn't the
+ * newest 1000, the cost is a few old recordings showing up in the inbox.
+ */
+export const LEGACY_LIST_LIMIT = 1000;
 
 export type PollResult =
   | { kind: 'ok'; newCount: number; totalSeen: number; at: number }
@@ -140,17 +150,31 @@ export class Poller {
         ? selectInitialInboxIds(all, this.opts.initialPollInboxCount?.() ?? 0)
         : null;
 
+      // The first poll after upgrading to the full-history listing sees,
+      // for the first time, every recording older than the old 1000-row
+      // window. They are back catalogue, not new: without this they would
+      // each land in the inbox with a "New recording" notification. The
+      // initial poll already skips back catalogue, so it needs no help.
+      const isBackfillPoll =
+        !isInitialPoll && this.opts.state.getAppState(FULL_HISTORY_KEY) !== 'true';
+      const legacyWindowIds = isBackfillPoll ? selectInitialInboxIds(all, LEGACY_LIST_LIMIT) : null;
+
       const fresh: PlaudRecording[] = [];
       let processedExternallyCount = 0;
+      let backfilledCount = 0;
       for (const r of all) {
         if (this.opts.state.recordingExists(r.id)) continue;
         const durationSeconds = typeof r.duration === 'number' ? Math.round(r.duration / 1000) : null;
+        const outsideLegacyWindow = legacyWindowIds !== null && !legacyWindowIds.has(r.id);
+        if (outsideLegacyWindow) backfilledCount += 1;
         const initialStatus =
-          initialInboxIds === null
-            ? ('inbox' as const)
-            : initialInboxIds.has(r.id)
+          outsideLegacyWindow
+            ? ('skipped' as const)
+            : initialInboxIds === null
               ? ('inbox' as const)
-              : ('skipped' as const);
+              : initialInboxIds.has(r.id)
+                ? ('inbox' as const)
+                : ('skipped' as const);
         const elsewhere = initialStatus === 'inbox' ? processedElsewhere.get(r.id) : undefined;
         const rowStatus = elsewhere ? ('complete' as const) : initialStatus;
         if (elsewhere) processedExternallyCount += 1;
@@ -188,6 +212,16 @@ export class Poller {
           processed_externally: elsewhere ? 1 : 0,
         });
         if (rowStatus === 'inbox') fresh.push(r);
+      }
+
+      if (isInitialPoll || isBackfillPoll) {
+        this.opts.state.setAppState(FULL_HISTORY_KEY, 'true');
+      }
+      if (isBackfillPoll && backfilledCount > 0) {
+        this.opts.logger.info(
+          { backfilled: backfilledCount, totalSeen: all.length },
+          'full-history backfill — older recordings added as hidden',
+        );
       }
 
       if (isInitialPoll) {

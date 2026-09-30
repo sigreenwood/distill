@@ -2,6 +2,10 @@
   "name": "distill",
   "private": true,
   "workspaces": ["packages/*"],
+  "engines": {
+    "node": ">=20 <26",
+    "npm": ">=10"
+  },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest"

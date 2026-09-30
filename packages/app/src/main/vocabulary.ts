@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Logger } from './logger.js';
 
-const WHISPER_PROMPT_CHAR_LIMIT = 800;
+export const WHISPER_PROMPT_CHAR_LIMIT = 800;
 
 /**
  * Style anchor prepended to every transcription.
@@ -86,19 +86,38 @@ export interface LoadedVocabulary {
  * Missing files are fine; malformed JSON is an error the pipeline
  * surfaces.
  */
-export function loadVocabulary(vocabularyDir: string, clientId?: string | null): LoadedVocabulary {
+export function loadVocabulary(
+  vocabularyDir: string,
+  clientId?: string | null,
+  draft?: { scopeId: string; hints: string[] },
+  extraHints: string[] = [],
+): LoadedVocabulary {
   const sources: string[] = [];
-  const hints: string[] = [];
+  // extraHints (e.g. this recording's pasted attendee names) go first —
+  // more specific than even client-scope vocabulary, so they're the last
+  // thing dropped if the 800-char budget runs out. Not a vocabulary
+  // *file*, so they don't appear in `sources` (which stays about which
+  // scope files contributed, for the vocabulary_sources column).
+  const hints: string[] = [...extraHints];
   const replacements: VocabularyReplacement[] = [];
   const files: string[] = [];
   if (clientId) files.push(`${clientId}.json`);
   files.push('organisation.json', 'industry.json', 'global.json');
+  const draftFile = draft ? `${draft.scopeId}.json` : null;
+  // A draft scope counts even when its file does not exist yet, otherwise
+  // the budget for a brand-new client scope reads as zero while typing.
+  if (draftFile && !files.includes(draftFile)) files.unshift(draftFile);
   for (const filename of files) {
     const p = path.join(vocabularyDir, filename);
-    if (!fs.existsSync(p)) continue;
+    const isDraft = filename === draftFile;
+    if (!isDraft && !fs.existsSync(p)) continue;
     try {
-      const data = JSON.parse(fs.readFileSync(p, 'utf-8')) as Partial<VocabularyFile>;
-      if (data.whisperHints) hints.push(...data.whisperHints);
+      const data = fs.existsSync(p)
+        ? (JSON.parse(fs.readFileSync(p, 'utf-8')) as Partial<VocabularyFile>)
+        : {};
+      // The draft is what the editor currently shows, saved or not.
+      const scopeHints = isDraft ? draft!.hints : data.whisperHints;
+      if (scopeHints) hints.push(...scopeHints);
       if (data.replacements) replacements.push(...data.replacements);
       sources.push(filename);
     } catch (e) {
@@ -111,7 +130,12 @@ export function loadVocabulary(vocabularyDir: string, clientId?: string | null):
   // transcripts contain both.
   const seen = new Set<string>();
   const uniqueHints: string[] = [];
-  for (const h of hints) {
+  for (const raw of hints) {
+    // Blank rows exist while editing ("+ Add hint" starts empty) and would
+    // otherwise widen the prompt with ", , " and break the dropped-term
+    // check, since every string contains the empty string.
+    const h = raw.trim();
+    if (h.length === 0) continue;
     const key = h.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);

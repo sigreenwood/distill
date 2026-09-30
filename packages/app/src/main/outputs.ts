@@ -384,6 +384,26 @@ end run
 `);
 }
 
+/**
+ * Delete a previously-written note, ahead of a full re-run.
+ *
+ * AppleScript has no upsert for Notes (see writeAppleNote) — recreating a
+ * note without deleting the old one first leaves a duplicate. Callers
+ * should treat this as best-effort: the note may already be gone because
+ * the user deleted it by hand in Notes.app, which is not a reason to block
+ * the re-run that's about to create a fresh one.
+ */
+export async function deleteAppleNote(noteId: string): Promise<void> {
+  const escaped = escapeForAppleScript(noteId);
+  await runOsaScript(`
+on run
+  tell application "Notes"
+    delete note id "${escaped}"
+  end tell
+end run
+`);
+}
+
 function runOsaScript(script: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn('osascript', ['-'], { stdio: ['pipe', 'pipe', 'pipe'] });

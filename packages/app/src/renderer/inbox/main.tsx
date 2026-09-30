@@ -1,3 +1,4 @@
+import { MeetingSearch } from './MeetingSearch.js';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type {
@@ -6,40 +7,16 @@ import type {
   PipelineStep,
   TipJarStatusDTO,
 } from '../shared/api.js';
-
-function formatDuration(seconds: number | null): string {
-  if (seconds == null) return '—';
-  const s = Math.round(seconds);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const r = s % 60;
-  if (h > 0) return `${h}h${m.toString().padStart(2, '0')}m`;
-  if (m > 0) return `${m}m${r.toString().padStart(2, '0')}s`;
-  return `${r}s`;
-}
-
-function formatWhen(startTimeMs: number | null, fallbackEpochMs: number): string {
-  const ms = startTimeMs != null ? startTimeMs : fallbackEpochMs;
-  const d = new Date(ms);
-  const now = new Date();
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  const isYesterday =
-    d.getFullYear() === yesterday.getFullYear() &&
-    d.getMonth() === yesterday.getMonth() &&
-    d.getDate() === yesterday.getDate();
-  const hm = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-  if (sameDay) return `Today ${hm}`;
-  if (isYesterday) return `Yesterday ${hm}`;
-  const weekday = d.toLocaleDateString(undefined, { weekday: 'short' });
-  const day = d.getDate();
-  const month = d.toLocaleDateString(undefined, { month: 'short' });
-  return `${weekday} ${day} ${month} ${hm}`;
-}
+import {
+  formatDuration,
+  formatWhen,
+  Row,
+  Title,
+  MetaLine,
+  OutputLinks,
+  FullRerunButton,
+  OutputTargetPicker,
+} from '../shared/recordingRow.js';
 
 type InboxState =
   | { kind: 'loading' }
@@ -160,6 +137,7 @@ function Inbox() {
   const onRetry = useCallback((id: string) => {
     void window.distill.pipeline.retry(id).catch((e) => alert(`Could not retry: ${String(e)}`));
   }, []);
+
 
   const onReveal = useCallback((id: string) => {
     void window.distill.inbox.revealInFinder(id).catch((e) => alert(`Could not reveal: ${String(e)}`));
@@ -692,7 +670,7 @@ function Shell(props: ShellProps) {
           activeOrQueued={activeOrQueued}
         />
       )}
-      <main style={{ flexGrow: 1, overflowY: 'auto' }}>{props.children}</main>
+      <main style={{ flexGrow: 1, overflowY: 'auto' }}><MeetingSearch />{props.children}</main>
       {props.dragOver && (
         <div
           style={{
@@ -794,39 +772,6 @@ function Section(props: {
   );
 }
 
-function Row(props: { id: string; focused: boolean; children: React.ReactNode }) {
-  return (
-    <li
-      id={`recording-${props.id}`}
-      style={{
-        padding: '10px 14px',
-        borderBottom: '1px solid var(--border)',
-        background: props.focused ? 'var(--row-hover)' : 'transparent',
-      }}
-    >
-      {props.children}
-    </li>
-  );
-}
-
-function Title({ r }: { r: InboxItemDTO }) {
-  return (
-    <div className="ellipsis" style={{ fontWeight: 500, marginBottom: 2 }}>
-      {r.filename}
-    </div>
-  );
-}
-
-function MetaLine({ r }: { r: InboxItemDTO }) {
-  const tag = r.clientName && r.meetingTypeName ? `${r.clientName} · ${r.meetingTypeName}` : null;
-  return (
-    <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
-      {formatWhen(r.start_time, r.synced_at)} · {formatDuration(r.duration_seconds)}
-      {tag ? ` · ${tag}` : ''}
-    </div>
-  );
-}
-
 function ProcessingRow(props: { r: InboxItemDTO; focused: boolean; onCancel: (id: string) => void }) {
   const { r } = props;
   // "2/4 Transcribing…" — the total comes from the row's own plan, so an
@@ -840,6 +785,7 @@ function ProcessingRow(props: { r: InboxItemDTO; focused: boolean; onCancel: (id
     <Row id={r.id} focused={props.focused}>
       <Title r={r} />
       <MetaLine r={r} />
+      <OutputTargetPicker r={r} />
       <div
         style={{
           display: 'flex',
@@ -871,6 +817,7 @@ function WaitingRow(props: {
     <Row id={props.r.id} focused={props.focused}>
       <Title r={props.r} />
       <MetaLine r={props.r} />
+      <OutputTargetPicker r={props.r} />
       {lengthHint && (
         <div
           style={{
@@ -906,6 +853,7 @@ function ErrorRow(props: {
     <Row id={props.r.id} focused={props.focused}>
       <Title r={props.r} />
       <MetaLine r={props.r} />
+      <OutputTargetPicker r={props.r} />
       {props.r.error && (
         <div
           style={{
@@ -948,6 +896,7 @@ function CancelledRow(props: {
     <Row id={props.r.id} focused={props.focused}>
       <Title r={props.r} />
       <MetaLine r={props.r} />
+      <OutputTargetPicker r={props.r} />
       <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
         Cancelled
       </div>
@@ -984,11 +933,12 @@ function CompleteRow(props: {
     ? `Processed on another machine (summary by ${r.modelSnapshot})`
     : 'Processed on another machine';
   const externalTooltip =
-    'This recording was processed on another Mac and its Markdown output was found via iCloud Drive. The pipeline did not run on this machine, so the summary reflects whatever model the other machine used. To re-run on this machine, delete the Markdown file and tag the recording again on the next poll.';
+    'This recording was processed on another Mac and its Markdown output was found via iCloud Drive. The pipeline did not run on this machine, so the summary reflects whatever model the other machine used. Use "Full re-run" below to process it on this machine instead.';
   return (
     <Row id={r.id} focused={props.focused}>
       <Title r={r} />
       <MetaLine r={r} />
+      <OutputTargetPicker r={r} />
       {r.processedExternally && (
         <div
           style={{
@@ -1027,63 +977,15 @@ function CompleteRow(props: {
       )}
       <OutputLinks r={r} />
       <div className="row">
+        <button className="primary" onClick={() => {
+          void window.distill.meeting.open(r.id).catch(e => alert(e instanceof Error ? e.message : String(e)));
+        }}>Read meeting</button>
         <button onClick={() => void props.onSkip(r.id)} title="Hide this recording. You can bring it back from Hidden.">
           Hide
         </button>
+        <FullRerunButton r={r} />
       </div>
     </Row>
-  );
-}
-
-/**
- * One control per output destination. Written destinations are
- * clickable and open the file; unwritten ones stay visible but greyed,
- * so you can tell at a glance that (say) Apple Notes was configured and
- * did not land, rather than never having been asked for.
- */
-function OutputLinks({ r }: { r: InboxItemDTO }) {
-  const items: { kind: 'markdown' | 'html' | 'appleNote'; label: string; value: string | null }[] = [
-    { kind: 'markdown', label: 'MD', value: r.outputs.markdown },
-    { kind: 'html', label: 'HTML', value: r.outputs.html },
-    { kind: 'appleNote', label: 'Notes', value: r.outputs.appleNote },
-  ];
-  return (
-    <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' }}>
-      {items.map(({ kind, label, value }) => {
-        const written = value !== null;
-        return (
-          <button
-            key={kind}
-            disabled={!written}
-            onClick={() =>
-              void window.distill.inbox
-                .revealOutput(r.id, kind)
-                .catch((e) => alert(String(e instanceof Error ? e.message : e)))
-            }
-            title={
-              written
-                ? kind === 'appleNote'
-                  ? 'Open Notes'
-                  : `Show in Finder: ${value}`
-                : `No ${label} output was written for this recording`
-            }
-            style={{
-              fontSize: 10,
-              padding: '2px 8px',
-              borderRadius: 3,
-              border: '1px solid var(--border)',
-              background: 'transparent',
-              color: written ? 'var(--accent, #3b82f6)' : 'var(--fg-muted)',
-              opacity: written ? 1 : 0.45,
-              cursor: written ? 'pointer' : 'default',
-            }}
-          >
-            {written ? '↗ ' : ''}
-            {label}
-          </button>
-        );
-      })}
-    </div>
   );
 }
 

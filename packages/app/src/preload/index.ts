@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 import { Channels } from '../shared/ipcChannels.js';
+import type { Attendee } from '../shared/attendees.js';
 
 /**
  * The renderer-facing API, exposed as `window.distill`. Every call maps
@@ -7,7 +8,20 @@ import { Channels } from '../shared/ipcChannels.js';
  * plumbing so the contract lives entirely in main/ipc.ts.
  */
 const api = {
+  meeting: {
+    open: (recordingId: string, scope: 'summary' | 'transcript' = 'summary') =>
+      ipcRenderer.invoke(Channels.MeetingOpen, recordingId, scope),
+    get: (recordingId: string) => ipcRenderer.invoke(Channels.MeetingGet, recordingId),
+  },
+  brief: {
+    listMeetings: (clientId: string, sinceDays: number | null) =>
+      ipcRenderer.invoke(Channels.BriefListMeetings, clientId, sinceDays),
+    generate: (payload: { clientId: string; recordingIds: string[] }) =>
+      ipcRenderer.invoke(Channels.BriefGenerate, payload),
+    cancel: () => ipcRenderer.invoke(Channels.BriefCancel),
+  },
   inbox: {
+    search: (query: string, scope: 'summary' | 'transcript') => ipcRenderer.invoke(Channels.InboxSearch, query, scope),
     list: () => ipcRenderer.invoke(Channels.InboxList),
     skip: (recordingId: string) => ipcRenderer.invoke(Channels.InboxSkip, recordingId),
     revealInFinder: (recordingId: string) =>
@@ -16,15 +30,33 @@ const api = {
       ipcRenderer.invoke(Channels.InboxRevealOutput, recordingId, kind),
     listHidden: () => ipcRenderer.invoke(Channels.InboxListHidden),
     unhide: (recordingId: string) => ipcRenderer.invoke(Channels.InboxUnhide, recordingId),
+    setOutputTargets: (
+      recordingId: string,
+      targets: { markdown: boolean; html: boolean; appleNote: boolean },
+    ) => ipcRenderer.invoke(Channels.InboxSetOutputTargets, recordingId, targets),
   },
   pipeline: {
     cancel: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineCancel, recordingId),
     retry: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineRetry, recordingId),
+    fullRerun: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineFullRerun, recordingId),
+  },
+  history: {
+    list: (payload: { search?: string; limit?: number; offset?: number }) =>
+      ipcRenderer.invoke(Channels.HistoryList, payload),
   },
   tag: {
     open: (recordingId: string) => ipcRenderer.invoke(Channels.TagOpenSheet, recordingId),
-    save: (payload: { recordingId: string; clientId: string; meetingTypeId: string }) =>
-      ipcRenderer.invoke(Channels.TagSave, payload),
+    save: (payload: {
+      recordingId: string;
+      clientId: string;
+      meetingTypeId: string;
+      attendees?: Attendee[];
+    }) => ipcRenderer.invoke(Channels.TagSave, payload),
+    frequentAttendees: (clientId: string) =>
+      ipcRenderer.invoke(Channels.TagFrequentAttendees, clientId),
+    suggestClient: (attendees: Attendee[]) =>
+      ipcRenderer.invoke(Channels.TagSuggestClient, attendees),
+    clipboardAttendees: () => ipcRenderer.invoke(Channels.TagClipboardAttendees),
     getSheetRecordingId: (): string | null => {
       const arg = process.argv.find((a) => a.startsWith('--recording-id='));
       return arg ? arg.slice('--recording-id='.length) : null;
@@ -67,6 +99,8 @@ const api = {
       ipcRenderer.invoke(Channels.SettingsImportVocabulary, scopeId),
     exportVocabulary: (scopeId: string) =>
       ipcRenderer.invoke(Channels.SettingsExportVocabulary, scopeId),
+    previewVocabularyBudget: (payload: unknown) =>
+      ipcRenderer.invoke(Channels.SettingsPreviewVocabularyBudget, payload),
     saveGeneral: (payload: unknown) => ipcRenderer.invoke(Channels.SettingsSaveGeneral, payload),
     savePerformance: (payload: unknown) =>
       ipcRenderer.invoke(Channels.SettingsSavePerformance, payload),
@@ -77,6 +111,7 @@ const api = {
     revealPath: (dir: string) => ipcRenderer.invoke(Channels.SettingsRevealPath, dir),
     dismissModelSuggestion: () => ipcRenderer.invoke(Channels.SettingsDismissModelSuggestion),
     pullModel: (model: string) => ipcRenderer.invoke(Channels.SettingsPullModel, model),
+    installParakeet: () => ipcRenderer.invoke(Channels.SettingsInstallParakeet),
   },
   sources: {
     signInPlaud: (payload: { email: string; password: string; region: string }) =>
@@ -114,6 +149,11 @@ const api = {
     const wrapped = (_evt: IpcRendererEvent, e: unknown) => handler(e);
     ipcRenderer.on(Channels.PushSetupProgress, wrapped);
     return () => ipcRenderer.off(Channels.PushSetupProgress, wrapped);
+  },
+  onParakeetInstallProgress: (handler: (p: unknown) => void) => {
+    const wrapped = (_evt: IpcRendererEvent, p: unknown) => handler(p);
+    ipcRenderer.on(Channels.PushParakeetInstallProgress, wrapped);
+    return () => ipcRenderer.off(Channels.PushParakeetInstallProgress, wrapped);
   },
   onModelPullProgress: (handler: (p: unknown) => void) => {
     const wrapped = (_evt: IpcRendererEvent, p: unknown) => handler(p);

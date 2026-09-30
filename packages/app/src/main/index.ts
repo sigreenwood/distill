@@ -24,6 +24,8 @@ import {
   configureWindows,
   openInbox,
   openSettings,
+  openHistory,
+  openClientBrief,
   openSetup,
   closeAll,
 } from './windows.js';
@@ -37,12 +39,31 @@ import { importLocalFile, LocalImportError } from './localImport.js';
 import { migrateScopeRenames, migrateVocabularyToUserDir } from './vocabulary.js';
 import { startSweepSchedule, sweepStateFor, nodeFs } from './audioRetention.js';
 import { startModelUpdateCheck } from './modelUpdateCheck.js';
+import { withToolDirs } from './toolPath.js';
+
+// Before anything spawns ffmpeg, ffprobe or Python — see toolPath.ts.
+process.env.PATH = withToolDirs(process.env.PATH);
 
 app.dock?.hide();
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
+
+// With no Dock icon, a tray-only window is the app's only surface — and on
+// notched displays the tray icon itself can end up hidden in the overflow
+// behind the notch. "Just try opening the app again" is the natural thing a
+// user does when they can't find it, so both of macOS's relaunch signals
+// need to actually show the window instead of silently doing nothing:
+// second-instance (a second process attempt) and activate (Finder/Spotlight
+// reactivating the already-running app, e.g. a Dock click would fire this
+// too if there were a Dock icon).
+app.on('second-instance', () => {
+  if (appReady) openInbox();
+});
+app.on('activate', () => {
+  if (appReady) openInbox();
+});
 
 let trayHandle: TrayHandle | null = null;
 let state: State | null = null;
@@ -114,7 +135,21 @@ app.whenReady().then(async () => {
 
   const localLogger = createLogger({ level: cfg.logLevel, pretty: !app.isPackaged });
   logger = localLogger;
-  localLogger.info({ cfg, appSupportDir: appSupportDirPath }, 'distill starting');
+  // Version and bundle path go in the first line deliberately. A .pkg that
+  // silently declines to replace the app leaves you running an old build
+  // with no indication anywhere, and every bug report after that is against
+  // the wrong code. appPath is here too because "which copy is running" is
+  // the other half of that question.
+  localLogger.info(
+    {
+      version: app.getVersion(),
+      appPath: app.getAppPath(),
+      packaged: app.isPackaged,
+      cfg,
+      appSupportDir: appSupportDirPath,
+    },
+    'distill starting',
+  );
   // Report any pre-rename directory migration. Paths resolve at module
   // load, before the logger exists, so the notes are replayed here.
   for (const note of migrationNotes()) {
@@ -179,6 +214,8 @@ app.whenReady().then(async () => {
       kind: installStatus.kind,
       pythonPath: installStatus.kind === 'ready' ? installStatus.pythonPath : null,
       source: installStatus.kind === 'ready' ? installStatus.source : undefined,
+      // Why it isn't ready — otherwise every cause looks the same here.
+      venvStatus: installStatus.kind === 'ready' ? undefined : installStatus.venvStatus,
     },
     'python install status',
   );
@@ -220,6 +257,8 @@ app.whenReady().then(async () => {
         broadcastInboxChanged();
       },
       onOpenSettings: () => openSettings(),
+      onOpenHistory: () => openHistory(),
+      onOpenClientBrief: () => openClientBrief(),
       onPauseChange: (nextPause) => {
         const updated = applyConfigUpdate({ paused: nextPause });
         saveConfig(updated);

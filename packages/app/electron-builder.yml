@@ -129,6 +129,25 @@ asarUnpack:
   - node_modules/better-sqlite3/**/*
   - node_modules/keytar/**/*
 
+# File type registration, so a recording can be opened via Finder's
+# "Open With" menu (right-click a file -> Open With -> distill), not just
+# dragged into an already-open Inbox window. electron-builder turns this
+# into CFBundleDocumentTypes on mac; main/index.ts's `open-file` handler
+# already exists and already does the right thing with it — it just had
+# nothing registering distill as an opener.
+#
+# Deliberately NOT registering .md/.txt here. Those extensions are owned
+# by every text editor on the system; re-summarising a transcript stays
+# reachable via the in-app "+" picker and drag-and-drop instead of
+# putting distill in the Open With list for every text file on the Mac.
+fileAssociations:
+  - ext: [mp3, m4a, wav, aac, ogg, flac, opus]
+    name: Audio Recording
+    role: Editor
+  - ext: [mp4, mov, m4v, mkv, webm]
+    name: Video Recording
+    role: Editor
+
 mac:
   # Target one format - pkg-only (single distribution target). Single arch
   # (arm64) since mlx-whisper is Apple-Silicon-only anyway; an Intel build
@@ -155,6 +174,35 @@ pkg:
   # Install path - the standard Applications folder (rather than per-user
   # ~/Applications, which most users don't even know exists).
   installLocation: /Applications
+
+  # Never skip the install because of a version comparison.
+  #
+  # THIS is the setting that matters. By default electron-builder emits
+  #     <bundle-version><bundle id="com.distill.app"/></bundle-version>
+  # into PackageInfo, which lets the macOS Installer compare the payload
+  # bundle against the one already on disk and decline to write it. The
+  # installer still runs to completion and still reports success — the app
+  # is simply not replaced, so About keeps reporting the old version. That
+  # is the "installed 0.0.16, About says something older" symptom.
+  #
+  # Setting this false emits an empty <bundle-version/>, making every
+  # install unconditional. Verified by diffing the expanded PackageInfo of
+  # the 0.0.16 and 0.0.17 packages — the emptied element is the only
+  # meaningful difference between them.
+  #
+  # Worth knowing when debugging this: pkgbuild records the *package*
+  # version as 0 on every build regardless of the app version
+  # (`pkgutil --pkg-info com.distill.app` → `version: 0`), so the receipt
+  # cannot be used to tell releases apart. Check the installed bundle's
+  # CFBundleShortVersionString instead.
+  isVersionChecked: false
+
+  # Belt and braces: pin the install target so it cannot drift to some
+  # other copy of the bundle. Note this is already the generated default —
+  # PackageInfo carries relocatable="false" and an empty <relocate/> with
+  # or without this line, so it fixes nothing on its own. Kept because the
+  # install location should be explicit, not inherited.
+  isRelocatable: false
 
   # No license / readme / welcome screens - keep the installer wizard
   # short. The user can find help in the app itself.
