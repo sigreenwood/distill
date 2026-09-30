@@ -298,6 +298,123 @@ today's venv light.
 Apple Silicon; MLX keeps the Metal GPU path. Revisit only if MLX
 Whisper stalls as a project.
 
+**Parakeet MLX — shipped as an opt-in engine (Aug 2026), benchmarked.**
+Settings → Performance now has a Whisper/Parakeet toggle (Parakeet
+lazily pip-installed on demand, never bundled). Benchmarked against 7
+real recordings (311 min total) on this machine, both engines on
+identical VAD-gated audio, Whisper given the real production prompt:
+
+- **Speed:** Parakeet ~20.5% faster in aggregate, consistent on every
+  recording (17–29% range) — real, but well short of the ~70x-realtime
+  figure quoted publicly (that excludes VAD and used different hardware).
+- **Verbosity:** Parakeet produces more words on every recording,
+  driven mostly by filler words ("um"/"uh"/"you know") — 2–3x more of
+  them than Whisper, which smooths disfluencies toward fluent text.
+- **Names — the finding that matters most here:** the two engines
+  disagree on real attendee names with no ground truth to arbitrate
+  (**Prashant** vs **Samir**; **Riggler** vs **Regler**, same meeting
+  each time). This is exactly the failure mode the vocabulary system
+  exists to prevent.
+- **This account's vocabulary files are all empty** — global,
+  organisation, industry, and both clients (HSBC, LADFFA). Zero hints
+  configured anywhere, for either transcription engine. The name
+  disagreements above are happening with *no* vocabulary assistance on
+  either side; a curated account would likely show a larger, more
+  consistently Whisper-favouring gap, since Parakeet has no
+  prompt/hotword mechanism to benefit from one at all.
+- Two real bugs found and fixed while running this (`149be1d`): VAD was
+  silently disabled the moment ffmpeg was present on this machine
+  (`decode_audio()` returned an `mlx.core.array` instead of numpy on
+  that path — unrelated to Parakeet, a pre-existing bug); Parakeet
+  crashed outright on the 94-minute recording from a missing
+  `chunk_duration` (the Python API doesn't chunk by default the way the
+  CLI does).
+- Full report with per-recording timing tables and transcript excerpts
+  was generated to a local HTML file, not published — it quotes real
+  client-call content and this project's whole premise is that meeting
+  content stays on the machine. Not retained beyond the session; the
+  numbers above are what's worth keeping.
+
+**Immediate, zero-code next step:** populate vocabulary for HSBC and
+LADFFA (via `tools/mine_vocabulary.py` against existing transcripts, or
+Settings → Vocabulary directly) and re-run the benchmark. If names are
+still wrong after that, Stage 3 below is the next lever.
+
+---
+
+## Stage 3 (prioritised) — LLM transcript cleanup pass before summarisation
+
+*Logged Aug 2026, prioritised same day after the Whisper/Parakeet
+benchmark above surfaced concrete, unresolved name errors in real
+transcripts.*
+
+**Problem.** The vocabulary system has two mechanisms: Whisper's
+`initial_prompt` (biases recognition *before* transcription — engine-
+specific, only Whisper can use it) and `applyReplacements` (regex
+find/replace *after* transcription — engine-agnostic, but requires
+already knowing the exact wrong string to match against). Neither
+catches a name the transcriber mis-hears in a way nobody predicted in
+advance — which is the normal case, not the exception, per the
+Prashant/Samir and Riggler/Regler examples above.
+
+**Proposed design.** A new pipeline step between transcribe and
+summarise: send the transcript, the vocabulary hints, and the attendee
+roster (already built for the summarise prompt — see
+`buildAttendeeRoster` in `src/shared/attendees.ts`) to Ollama, asking
+it to identify *likely mis-transcriptions given this context* and
+return a small, structured list of corrections — not a full rewrite.
+
+Deliberately **not** "rewrite the whole transcript": an 80k-character
+document is a lot for a local model to reproduce faithfully end to
+end, and any drift, omission, or hallucinated rephrase would be
+silent and hard to catch. A bounded `{from, to}` correction list is
+auditable, cheap to validate (each `from` should actually appear in
+the transcript), and can be applied through the exact same
+`applyReplacements` mechanism the vocabulary system already uses —
+new judgment, same safe, deterministic application path.
+
+**Open questions before building:**
+- Cost: this is a second full-transcript pass through Ollama, on top
+  of summarisation. For a 90-minute meeting (~80k chars, ~20k tokens)
+  that's real added latency. Worth gating on "only run if vocabulary
+  hints or an attendee roster actually exist" — no context to correct
+  against, no point running it.
+- Default on or opt-in? Leans opt-in given the cost, consistent with
+  Parakeet's own toggle and the project's suggestion-only rule.
+- Where does the correction list get applied — before or after the
+  existing regex `applyReplacements`? Probably before: let curated,
+  certain rules win over the model's best guess if they ever overlap.
+
+---
+
+## Stage 4 (prioritised, blocked on external setup) — pyannote diarisation
+
+*Logged Apr 2026 as part of the original staged plan, prioritised Aug
+2026 alongside Stage 3. Real blocker confirmed the same day, not
+previously documented here.*
+
+**What it buys beyond "v1.2 nice-to-have":** once segments are
+speaker-labelled, a name only has to be resolved *once* per speaker
+per meeting rather than every time they're mentioned — pair that with
+the attendee roster (already built) to map "Speaker 1" → a real
+pasted name with much higher confidence than per-mention guessing.
+Directly relevant to the Prashant/Samir-class errors above, not just a
+transcript-formatting nicety.
+
+**Real blocker, not just effort:** pyannote's pretrained pipelines are
+gated on Hugging Face. Before any code can run, a Hugging Face account
+must accept the user conditions for *both* the diarisation pipeline
+and the segmentation model it depends on, then generate an access
+token that the app would need to be configured with. This is a
+one-time action only the account owner can do — not something to
+build around silently. Needs doing (or at least confirming already
+done) before implementation starts, not discovered partway through.
+
+**Still applies from the original plan:** brings `torch` into the venv
+(currently torch-free by design); DeepFilterNet (Stage 2, still parked)
+was deliberately bundled with this for the same reason — sharing the
+dependency rather than paying for it twice.
+
 ---
 
 ## Regenerate outputs for a completed recording
