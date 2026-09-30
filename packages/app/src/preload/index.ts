@@ -12,6 +12,13 @@ const api = {
       ipcRenderer.invoke(Channels.MeetingOpen, recordingId, scope),
     get: (recordingId: string) => ipcRenderer.invoke(Channels.MeetingGet, recordingId),
   },
+  brief: {
+    listMeetings: (clientId: string, sinceDays: number | null) =>
+      ipcRenderer.invoke(Channels.BriefListMeetings, clientId, sinceDays),
+    generate: (payload: { clientId: string; recordingIds: string[] }) =>
+      ipcRenderer.invoke(Channels.BriefGenerate, payload),
+    cancel: () => ipcRenderer.invoke(Channels.BriefCancel),
+  },
   inbox: {
     search: (query: string, scope: 'summary' | 'transcript') => ipcRenderer.invoke(Channels.InboxSearch, query, scope),
     list: () => ipcRenderer.invoke(Channels.InboxList),

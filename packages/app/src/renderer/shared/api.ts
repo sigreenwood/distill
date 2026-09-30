@@ -19,6 +19,8 @@ export type RecordingStatus =
   | 'cancelled'
   | 'skipped';
 
+import type { BriefCandidate, ClientBrief } from '../../shared/brief';
+
 export type PipelineStep = 'download' | 'transcribe' | 'summarise' | 'write';
 
 export type { Attendee, FrequentAttendee } from '../../shared/attendees';
@@ -238,6 +240,12 @@ export interface DistillApi {
   meeting: {
     open(recordingId: string, scope?: SearchScope): Promise<void>;
     get(recordingId: string): Promise<MeetingDetail>;
+  };
+  brief: {
+    /** The client's meetings in the period, newest first. */
+    listMeetings(clientId: string, sinceDays: number | null): Promise<BriefCandidate[]>;
+    generate(payload: { clientId: string; recordingIds: string[] }): Promise<ClientBrief>;
+    cancel(): Promise<void>;
   };
   inbox: {
     search(query: string, scope: SearchScope): Promise<MeetingSearchResponse>;

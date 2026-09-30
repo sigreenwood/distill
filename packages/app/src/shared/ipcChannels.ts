@@ -6,6 +6,9 @@
 export const Channels = {
   MeetingOpen: 'meeting.open',
   MeetingGet: 'meeting.get',
+  BriefListMeetings: 'brief.listMeetings',
+  BriefGenerate: 'brief.generate',
+  BriefCancel: 'brief.cancel',
   InboxSearch: 'inbox.search',
   InboxList: 'inbox.list',
   InboxSkip: 'inbox.skip',

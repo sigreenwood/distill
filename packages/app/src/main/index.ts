@@ -25,6 +25,7 @@ import {
   openInbox,
   openSettings,
   openHistory,
+  openClientBrief,
   openSetup,
   closeAll,
 } from './windows.js';
@@ -251,6 +252,7 @@ app.whenReady().then(async () => {
       },
       onOpenSettings: () => openSettings(),
       onOpenHistory: () => openHistory(),
+      onOpenClientBrief: () => openClientBrief(),
       onPauseChange: (nextPause) => {
         const updated = applyConfigUpdate({ paused: nextPause });
         saveConfig(updated);

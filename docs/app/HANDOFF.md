@@ -131,22 +131,50 @@ socket access causes unrelated timeouts. Run those checks with localhost
 access. Native `better-sqlite3` remains built for Electron; existing tests
 avoid opening a real DB from Node.
 
-## Next step — client preparation brief
+## Step 3 — client preparation brief: complete in source
 
-Suggested next bounded slice: an on-demand brief for a selected client
-using explicitly selected previous meetings or a date range. Include
-recent decisions, stated commitments and questions to revisit, with each
-point linked to its source meeting in the reader. Keep inference local
-and distinguish source statements from inferred follow-up questions.
-Do not claim an action is still open or completed without supporting
-evidence; persistent confirmed status belongs to the later action register.
-Do not introduce calendar integration or automatic background inference.
+Checkpoint: the commit containing this update, titled
+`feat(brief): on-demand client preparation brief with cited sources`.
 
-Before implementation, inspect current IPC/reader patterns and choose a
-bounded source/token budget. Add checks for source citations and missing
-content, then typecheck, test, build, verify the UI and commit the completed
-slice. Update this handoff in the same commit. Do not begin several features
-at once or leave a partial feature mixed into a completed checkpoint.
+- Tray › **Client brief…** opens a resizable window. Pick a client and a
+  period (30/90/182/365 days or all); that client's meetings are listed
+  newest first with checkboxes. Meetings without a summary are shown
+  disabled. The newest that fit are pre-selected (up to 5).
+- Budget: summaries only, never transcripts; at most 8 meetings and
+  48,000 characters (~12k tokens) per brief (`shared/brief.ts`). Over
+  the limit, Generate is disabled with the reason — nothing is truncated.
+- Local Ollama with a JSON schema (`main/clientBrief.ts`): decisions,
+  commitments (with owner), questions raised, and suggested questions.
+  Meetings are labelled M1… oldest first. Every point must cite labels;
+  `parseBrief` drops points with no valid citation and reports the count.
+  Commitments are labelled "status not tracked"; suggested questions are
+  labelled as the model's inference. The prompt forbids stating whether
+  a commitment was completed.
+- Each citation chip and each source opens that meeting in the reader.
+  Copy as Markdown; Cancel (also on window close). Nothing is saved or
+  run in the background. Same local-host/cloud-model guard as search,
+  now shared in `main/localInference.ts`.
+
+Verification: 173 tests (new `clientBrief.test.ts` covers selection
+limits, M-numbering, citation validation/dropping, the local-only
+guard and Markdown labels), both typechecks, production build. Live
+smoke test with `qwen3.8:27b-mlx` on three synthetic summaries: 20–39 s,
+all points correctly cited, commitments with owners and no status
+claims, nothing dropped. The built window was rendered in headless
+Chrome against a stubbed API (picker and result). Not exercised: the
+window inside the installed app, and real client meetings.
+
+Limitations: the brief is not saved (copy it if needed); each point
+cites whole meetings, not passages; no carry-over between briefs.
+
+## Next step
+
+Suggested: a confirmed action/decision register — the persistent
+"status" the brief deliberately does not claim. Let the user confirm
+items from a brief (or a meeting) into a per-client register with
+open/done state they set, each linked to its source meeting. Keep it
+user-confirmed: no automatic status inference. Same rules as before —
+one bounded slice, tests, build, UI check, handoff in the same commit.
 
 Later ideas, not implemented or fully specified: confirmed action/decision
 register; correction-to-vocabulary suggestions; versioned re-summarisation;
