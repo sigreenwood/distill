@@ -18,6 +18,7 @@ import { app, clipboard, dialog, ipcMain, shell, BrowserWindow } from 'electron'
 import { Channels, KEEPALIVE_PRESETS, WHISPER_MODEL_PRESETS } from '../shared/ipcChannels.js';
 import { userVocabularyDir } from './paths.js';
 import { saveConfig, type AppConfig, type OutputsConfig } from './config.js';
+import type { ProcessingSchedule } from './processingSchedule.js';
 import { hashPrompt, parsePromptsMarkdownDetailed, readSeedPrompt } from './seed.js';
 import { openSettings, openTagSheet, openMeetingReader } from './windows.js';
 import { importLocalFile, LocalImportError, type LocalImportProgress } from './localImport.js';
@@ -540,7 +541,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(Channels.TagSave, (_evt, payload) => {
     const p = assertTagSavePayload(payload);
-    const changed = ctx.state.tagRecording(p.recordingId, p.clientId, p.meetingTypeId, p.attendees);
+    const changed = ctx.state.tagRecording(p.recordingId, p.clientId, p.meetingTypeId, p.attendees, p.urgent);
     if (!changed) {
       throw new Error('Recording could not be tagged — it may already have been tagged or skipped.');
     }
@@ -550,12 +551,25 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         clientId: p.clientId,
         meetingTypeId: p.meetingTypeId,
         attendeeCount: p.attendees?.length ?? 0,
+        urgent: Boolean(p.urgent),
       },
       'recording tagged',
     );
     ctx.onStateChanged?.();
     broadcastInboxChanged();
     ctx.getWorker()?.nudge();
+  });
+
+  ipcMain.handle(Channels.PipelineSetUrgent, (_evt, recordingId, urgent) => {
+    if (typeof recordingId !== 'string') throw new Error('recordingId must be a string');
+    if (typeof urgent !== 'boolean') throw new Error('urgent must be a boolean');
+    if (!ctx.state.setUrgent(recordingId, urgent)) {
+      throw new Error('This recording is no longer in the library.');
+    }
+    ctx.logger.info({ recordingId, urgent }, 'recording urgency changed');
+    ctx.onStateChanged?.();
+    broadcastInboxChanged();
+    if (urgent) ctx.getWorker()?.nudge();
   });
 
   // People from this client's past meetings, for one-click re-adding.
@@ -1188,6 +1202,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     const updated = ctx.applyConfigUpdate({
       audioRetentionDays: general.audioRetentionDays,
       autoDismissCompleteMinutes: general.autoDismissCompleteMinutes,
+      processingSchedule: general.processingSchedule,
     });
     saveConfig(updated);
     // Only touch the login item when it can mean something, and only when
@@ -1222,6 +1237,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         audioRetentionDays: updated.audioRetentionDays,
         autoDismissCompleteMinutes: updated.autoDismissCompleteMinutes,
         launchAtLogin,
+        processingSchedule: updated.processingSchedule,
       },
       'general settings saved',
     );
@@ -1561,6 +1577,7 @@ export function toInboxDTO(r: JoinedRecordingRow, outputs: OutputsConfig) {
     contextWindowAtSubmit: r.context_window_at_submit,
     modelSnapshot: r.model_snapshot,
     processedExternally: r.processed_externally === 1,
+    urgent: r.urgent === 1,
     // Gates the "Full re-run" action: a local file to re-transcribe from,
     // or (Plaud rows only — retention never deletes their audio_path, but
     // the row may predate a local download, or the file may have been
@@ -1630,6 +1647,7 @@ function toGeneralDTO(cfg: AppConfig) {
     autoDismissCompleteMinutes: cfg.autoDismissCompleteMinutes,
     launchAtLogin: launchAtLoginAvailable() ? app.getLoginItemSettings().openAtLogin : false,
     launchAtLoginAvailable: launchAtLoginAvailable(),
+    processingSchedule: cfg.processingSchedule,
   };
 }
 
@@ -1836,6 +1854,7 @@ function assertTagSavePayload(v: unknown): {
   clientId: string;
   meetingTypeId: string;
   attendees?: Attendee[];
+  urgent?: boolean;
 } {
   if (!v || typeof v !== 'object') throw new Error('Invalid tag payload');
   const o = v as Record<string, unknown>;
@@ -1843,7 +1862,11 @@ function assertTagSavePayload(v: unknown): {
   if (typeof o.clientId !== 'string') throw new Error('clientId must be a string');
   if (typeof o.meetingTypeId !== 'string') throw new Error('meetingTypeId must be a string');
   const attendees = o.attendees === undefined ? undefined : assertAttendeesList(o.attendees);
-  return { recordingId: o.recordingId, clientId: o.clientId, meetingTypeId: o.meetingTypeId, attendees };
+  if (o.urgent !== undefined && typeof o.urgent !== 'boolean') throw new Error('urgent must be a boolean');
+  return {
+    recordingId: o.recordingId, clientId: o.clientId, meetingTypeId: o.meetingTypeId,
+    attendees, urgent: o.urgent as boolean | undefined,
+  };
 }
 
 function assertAttendeesList(v: unknown): Attendee[] {
@@ -2032,10 +2055,33 @@ function slugify(s: string): string {
     .slice(0, 64);
 }
 
+const HM_RE = /^\d{1,2}:\d{2}$/;
+
+function assertProcessingSchedule(v: unknown): ProcessingSchedule {
+  if (!v || typeof v !== 'object') throw new Error('Invalid processing schedule');
+  const o = v as Record<string, unknown>;
+  if (o.mode !== 'immediate' && o.mode !== 'idle' && o.mode !== 'overnight') {
+    throw new Error('processingSchedule.mode must be "immediate", "idle" or "overnight"');
+  }
+  if (typeof o.idleMinutes !== 'number' || !Number.isInteger(o.idleMinutes) || o.idleMinutes <= 0) {
+    throw new Error('processingSchedule.idleMinutes must be a positive integer');
+  }
+  if (typeof o.overnightStart !== 'string' || !HM_RE.test(o.overnightStart)) {
+    throw new Error('processingSchedule.overnightStart must be "HH:MM"');
+  }
+  if (typeof o.overnightEnd !== 'string' || !HM_RE.test(o.overnightEnd)) {
+    throw new Error('processingSchedule.overnightEnd must be "HH:MM"');
+  }
+  return {
+    mode: o.mode, idleMinutes: o.idleMinutes, overnightStart: o.overnightStart, overnightEnd: o.overnightEnd,
+  };
+}
+
 function assertGeneralDTO(v: unknown): {
   audioRetentionDays: number | null;
   autoDismissCompleteMinutes: number;
   launchAtLogin: boolean;
+  processingSchedule: ProcessingSchedule;
 } {
   if (!v || typeof v !== 'object') throw new Error('Invalid general payload');
   const o = v as Record<string, unknown>;
@@ -2050,8 +2096,12 @@ function assertGeneralDTO(v: unknown): {
     throw new Error('autoDismissCompleteMinutes must be a non-negative integer (0 disables auto-hide)');
   }
 
+  const processingSchedule = assertProcessingSchedule(o.processingSchedule);
+
   const raw = o.audioRetentionDays;
-  if (raw === null) return { audioRetentionDays: null, autoDismissCompleteMinutes: dismiss, launchAtLogin };
+  if (raw === null) {
+    return { audioRetentionDays: null, autoDismissCompleteMinutes: dismiss, launchAtLogin, processingSchedule };
+  }
   if (typeof raw !== 'number' || !Number.isFinite(raw)) {
     throw new Error('audioRetentionDays must be null or a non-negative integer');
   }
@@ -2061,7 +2111,7 @@ function assertGeneralDTO(v: unknown): {
   if (raw < 0) {
     throw new Error('audioRetentionDays must be ≥ 0 (use null to disable the sweep)');
   }
-  return { audioRetentionDays: raw, autoDismissCompleteMinutes: dismiss, launchAtLogin };
+  return { audioRetentionDays: raw, autoDismissCompleteMinutes: dismiss, launchAtLogin, processingSchedule };
 }
 
 function assertPerformanceDTO(v: unknown): {

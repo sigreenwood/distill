@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { shouldRunStep } from './config.js';
+import { evaluateSchedule } from './processingSchedule.js';
 import { isCancelled } from './cancellation.js';
 import { prettifyError } from './errorMessages.js';
 import { doDownload, doTranscribe, doSummarise, doWriteOutputs } from './pipelineSteps.js';
@@ -109,7 +110,14 @@ export class Worker {
         if (shouldRunStep(cfg.paused, 'download')) allowed.add('download');
         if (shouldRunStep(cfg.paused, 'transcribe')) allowed.add('transcribe');
         if (shouldRunStep(cfg.paused, 'summarise')) allowed.add('summarise');
-        const claimed = this.ctx.state.claimNextTagged(allowed);
+        // An idle/overnight processing schedule only gates new claims,
+        // never in-flight work, exactly like the per-step pause above —
+        // see processingSchedule.ts. An urgent-flagged row always bypasses
+        // it (claimNextTagged's urgentOnly restricts to those specifically
+        // when the schedule is blocking normal claims).
+        const idleSeconds = this.ctx.getSystemIdleSeconds?.() ?? 0;
+        const schedule = evaluateSchedule(cfg.processingSchedule, idleSeconds);
+        const claimed = this.ctx.state.claimNextTagged(allowed, !schedule.allowed);
         if (!claimed) break;
         this.cb.onStateChanged();
         const abort = new AbortController();

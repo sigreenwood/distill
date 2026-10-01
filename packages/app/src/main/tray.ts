@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { app, shell, Menu, Tray, nativeImage, type NativeImage, type Rectangle } from 'electron';
+import { app, shell, powerMonitor, Menu, Tray, nativeImage, type NativeImage, type Rectangle } from 'electron';
 import {
   PAUSABLE_STEPS,
   formatPauseStatus,
@@ -8,6 +8,7 @@ import {
   type PauseConfig,
   type PausableStep,
 } from './config.js';
+import { evaluateSchedule } from './processingSchedule.js';
 import { logsDir } from './paths.js';
 import type { Logger } from './logger.js';
 import type { ProcessingSummary, RecordingStatus, State } from './state.js';
@@ -94,11 +95,20 @@ export function createTray(ctx: TrayContext): TrayHandle {
     const processing = ctx.state.processingSummary();
     const cfg = ctx.getConfig();
     const anyPaused = cfg.paused.all || pausedSteps(cfg.paused).length > 0;
+    // Tagged rows waiting on an idle/overnight processingSchedule window
+    // (see processingSchedule.ts) count as "waiting" too, same as an
+    // untagged inbox item — otherwise queued-but-blocked work would show
+    // as idle, the exact "looks fine, isn't" failure CLAUDE.md warns
+    // about. An urgent row among them gets claimed by the worker almost
+    // immediately, which naturally moves `running` above 0 and out of
+    // this branch — no separate urgent check needed here.
+    const schedule = evaluateSchedule(cfg.processingSchedule, powerMonitor.getSystemIdleTime());
+    const scheduleBlocked = processing.queued > 0 && processing.running === 0 && !schedule.allowed;
     const nextState = computeTrayState({
       processingRunning: processing.running > 0,
       paused: anyPaused,
       errorCount: errors,
-      waitingCount: inbox,
+      waitingCount: inbox + (scheduleBlocked ? processing.queued : 0),
     });
     if (nextState !== currentState) {
       tray.setImage(iconFor(nextState));
@@ -107,14 +117,15 @@ export function createTray(ctx: TrayContext): TrayHandle {
     // Tooltip updates every rebuild, not only on an icon change: the phase
     // behind a steady 'active' glyph (downloading -> transcribing -> ...)
     // still moves, and the tooltip is the only place that says which.
-    tray.setToolTip(`distill — ${trayTooltipLabel(nextState, processing, errors)}`);
+    const scheduleReason = scheduleBlocked ? schedule.reason : null;
+    tray.setToolTip(`distill — ${trayTooltipLabel(nextState, processing, errors, scheduleReason)}`);
     let title = '';
     if (inbox > 0) title += ` ${inbox}`;
     if (errors > 0) title += ' ⚠';
     tray.setTitle(title);
 
     const template: Electron.MenuItemConstructorOptions[] = [
-      { label: statusLine(inbox, errors, lastPoll, processing, cfg.paused), enabled: false },
+      { label: statusLine(inbox, errors, lastPoll, processing, cfg.paused, scheduleReason), enabled: false },
     ];
     if (ollamaWarning) {
       template.push({ type: 'separator' });
@@ -227,7 +238,12 @@ export function createTray(ctx: TrayContext): TrayHandle {
   };
 }
 
-function trayTooltipLabel(state: TrayState, processing: ProcessingSummary, errors: number): string {
+function trayTooltipLabel(
+  state: TrayState,
+  processing: ProcessingSummary,
+  errors: number,
+  scheduleReason: string | null,
+): string {
   switch (state) {
     case 'error':
       return `Needs attention (${errors} error${errors === 1 ? '' : 's'})`;
@@ -236,7 +252,7 @@ function trayTooltipLabel(state: TrayState, processing: ProcessingSummary, error
     case 'active':
       return processing.currentStatus ? humanProcessingLabel(processing.currentStatus).replace('…', '') : 'Working';
     case 'waiting':
-      return 'New recordings waiting';
+      return scheduleReason ?? 'New recordings waiting';
     case 'idle':
       return 'Ready';
   }
@@ -248,6 +264,7 @@ function statusLine(
   last: LastPollResult | null,
   processing: ProcessingSummary,
   paused: PauseConfig,
+  scheduleReason: string | null,
 ): string {
   const bits: string[] = [];
   const pauseLabel = formatPauseStatus(paused);
@@ -267,6 +284,7 @@ function statusLine(
   if (processing.queued > 0) {
     bits.push(`${processing.queued} queued`);
   }
+  if (scheduleReason) bits.push(scheduleReason);
   if (inbox > 0) bits.push(`${inbox} in inbox`);
   if (errors > 0) bits.push(`${errors} error${errors === 1 ? '' : 's'}`);
   return bits.join(' · ');

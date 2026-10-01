@@ -69,6 +69,8 @@ export interface RecordingRow {
    * and doTranscribe/doSummarise in pipelineSteps.ts for how it's used.
    */
   attendees_json: string | null;
+  /** Jumps an idle/overnight processing schedule; see migration 15. */
+  urgent: number;
   created_at: number;
   updated_at: number;
 }
@@ -475,6 +477,18 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_summary_versions_recording ON summary_versions(recording_id, created_at DESC);
     `,
   },
+  {
+    version: 15,
+    sql: `
+      -- Lets one tagged recording jump an idle/overnight processing
+      -- schedule (see main/processingSchedule.ts and Worker.loop in
+      -- worker.ts). Meaningless in the default 'immediate' schedule mode,
+      -- where every tagged row is already claimable regardless. 0 for
+      -- every existing row -- nothing was ever "urgent" before this
+      -- existed, and an explicit user action is what sets it from here.
+      ALTER TABLE recordings ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 export function openDatabase(_path?: string): Database.Database {
@@ -822,13 +836,19 @@ export class State {
    *
    * Returns the row as it looked before the status change, or undefined
    * if nothing is ready (or nothing's next-step is allowed).
+   *
+   * `urgentOnly`: when an idle/overnight processing schedule is blocking
+   * normal claims (see evaluateSchedule in processingSchedule.ts), the
+   * worker still wants urgent-flagged rows to jump straight through —
+   * this restricts the claim to `urgent = 1` rows without otherwise
+   * changing the pause/step-allowed logic above.
    */
-  claimNextTagged(allowedSteps?: Set<PipelineStep>): RecordingRow | undefined {
+  claimNextTagged(allowedSteps?: Set<PipelineStep>, urgentOnly = false): RecordingRow | undefined {
     return this.db.transaction((): RecordingRow | undefined => {
       const rows = this.db
         .prepare(
           `SELECT * FROM recordings
-           WHERE status = 'tagged'
+           WHERE status = 'tagged' ${urgentOnly ? 'AND urgent = 1' : ''}
            ORDER BY synced_at ASC`,
         )
         .all() as RecordingRow[];
@@ -1076,15 +1096,30 @@ export class State {
     clientId: string,
     meetingTypeId: string,
     attendees?: Attendee[],
+    urgent?: boolean,
   ): boolean {
     const attendeesJson = attendees && attendees.length > 0 ? JSON.stringify(attendees) : null;
     const result = this.db
       .prepare(
         `UPDATE recordings
-         SET client_id = ?, meeting_type_id = ?, attendees_json = ?, status = 'tagged', updated_at = ?
+         SET client_id = ?, meeting_type_id = ?, attendees_json = ?, urgent = ?, status = 'tagged', updated_at = ?
          WHERE id = ? AND status = 'inbox'`,
       )
-      .run(clientId, meetingTypeId, attendeesJson, Date.now(), id);
+      .run(clientId, meetingTypeId, attendeesJson, urgent ? 1 : 0, Date.now(), id);
+    return result.changes > 0;
+  }
+
+  /**
+   * Toggle urgency on an already-tagged (queued or actively running)
+   * recording — the inbox-side counterpart to tagRecording's initial
+   * `urgent` flag, for "oh wait, I need this one now" after the fact.
+   * Legal from any status: flipping it on a row that's already running
+   * or complete is harmless, just moot.
+   */
+  setUrgent(id: string, urgent: boolean): boolean {
+    const result = this.db
+      .prepare('UPDATE recordings SET urgent = ?, updated_at = ? WHERE id = ?')
+      .run(urgent ? 1 : 0, Date.now(), id);
     return result.changes > 0;
   }
 

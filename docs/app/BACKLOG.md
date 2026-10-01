@@ -215,6 +215,24 @@ reasoning over pre-transcript signals rather than transcript content.
 
 ---
 
+## Processing schedule (idle/overnight) + urgent override — complete in source
+
+*Sep 2026 development checkpoint.* Settings → General gains "Processing
+schedule": process as soon as tagged (unchanged default), only once the
+Mac has been idle for N minutes, or only during a configured overnight
+window. Gates only the *next* claim — a step already running finishes
+normally, exactly like the existing per-step pause. A recording tagged
+(or later marked, from its Inbox row) "Urgent" always bypasses the
+schedule and gets claimed immediately regardless. The tray tooltip,
+status-line menu item and icon now say "Waiting for the Mac to be idle…"
+or "Waiting for the overnight window…" when queued work exists but the
+schedule is holding it back, rather than looking idle with nothing
+explaining why. See [HANDOFF.md](./HANDOFF.md) for what this
+deliberately doesn't cover (no live reasoning inside the Inbox window
+itself, no per-recording priority beyond the single urgent flag).
+
+---
+
 ## Silent degradation — the theme of the Jul 2026 shakedown
 
 *Logged Jul 2026 after a day of real use.* Almost every bug found that

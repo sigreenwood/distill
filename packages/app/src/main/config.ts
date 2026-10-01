@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { appSupportDir, configFile, expandHome } from './paths.js';
 import { recommendModelForRam, recommendContextWindow } from './modelAdvisor.js';
+import type { ProcessingSchedule, ProcessingScheduleMode } from './processingSchedule.js';
 
 export type PausableStep = 'polling' | 'download' | 'transcribe' | 'summarise';
 
@@ -88,6 +89,13 @@ export interface AppConfig {
    */
   initialPollInboxCount: number;
   logLevel: string;
+  /**
+   * When new work may be claimed at all — see evaluateSchedule in
+   * processingSchedule.ts. Defaults to 'immediate' (the original
+   * behaviour, unchanged): tagging a recording starts it right away.
+   * An urgent-flagged recording (recordings.urgent) always bypasses this.
+   */
+  processingSchedule: ProcessingSchedule;
 }
 
 export function defaultPauseConfig(): PauseConfig {
@@ -120,6 +128,29 @@ export function normalisePause(raw: unknown): PauseConfig {
 export function shouldRunStep(cfg: PauseConfig, step: PausableStep): boolean {
   if (cfg.all) return false;
   return !cfg[step];
+}
+
+export function defaultProcessingSchedule(): ProcessingSchedule {
+  return { mode: 'immediate', idleMinutes: 15, overnightStart: '22:00', overnightEnd: '06:00' };
+}
+
+const HM_RE = /^\d{1,2}:\d{2}$/;
+
+export function normaliseProcessingSchedule(raw: unknown): ProcessingSchedule {
+  const fallback = defaultProcessingSchedule();
+  if (!raw || typeof raw !== 'object') return fallback;
+  const obj = raw as Record<string, unknown>;
+  const mode: ProcessingScheduleMode =
+    obj.mode === 'idle' || obj.mode === 'overnight' ? obj.mode : 'immediate';
+  const idleMinutes =
+    typeof obj.idleMinutes === 'number' && Number.isFinite(obj.idleMinutes) && obj.idleMinutes > 0
+      ? Math.floor(obj.idleMinutes)
+      : fallback.idleMinutes;
+  const overnightStart =
+    typeof obj.overnightStart === 'string' && HM_RE.test(obj.overnightStart) ? obj.overnightStart : fallback.overnightStart;
+  const overnightEnd =
+    typeof obj.overnightEnd === 'string' && HM_RE.test(obj.overnightEnd) ? obj.overnightEnd : fallback.overnightEnd;
+  return { mode, idleMinutes, overnightStart, overnightEnd };
 }
 
 export function pausedSteps(cfg: PauseConfig): PausableStep[] {
@@ -239,6 +270,7 @@ export function normaliseConfig(cfg: any): AppConfig {
       typeof cfg.autoDismissCompleteMinutes === 'number' ? cfg.autoDismissCompleteMinutes : 10,
     initialPollInboxCount: normaliseInitialPollInboxCount(cfg.initialPollInboxCount),
     logLevel: cfg.logLevel ?? 'info',
+    processingSchedule: normaliseProcessingSchedule(cfg.processingSchedule),
   };
 }
 

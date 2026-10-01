@@ -66,6 +66,8 @@ const api = {
     cancel: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineCancel, recordingId),
     retry: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineRetry, recordingId),
     fullRerun: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineFullRerun, recordingId),
+    setUrgent: (recordingId: string, urgent: boolean) =>
+      ipcRenderer.invoke(Channels.PipelineSetUrgent, recordingId, urgent),
   },
   history: {
     list: (payload: { search?: string; limit?: number; offset?: number }) =>
@@ -78,6 +80,7 @@ const api = {
       clientId: string;
       meetingTypeId: string;
       attendees?: Attendee[];
+      urgent?: boolean;
     }) => ipcRenderer.invoke(Channels.TagSave, payload),
     frequentAttendees: (clientId: string) =>
       ipcRenderer.invoke(Channels.TagFrequentAttendees, clientId),

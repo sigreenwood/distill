@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { app, dialog, shell } from 'electron';
+import { app, dialog, shell, powerMonitor } from 'electron';
 import { appSupportDir, userVocabularyDir, expandHome, migrationNotes } from './paths.js';
 import { bundledResourcesDir } from './bundledResources.js';
 import { createLogger, type Logger } from './logger.js';
@@ -326,6 +326,7 @@ app.whenReady().then(async () => {
           // (which keeps that module test-runnable in plain Node).
           appSupportDir: appSupportDirPath,
           isPackaged: app.isPackaged,
+          getSystemIdleSeconds: () => powerMonitor.getSystemIdleTime(),
         },
         {
           onStateChanged: () => {
@@ -397,6 +398,14 @@ app.whenReady().then(async () => {
         },
       );
       worker.recoverOnStartup();
+
+      // Wakes the worker even with no other trigger event (a tag save, a
+      // retry, ...), so an idle/overnight processingSchedule window that
+      // opens while the app just sits there still gets noticed. nudge()
+      // is a no-op when the worker's already running or nothing's
+      // claimable, so this is cheap to run unconditionally rather than
+      // starting/stopping it as Settings changes the schedule mode.
+      setInterval(() => worker?.nudge(), 60_000);
 
       poller = new Poller({
         state: localState,

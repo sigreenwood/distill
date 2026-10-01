@@ -12,6 +12,7 @@ import type {
   VocabularyFileDTO,
   VocabularyScopeDTO,
 } from '../shared/api.js';
+import type { ProcessingSchedule } from '../../shared/processingSchedule.js';
 import {
   KEEPALIVE_PRESETS,
   WHISPER_MODEL_PRESETS,
@@ -1246,6 +1247,7 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
   const [daysText, setDaysText] = useState(String(initialDays));
   const [dismissText, setDismissText] = useState(String(props.initial.autoDismissCompleteMinutes));
   const [launchAtLogin, setLaunchAtLogin] = useState(props.initial.launchAtLogin);
+  const [schedule, setSchedule] = useState<ProcessingSchedule>(props.initial.processingSchedule);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -1254,6 +1256,7 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
     const base = {
       launchAtLogin,
       launchAtLoginAvailable: props.initial.launchAtLoginAvailable,
+      processingSchedule: schedule,
     };
     const dismissTrimmed = dismissText.trim();
     const dismissParsed = Number(dismissTrimmed);
@@ -1273,20 +1276,25 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
       return null;
     }
     return { ...base, audioRetentionDays: parsed, autoDismissCompleteMinutes: dismissParsed };
-  }, [enabled, daysText, dismissText, launchAtLogin, props.initial.launchAtLoginAvailable]);
+  }, [enabled, daysText, dismissText, launchAtLogin, schedule, props.initial.launchAtLoginAvailable]);
 
   const isDirty = useMemo(() => {
     if (!computed) return false;
     return (
       computed.audioRetentionDays !== props.initial.audioRetentionDays ||
       computed.autoDismissCompleteMinutes !== props.initial.autoDismissCompleteMinutes ||
-      computed.launchAtLogin !== props.initial.launchAtLogin
+      computed.launchAtLogin !== props.initial.launchAtLogin ||
+      computed.processingSchedule.mode !== props.initial.processingSchedule.mode ||
+      computed.processingSchedule.idleMinutes !== props.initial.processingSchedule.idleMinutes ||
+      computed.processingSchedule.overnightStart !== props.initial.processingSchedule.overnightStart ||
+      computed.processingSchedule.overnightEnd !== props.initial.processingSchedule.overnightEnd
     );
   }, [
     computed,
     props.initial.audioRetentionDays,
     props.initial.autoDismissCompleteMinutes,
     props.initial.launchAtLogin,
+    props.initial.processingSchedule,
   ]);
 
   const onSave = useCallback(async () => {
@@ -1454,6 +1462,74 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
                 : `Audio is deleted ${daysText || 'N'} day(s) after the most recent successful output write.`
               : 'Audio is kept indefinitely. You can sweep manually by deleting files in ~/Library/Application Support/distill/audio/.'}
           </div>
+        </section>
+        <section
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Processing schedule</div>
+          <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>
+            When tagging a recording starts it. This only delays the next recording claimed — anything
+            already running finishes normally. Mark a specific recording "Urgent" (from the tag sheet or
+            its Inbox row) to have it start immediately regardless of this setting.
+          </div>
+          <select
+            value={schedule.mode}
+            onChange={(e) => {
+              setSchedule({ ...schedule, mode: e.target.value as ProcessingSchedule['mode'] });
+              setSavedAt(null);
+            }}
+            style={{ ...inputStyle, width: '100%', marginBottom: schedule.mode === 'immediate' ? 0 : 10 }}
+          >
+            <option value="immediate">Process as soon as tagged</option>
+            <option value="idle">Only when the Mac has been idle</option>
+            <option value="overnight">Only during an overnight window</option>
+          </select>
+          {schedule.mode === 'idle' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={schedule.idleMinutes}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  setSchedule({ ...schedule, idleMinutes: Number.isFinite(n) && n > 0 ? Math.floor(n) : schedule.idleMinutes });
+                  setSavedAt(null);
+                }}
+                style={{ ...inputStyle, width: 80 }}
+              />
+              <span style={{ fontSize: 12 }}>minutes of no keyboard/mouse activity</span>
+            </div>
+          )}
+          {schedule.mode === 'overnight' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="time"
+                value={schedule.overnightStart}
+                onChange={(e) => {
+                  setSchedule({ ...schedule, overnightStart: e.target.value });
+                  setSavedAt(null);
+                }}
+                style={inputStyle}
+              />
+              <span style={{ fontSize: 12 }}>to</span>
+              <input
+                type="time"
+                value={schedule.overnightEnd}
+                onChange={(e) => {
+                  setSchedule({ ...schedule, overnightEnd: e.target.value });
+                  setSavedAt(null);
+                }}
+                style={inputStyle}
+              />
+              <span style={{ fontSize: 12 }}>local time, can cross midnight</span>
+            </div>
+          )}
         </section>
         {error && (
           <div role="alert" style={errorBoxStyle}>

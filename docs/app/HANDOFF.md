@@ -611,19 +611,127 @@ Limitations worth retaining:
   you want to force a retry after, say, fixing a mis-parsed attendee
   name without changing the list.
 
+## Step 10 — processing schedule (idle/overnight) + urgent override: complete in source
+
+Checkpoint: the commit containing this update, titled
+`feat(schedule): idle/overnight processing with an urgent override`.
+
+Item 8 from the original ten-item scope: "offer processing now, when the
+Mac is idle, or during a chosen overnight window... allow an urgent
+recording to move ahead of the queue... show whether work is waiting,
+paused or running, and why." Default behaviour is unchanged — a fresh
+or existing config normalises to `mode: 'immediate'`, which is exactly
+today's "tag it, it starts" flow.
+
+- `main/processingSchedule.ts`: `evaluateSchedule(schedule, systemIdleSeconds,
+  now)` — pure, tested, handles an overnight window crossing midnight
+  (`isWithinOvernightWindow`) and treats a malformed time string as
+  "never in window" rather than throwing.
+- `AppConfig.processingSchedule` (`config.ts`): `mode: 'immediate' |
+  'idle' | 'overnight'`, `idleMinutes`, `overnightStart`/`overnightEnd`
+  ("HH:MM"). `normaliseProcessingSchedule` is lenient on load (bad
+  field → that field's default, not a crash); `assertProcessingSchedule`
+  in `ipc.ts` is strict on save (throws), matching this codebase's
+  existing lenient-load/strict-save split.
+- `recordings.urgent` (migration 15): set at tag time (a checkbox in the
+  tag sheet, off by default) or toggled after the fact from a tagged
+  row's Inbox card ("Mark urgent"/"Unmark urgent" — only shown while
+  still queued; once claimed the worker is already running it, so the
+  toggle would be moot). `State.claimNextTagged` gained a `urgentOnly`
+  parameter rather than a new query path.
+- `Worker.loop` (`worker.ts`): evaluates the schedule before every claim;
+  when blocked, claims only `urgent = 1` rows instead of stopping
+  outright. Never touches a step already running — identical in spirit
+  to the existing per-step pause, which also only ever gates the *next*
+  claim. `PipelineContext` gained an optional `getSystemIdleSeconds`
+  getter (same injection pattern as `getConfig`/`ollama`/`plaud`) so
+  `worker.ts` and `pipelineSteps.ts` stay Electron-import-free; wired
+  from `powerMonitor.getSystemIdleTime()` in `main/index.ts`. A new
+  unconditional 60s `setInterval` calls `worker.nudge()` so a window
+  opening while the app just sits there (no tag save, no retry, nothing
+  else to trigger a check) still gets noticed — cheap, since `nudge()`
+  is already a no-op when nothing's claimable.
+- **"Why" surface**: the tray tooltip, the status-line menu item, and
+  the icon state itself now account for schedule-blocked queued work.
+  `main/tray.ts`'s `rebuild()` folds `processing.queued` into the
+  existing `waitingCount` input to `computeTrayState` when the schedule
+  is blocking and nothing's running, so it shows the existing amber
+  "waiting" glyph instead of looking idle — then the tooltip/status text
+  say *why* ("Waiting for the Mac to be idle for 15 minutes" / "Waiting
+  for the overnight window (22:00–06:00)") instead of the generic "New
+  recordings waiting". An urgent row among the queued ones gets claimed
+  almost immediately, which moves `running` above 0 and out of this
+  branch on its own — no separate urgent-aware branch needed in the tray.
+- Settings → General, new "Processing schedule" section: mode select,
+  conditional idle-minutes number input or overnight start/end
+  `<input type="time">` pair (native time inputs always yield valid
+  `HH:MM`, so no client-side format validation was needed).
+
+Main files: `shared/processingSchedule.ts` (DTO types),
+`main/processingSchedule.ts`, `main/config.ts`, `main/state.ts`
+(migration 15, `setUrgent`, `claimNextTagged`'s new parameter,
+`tagRecording`'s new parameter), `main/worker.ts`, `main/pipelineSteps.ts`
+(`PipelineContext.getSystemIdleSeconds`), `main/tray.ts`, `main/index.ts`,
+`main/ipc.ts` (`Channels.PipelineSetUrgent`, `TagSave`'s new field,
+`SettingsSaveGeneral`'s new field), `renderer/settings/panes.tsx`
+(`GeneralPane`), `renderer/tag/main.tsx` (urgent checkbox),
+`renderer/inbox/main.tsx` (`ProcessingRow`'s urgent toggle).
+
+Verification: 237 tests (11 new — `evaluateSchedule`/
+`isWithinOvernightWindow`'s precedence and midnight-crossing behaviour,
+and `normaliseProcessingSchedule`'s per-field fallback), both
+typechecks, production build. **Not exercised: the actual Settings
+pane, tag-sheet checkbox, Inbox urgent toggle, or a real idle/overnight
+wait against a running app** — same Node-version gap as every step this
+session. `claimNextTagged`'s DB-level behaviour and the worker's own
+loop are not directly unit-tested either, consistent with the rest of
+`state.ts`/`worker.ts` (see `CLAUDE.md`'s `better-sqlite3` ABI note —
+no worker test file existed before this step and none was added, same
+as the project's existing limit on what can run under vitest). Before
+relying on this in real use: set an idle or overnight schedule, confirm
+the tray tooltip explains the wait, mark one recording urgent and
+confirm it jumps ahead, and confirm a 60s-old queued state clears once
+the window opens without any other action.
+
+Limitations worth retaining:
+
+- **No live "why" text inside the Inbox window itself** — only the tray
+  (tooltip + status-line menu item) explains the wait. The Inbox's
+  queued-row card just says "Queued · N steps" (plus "Urgent · " when
+  applicable) regardless of whether a schedule is holding it back. Fully
+  live schedule-status in the Inbox would need a new polled IPC endpoint
+  (`inbox.list()`'s existing contract is a plain array, not an object
+  with a status field) — deliberately not added this pass to avoid
+  changing that contract for every existing caller.
+- **No priority ordering beyond binary urgent/not-urgent.** Multiple
+  urgent rows still claim oldest-`synced_at`-first, same as normal
+  claiming; there's no second-level "most urgent first" ranking.
+- **Idle detection is exactly what macOS calls idle** (no keyboard/mouse
+  input) — a Mac actively doing something CPU-heavy with no input
+  (encoding video, say) still counts as idle. This is `powerMonitor`'s
+  own definition, not something this feature adds nuance to.
+- **The overnight window is wall-clock local time**, re-evaluated every
+  60s; it does not account for the Mac sleeping through part of the
+  window (a MacBook asleep from 23:00–05:00 simply never ticks the timer
+  during that stretch, so nothing claims until it wakes and the next
+  60s tick lands inside the remaining window — not a bug, just a
+  consequence of `setInterval` not running during sleep).
+
 ## Next step
 
-Later ideas, not implemented or fully specified: idle/overnight
-processing; diagnostics and backup/restore. Source-linked audio is also
-later work. Decision supersession/versioning (see the register's
-limitations above), a tray-level completion pulse and native Dock
-switching (see Step 6's limitations), a real side-by-side diff view or
-a retention policy for summary versions (see Step 7's limitations),
-configurable adaptive-context tuning (see Step 8's limitations), and
-post-transcript reclassification (see Step 9's limitations) are optional
-follow-ons to already-shipped steps, not required by them. Long-meeting
-chunking (the original item 7) remains deliberately un-built — see
-Step 8 and BACKLOG.md's "Truncation guard" for why.
+Later ideas, not implemented or fully specified: diagnostics and
+backup/restore (items 9 and 10 from the original ten-item scope).
+Source-linked audio is also later work. Decision supersession/versioning
+(see the register's limitations above), a tray-level completion pulse
+and native Dock switching (see Step 6's limitations), a real
+side-by-side diff view or a retention policy for summary versions (see
+Step 7's limitations), configurable adaptive-context tuning (see Step
+8's limitations), post-transcript reclassification (see Step 9's
+limitations), and live in-Inbox schedule status or multi-level priority
+(see Step 10's limitations) are optional follow-ons to already-shipped
+steps, not required by them. Long-meeting chunking (the original item 7)
+remains deliberately un-built — see Step 8 and BACKLOG.md's "Truncation
+guard" for why.
 
 No package has been installed or release published as part of this work.
 The known unrelated untracked files are intentionally left in the working

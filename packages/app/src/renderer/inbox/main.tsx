@@ -141,6 +141,10 @@ function Inbox() {
     void window.distill.pipeline.retry(id).catch((e) => alert(`Could not retry: ${String(e)}`));
   }, []);
 
+  const onToggleUrgent = useCallback((id: string, urgent: boolean) => {
+    void window.distill.pipeline.setUrgent(id, urgent).catch((e) => alert(`Could not update: ${String(e)}`));
+  }, []);
+
 
   const onReveal = useCallback((id: string) => {
     void window.distill.inbox.revealInFinder(id).catch((e) => alert(`Could not reveal: ${String(e)}`));
@@ -393,7 +397,7 @@ function Inbox() {
       {sections.processing.length > 0 && (
         <Section title="Processing" count={sections.processing.length}>
           {sections.processing.map((r) => (
-            <ProcessingRow key={r.id} r={r} focused={focusedId === r.id} onCancel={onCancel} />
+            <ProcessingRow key={r.id} r={r} focused={focusedId === r.id} onCancel={onCancel} onToggleUrgent={onToggleUrgent} />
           ))}
         </Section>
       )}
@@ -781,15 +785,20 @@ function Section(props: {
   );
 }
 
-function ProcessingRow(props: { r: InboxItemDTO; focused: boolean; onCancel: (id: string) => void }) {
+function ProcessingRow(props: {
+  r: InboxItemDTO;
+  focused: boolean;
+  onCancel: (id: string) => void;
+  onToggleUrgent: (id: string, urgent: boolean) => void;
+}) {
   const { r } = props;
   // "2/4 Transcribing…" — the total comes from the row's own plan, so an
   // imported transcript honestly reads "1/2 Summarising…" rather than
   // pretending it skipped two steps.
-  const stepLabel =
-    r.status === 'tagged'
-      ? `Queued · ${r.stepTotal} step${r.stepTotal === 1 ? '' : 's'}`
-      : `${r.stepIndex ?? '?'}/${r.stepTotal} ${humanStep(r.currentStep)}…`;
+  const queued = r.status === 'tagged';
+  const stepLabel = queued
+    ? `${r.urgent ? 'Urgent · ' : ''}Queued · ${r.stepTotal} step${r.stepTotal === 1 ? '' : 's'}`
+    : `${r.stepIndex ?? '?'}/${r.stepTotal} ${humanStep(r.currentStep)}…`;
   return (
     <Row id={r.id} focused={props.focused}>
       <Title r={r} />
@@ -810,6 +819,15 @@ function ProcessingRow(props: { r: InboxItemDTO; focused: boolean; onCancel: (id
       </div>
       <div className="row">
         <button onClick={() => props.onCancel(r.id)}>Cancel</button>
+        {/* Only meaningful while still queued — once claimed the worker is already running it. */}
+        {queued && (
+          <button
+            onClick={() => props.onToggleUrgent(r.id, !r.urgent)}
+            title="Jump an idle/overnight processing schedule — see Settings → General"
+          >
+            {r.urgent ? 'Unmark urgent' : 'Mark urgent'}
+          </button>
+        )}
       </div>
     </Row>
   );

@@ -210,6 +210,7 @@ export class Poller {
           estimated_input_tokens: null,
           context_window_at_submit: null,
           processed_externally: elsewhere ? 1 : 0,
+          urgent: 0,
         });
         if (rowStatus === 'inbox') fresh.push(r);
       }

@@ -48,6 +48,7 @@ function Tag() {
   const [frequent, setFrequent] = useState<FrequentAttendee[]>([]);
   const [addClient, setAddClient] = useState<AddClientState>({ open: false });
   const [addMeetingType, setAddMeetingType] = useState<AddMeetingTypeState>({ open: false });
+  const [urgent, setUrgent] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -254,13 +255,14 @@ function Tag() {
         clientId: selectedClientId,
         meetingTypeId: selectedMeetingTypeId,
         ...(finalAttendees.length > 0 ? { attendees: finalAttendees } : {}),
+        ...(urgent ? { urgent: true } : {}),
       });
       window.close();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));
       setSaving(false);
     }
-  }, [recordingId, selectedClientId, selectedMeetingTypeId, attendees, attendeePaste]);
+  }, [recordingId, selectedClientId, selectedMeetingTypeId, attendees, attendeePaste, urgent]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -572,6 +574,14 @@ function Tag() {
             </div>
           </div>
         )}
+      </div>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, cursor: 'pointer' }}>
+        <input type="checkbox" checked={urgent} onChange={(e) => setUrgent(e.target.checked)} />
+        Urgent — process as soon as possible
+      </label>
+      <div className="muted" style={{ fontSize: 10, marginTop: -8 }}>
+        Only matters if Settings → General has processing limited to idle time or an overnight window;
+        otherwise everything already starts right away.
       </div>
       {saveError && (
         <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: -6 }}>{saveError}</div>

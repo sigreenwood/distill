@@ -34,6 +34,16 @@ export interface PipelineContext {
   packageDir: string;
   appSupportDir?: string;
   isPackaged?: boolean;
+  /**
+   * Seconds since the last user input, for 'idle' processingSchedule
+   * mode (see Worker.loop and processingSchedule.ts). Injected rather
+   * than read from Electron's powerMonitor directly, keeping this file
+   * and worker.ts free of an Electron import — same reasoning as
+   * getConfig being a getter instead of a plain AppConfig. Optional so
+   * existing tests that construct a PipelineContext without it keep
+   * working; the worker treats a missing getter as "never idle".
+   */
+  getSystemIdleSeconds?: () => number;
 }
 
 /**

@@ -147,6 +147,7 @@ export async function importLocalFile(
     estimated_input_tokens: null,
     context_window_at_submit: null,
     processed_externally: 0,
+    urgent: 0,
   });
   deps.logger.info(
     { id, kind, originalName, audioPath: dest, durationSeconds, bytes: size },
@@ -239,6 +240,7 @@ async function importTranscript(
     estimated_input_tokens: null,
     context_window_at_submit: null,
     processed_externally: 0,
+    urgent: 0,
   });
 
   deps.logger.info(

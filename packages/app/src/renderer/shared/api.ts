@@ -26,6 +26,7 @@ import type { BriefCandidate, ClientBrief } from '../../shared/brief';
 import type { RegisterItem } from '../../shared/register';
 import type { SummaryVersionDTO } from '../../shared/summaryVersion';
 import type { MeetingTypeSuggestion } from '../../shared/meetingTypeSuggestion.js';
+import type { ProcessingSchedule } from '../../shared/processingSchedule.js';
 
 export type PipelineStep = 'download' | 'transcribe' | 'summarise' | 'write';
 
@@ -59,6 +60,8 @@ export interface InboxItemDTO {
   contextWindowAtSubmit: number | null;
   modelSnapshot: string | null;
   processedExternally: boolean;
+  /** Jumps an idle/overnight processing schedule; see shared/processingSchedule.ts. */
+  urgent: boolean;
   /** Whether a "Full re-run" can re-transcribe this recording — a local audio file, or (Plaud only) a cloud copy to re-fetch. */
   audioAvailable: boolean;
   /** Effective per-destination targets: this row's override if it has one, else the current Settings -> Outputs default. */
@@ -130,6 +133,7 @@ export interface GeneralDTO {
    * Electron dev binary rather than distill, so the toggle is inert.
    */
   launchAtLoginAvailable: boolean;
+  processingSchedule: ProcessingSchedule;
 }
 
 export interface PerformanceDTO {
@@ -308,6 +312,8 @@ export interface DistillApi {
     cancel(recordingId: string): Promise<void>;
     retry(recordingId: string): Promise<void>;
     fullRerun(recordingId: string): Promise<{ started: boolean }>;
+    /** Jump an idle/overnight processing schedule for this one recording. */
+    setUrgent(recordingId: string, urgent: boolean): Promise<void>;
   };
   history: {
     list(payload: {
@@ -323,6 +329,7 @@ export interface DistillApi {
       clientId: string;
       meetingTypeId: string;
       attendees?: Attendee[];
+      urgent?: boolean;
     }): Promise<void>;
     /** People from this client's past meetings, most frequent first. */
     frequentAttendees(clientId: string): Promise<FrequentAttendee[]>;

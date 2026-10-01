@@ -29,6 +29,7 @@ export const Channels = {
   PipelineCancel: 'pipeline.cancel',
   PipelineRetry: 'pipeline.retry',
   PipelineFullRerun: 'pipeline.fullRerun',
+  PipelineSetUrgent: 'pipeline.setUrgent',
   HistoryList: 'history.list',
   TagSave: 'tag.save',
   TagOpenSheet: 'tag.open-sheet',
