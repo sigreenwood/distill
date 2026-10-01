@@ -79,7 +79,10 @@ export interface IpcContext {
   applyConfigUpdate: (patch: Partial<AppConfig>) => AppConfig;
   getWorker: () => Worker | null;
   getPlaudStore: () => KeychainCredentialStore | null;
+  /** Sign-out only — switching the live connection mid-run needs a restart; see onPlaudSignedIn for sign-in. */
   onPlaudCredentialsChanged?: () => void;
+  /** Fires after a successful sign-in — see connectPlaudAndStartPipeline in index.ts, which this is what makes idempotent re-connect possible. */
+  onPlaudSignedIn?: () => void;
   onStateChanged?: () => void;
   onSetupComplete?: () => void;
 }
@@ -1359,7 +1362,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       throw new Error(`Sign in failed: ${msg}`);
     }
     ctx.logger.info({ email: p.email, region: p.region }, 'Plaud sign-in successful');
-    ctx.onPlaudCredentialsChanged?.();
+    ctx.onPlaudSignedIn?.();
     return getPlaudAccountStatus(store);
   });
 

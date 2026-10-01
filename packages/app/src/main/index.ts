@@ -196,10 +196,32 @@ app.whenReady().then(async () => {
     // Plaud credential store is constructed later in this whenReady
     // block, so use a getter so the IPC handlers see it once it exists.
     getPlaudStore: () => plaudStore,
+    // Sign-out only now — see onPlaudSignedIn below for sign-in, which
+    // reconnects live instead of asking for a restart.
     onPlaudCredentialsChanged: () => {
       notify({
         title: 'distill — restart to apply',
-        body: 'Restart distill to start syncing with the new Plaud account.',
+        body: 'Restart distill to stop syncing with the signed-out Plaud account.',
+      });
+    },
+    // Signing in while already connected (switching accounts) still needs
+    // a restart: worker/poller hold a reference to the old PlaudClient,
+    // and swapping that live is more risk than this fix is worth. Signing
+    // in for the first time (the actual bug — see BACKLOG.md's "Live
+    // re-connect after a Plaud sign-in") reconnects immediately instead.
+    onPlaudSignedIn: () => {
+      if (poller) {
+        notify({
+          title: 'distill — restart to apply',
+          body: 'Restart distill to switch to the new Plaud account.',
+        });
+        return;
+      }
+      void connectPlaudAndStartPipeline().then((started) => {
+        if (started) {
+          trayHandle?.setOllamaWarning(null);
+          notify({ title: 'distill — signed in', body: 'Syncing with Plaud has started.' });
+        }
       });
     },
     onStateChanged: () => trayHandle?.refresh(),
@@ -228,83 +250,23 @@ app.whenReady().then(async () => {
     return;
   }
 
-  async function continueBootstrap(): Promise<void> {
-    const tray = createTray({
-      state: localState,
-      logger: localLogger,
-      resourcesDir,
-      getConfig: () => cfg,
-      onSyncNow: async () => {
-        if (!poller) return;
-        localLogger.info('manual sync requested');
-        await poller.syncNow();
-      },
-      onOpenInbox: (bounds) => {
-        openInbox(bounds);
-        broadcastInboxChanged();
-      },
-      onOpenErrors: (bounds) => {
-        // Focus the first errored row so the user lands on the thing the
-        // ⚠ is actually about, rather than the top of the list.
-        const [firstErrored] = localState.listErroredIds();
-        openInbox(bounds, firstErrored);
-        broadcastInboxChanged();
-        if (firstErrored) broadcastFocusRecording(firstErrored);
-      },
-      onDismissErrors: () => {
-        const cleared = localState.dismissAllErrors();
-        localLogger.info({ cleared }, 'errors dismissed from tray');
-        trayHandle?.refresh();
-        broadcastInboxChanged();
-      },
-      onOpenSettings: () => openSettings(),
-      onOpenHistory: () => openHistory(),
-      onOpenClientBrief: () => openClientBrief(),
-      onOpenClientRegister: () => openClientRegister(),
-      onPauseChange: (nextPause) => {
-        const updated = applyConfigUpdate({ paused: nextPause });
-        saveConfig(updated);
-        trayHandle?.refresh();
-        worker?.nudge();
-        localLogger.info({ paused: nextPause }, 'pause settings changed');
-      },
-    });
-    trayHandle = tray;
-
-    const ollama = new OllamaClient(cfg.ollama.host);
-    try {
-      const pf = await ollama.preflight(cfg.ollama.model);
-      if (!pf.ok) {
-        const msg = preflightMessage(pf);
-        localLogger.warn({ preflight: pf }, 'Ollama pre-flight failed');
-        tray.setOllamaWarning(`Ollama: ${pf.reason === 'unreachable' ? 'not running' : 'model missing'}`);
-        notify({ title: 'distill — Ollama check failed', body: msg });
-      } else {
-        localLogger.info({ model: pf.model }, 'Ollama pre-flight ok');
-        tray.setOllamaWarning(null);
-      }
-    } catch (e) {
-      localLogger.warn({ err: String(e) }, 'Ollama pre-flight errored (non-fatal)');
-    }
-
-    plaudStore = new KeychainCredentialStore();
-    await plaudStore.prime();
-    try {
-      const result = await migratePasswordToKeychain();
-      if (result === 'migrated') {
-        localLogger.info('migrated Plaud password from config.json to Keychain');
-      } else if (result === 'kept-as-fallback') {
-        localLogger.info(
-          'Plaud password still in config.json (no Keychain copy yet); will migrate on first sign-in',
-        );
-      }
-    } catch (e) {
-      localLogger.warn(
-        { err: String(e) },
-        'password migration failed (non-fatal; legacy file path still works)',
-      );
-    }
-
+  /**
+   * Connects to Plaud and starts the worker + poller. Idempotent — a
+   * no-op if a poller already exists — so calling this again after a
+   * successful sign-in (see onPlaudSignedIn below) never creates a
+   * duplicate poller. Returns whether the pipeline is now running
+   * (either it already was, or this call just started it).
+   *
+   * Previously this was inline in continueBootstrap and only ever ran
+   * once, at startup: if Plaud wasn't authenticated yet, worker/poller
+   * stayed null for the rest of the app's life, and signing in later
+   * from Settings -> Sources did nothing until a manual restart. See
+   * BACKLOG.md's "Live re-connect after a Plaud sign-in".
+   */
+  async function connectPlaudAndStartPipeline(): Promise<boolean> {
+    if (poller) return true;
+    if (!trayHandle || !plaudStore) return false;
+    const tray = trayHandle;
     try {
       const conn = connect(plaudStore);
       localLogger.info({ region: conn.region }, 'Plaud connection ready');
@@ -317,7 +279,7 @@ app.whenReady().then(async () => {
           // steps without needing an app restart.
           getConfig: () => cfg,
           logger: localLogger,
-          ollama,
+          ollama: new OllamaClient(cfg.ollama.host),
           plaud: conn.client,
           packageDir: app.getAppPath(),
           // Used by prettifyError for path-aware messages (EACCES,
@@ -449,6 +411,7 @@ app.whenReady().then(async () => {
         },
       });
       poller.start();
+      return true;
     } catch (e) {
       if (e instanceof PlaudNotAuthenticatedError) {
         localLogger.error({ err: e.message }, 'Plaud not authenticated');
@@ -462,7 +425,88 @@ app.whenReady().then(async () => {
         localLogger.error({ err: msg }, 'failed to start Plaud poller');
         tray.setOllamaWarning(`Plaud: ${msg}`);
       }
+      return false;
     }
+  }
+
+  async function continueBootstrap(): Promise<void> {
+    const tray = createTray({
+      state: localState,
+      logger: localLogger,
+      resourcesDir,
+      getConfig: () => cfg,
+      onSyncNow: async () => {
+        if (!poller) return;
+        localLogger.info('manual sync requested');
+        await poller.syncNow();
+      },
+      onOpenInbox: (bounds) => {
+        openInbox(bounds);
+        broadcastInboxChanged();
+      },
+      onOpenErrors: (bounds) => {
+        // Focus the first errored row so the user lands on the thing the
+        // ⚠ is actually about, rather than the top of the list.
+        const [firstErrored] = localState.listErroredIds();
+        openInbox(bounds, firstErrored);
+        broadcastInboxChanged();
+        if (firstErrored) broadcastFocusRecording(firstErrored);
+      },
+      onDismissErrors: () => {
+        const cleared = localState.dismissAllErrors();
+        localLogger.info({ cleared }, 'errors dismissed from tray');
+        trayHandle?.refresh();
+        broadcastInboxChanged();
+      },
+      onOpenSettings: () => openSettings(),
+      onOpenHistory: () => openHistory(),
+      onOpenClientBrief: () => openClientBrief(),
+      onOpenClientRegister: () => openClientRegister(),
+      onPauseChange: (nextPause) => {
+        const updated = applyConfigUpdate({ paused: nextPause });
+        saveConfig(updated);
+        trayHandle?.refresh();
+        worker?.nudge();
+        localLogger.info({ paused: nextPause }, 'pause settings changed');
+      },
+    });
+    trayHandle = tray;
+
+    const ollama = new OllamaClient(cfg.ollama.host);
+    try {
+      const pf = await ollama.preflight(cfg.ollama.model);
+      if (!pf.ok) {
+        const msg = preflightMessage(pf);
+        localLogger.warn({ preflight: pf }, 'Ollama pre-flight failed');
+        tray.setOllamaWarning(`Ollama: ${pf.reason === 'unreachable' ? 'not running' : 'model missing'}`);
+        notify({ title: 'distill — Ollama check failed', body: msg });
+      } else {
+        localLogger.info({ model: pf.model }, 'Ollama pre-flight ok');
+        tray.setOllamaWarning(null);
+      }
+    } catch (e) {
+      localLogger.warn({ err: String(e) }, 'Ollama pre-flight errored (non-fatal)');
+    }
+
+    plaudStore = new KeychainCredentialStore();
+    await plaudStore.prime();
+    try {
+      const result = await migratePasswordToKeychain();
+      if (result === 'migrated') {
+        localLogger.info('migrated Plaud password from config.json to Keychain');
+      } else if (result === 'kept-as-fallback') {
+        localLogger.info(
+          'Plaud password still in config.json (no Keychain copy yet); will migrate on first sign-in',
+        );
+      }
+    } catch (e) {
+      localLogger.warn(
+        { err: String(e) },
+        'password migration failed (non-fatal; legacy file path still works)',
+      );
+    }
+
+    await connectPlaudAndStartPipeline();
 
     localLogger.info(
       {

@@ -271,20 +271,27 @@ would have caught five of the six bugs above in seconds.
 
 ---
 
-## Live re-connect after a Plaud sign-in
+## ~~Live re-connect after a Plaud sign-in~~ — resolved
 
-*Hit for real Jul 2026.* Signing in from Settings → Sources stores the
-credentials, then does nothing until the app is restarted: at startup
-`connect()` threw `PlaudNotAuthenticatedError`, so neither the poller
-nor the worker were ever constructed, and signing in later doesn't
-retroactively create them. The app shows a "restart to apply" toast,
-which works but is a poor first-run experience — the most likely moment
-for a new user to conclude the app is broken.
+*Hit for real Jul 2026; fixed Sep 2026.* Signing in from Settings →
+Sources stored the credentials, then did nothing until the app was
+restarted: at startup `connect()` threw `PlaudNotAuthenticatedError`,
+so neither the poller nor the worker were ever constructed, and signing
+in later didn't retroactively create them. The app showed a "restart to
+apply" toast, which worked but was a poor first-run experience — the
+most likely moment for a new user to conclude the app is broken.
 
-Fix shape: after a successful sign-in, if `poller` is null, run the
-same bootstrap block that `continueBootstrap()` runs — build the Plaud
-client, worker and poller, then kick a poll. Needs care so a second
-sign-in doesn't create a duplicate poller.
+Fixed per the shape sketched here: the connect/worker/poller block in
+`main/index.ts` was pulled out into `connectPlaudAndStartPipeline()`,
+idempotent on an existing `poller` so a second sign-in can't double it
+up. A successful sign-in now calls it directly (new `onPlaudSignedIn`
+IPC callback, separate from `onPlaudCredentialsChanged`, which stays
+sign-out-only); on success the tray's stale "Plaud: not signed in"
+warning clears and a "signed in, syncing started" notification replaces
+the restart toast. Signing into a *different* account while already
+connected still asks for a restart — swapping the live connection
+underneath an already-running worker/poller was judged more risk than
+this fix was worth. See [HANDOFF.md](./HANDOFF.md) for the checkpoint.
 
 ---
 

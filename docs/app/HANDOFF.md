@@ -717,6 +717,72 @@ Limitations worth retaining:
   60s tick lands inside the remaining window — not a bug, just a
   consequence of `setInterval` not running during sleep).
 
+## Step 11 — live Plaud reconnect after sign-in: complete in source
+
+Checkpoint: the commit containing this update, titled
+`fix(plaud): reconnect live after sign-in instead of asking for a restart`.
+
+A real bug, not a feature — logged in BACKLOG.md as "hit for real Jul
+2026": signing in from Settings → Sources stored the credentials but did
+nothing until the app was restarted, because `connect()` throwing
+`PlaudNotAuthenticatedError` at startup meant the worker and poller were
+never constructed, and nothing ever retried that construction later. The
+app's own "restart to apply" toast papered over it, but a brand-new
+user's very first action (sign in) silently not working is about the
+worst possible first impression.
+
+- `main/index.ts`: the connect/worker/poller block that used to be
+  inline in `continueBootstrap()` is now `connectPlaudAndStartPipeline()`
+  — idempotent (`if (poller) return true;` up front), so calling it again
+  after the pipeline is already running is a safe no-op rather than a
+  second poller. `continueBootstrap()` now just calls it once, same as
+  before; nothing about the normal (already-authenticated) startup path
+  changed.
+- New `IpcContext.onPlaudSignedIn` callback (`ipc.ts`), fired only on a
+  *successful* sign-in — separate from the pre-existing
+  `onPlaudCredentialsChanged`, which now fires on sign-out only (its
+  "restart to apply" message was also reworded; it previously said
+  "start syncing with the new Plaud account" for a sign-*out*, which
+  never made sense). `onPlaudSignedIn` checks whether `poller` already
+  exists:
+  - If not (the actual bug — never successfully connected before):
+    calls `connectPlaudAndStartPipeline()`, clears a stale "Plaud: not
+    signed in" tray warning on success, and shows a "signed in, syncing
+    started" notification instead of asking for a restart.
+  - If a poller already exists (switching to a *different* account while
+    already connected): still asks for a restart. The already-running
+    worker/poller hold a reference to the old `PlaudClient`; swapping
+    that live was judged more risk than this fix was worth, and isn't
+    the behaviour BACKLOG.md's entry was actually about.
+
+Main files: `main/index.ts`, `main/ipc.ts`.
+
+Verification: 237 tests (unchanged — this is bootstrap/wiring code with
+no dedicated test file, same as before the fix), both typechecks,
+production build, **and an actual `npm run dev` launch under Node 22**
+confirming the normal already-authenticated startup path still reaches
+"Plaud connection ready" / "distill ready" exactly as before. **Not
+exercised: the actual sign-out → sign-in reconnect sequence** — doing
+that against this session's real, live-connected Plaud account would
+mean signing out of someone's real account to test a code path, which
+wasn't done without being asked. Before trusting this fully: sign out
+from Settings → Sources, confirm the tray shows "Plaud: not signed in"
+and the inbox stops polling, then sign back in and confirm a "signed
+in, syncing started" notification appears with no restart needed.
+
+Limitations worth retaining:
+
+- Switching to a *different* Plaud account while already connected still
+  requires a restart, unchanged from before this fix. Only the
+  never-successfully-connected-yet case was fixed, matching BACKLOG's
+  own fix shape exactly.
+- If `connect()` still fails after a sign-in (e.g. the token isn't
+  immediately readable, or some other transient issue), `poller` stays
+  null and the user sees the same "sign in needed" treatment as a
+  fresh-startup auth failure — there's no distinct "signed in but still
+  couldn't connect, here's why" message beyond what the existing catch
+  block already logs/notifies.
+
 ## Next step
 
 Later ideas, not implemented or fully specified: diagnostics and
@@ -727,11 +793,12 @@ and native Dock switching (see Step 6's limitations), a real
 side-by-side diff view or a retention policy for summary versions (see
 Step 7's limitations), configurable adaptive-context tuning (see Step
 8's limitations), post-transcript reclassification (see Step 9's
-limitations), and live in-Inbox schedule status or multi-level priority
-(see Step 10's limitations) are optional follow-ons to already-shipped
-steps, not required by them. Long-meeting chunking (the original item 7)
-remains deliberately un-built — see Step 8 and BACKLOG.md's "Truncation
-guard" for why.
+limitations), live in-Inbox schedule status or multi-level priority
+(see Step 10's limitations), and live account-switching without a
+restart (see Step 11's limitations) are optional follow-ons to
+already-shipped steps, not required by them. Long-meeting chunking (the
+original item 7) remains deliberately un-built — see Step 8 and
+BACKLOG.md's "Truncation guard" for why.
 
 No package has been installed or release published as part of this work.
 The known unrelated untracked files are intentionally left in the working
