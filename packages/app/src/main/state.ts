@@ -12,6 +12,8 @@ export type RecordingStatus =
   | 'transcribing'
   | 'summarising'
   | 'writing'
+  /** Summarised, held before writing until the user confirms where it's filed; see shared/filing.ts. */
+  | 'to_file'
   | 'complete'
   | 'error'
   | 'cancelled'
@@ -71,6 +73,12 @@ export interface RecordingRow {
   attendees_json: string | null;
   /** Jumps an idle/overnight processing schedule; see migration 15. */
   urgent: number;
+  /** Queued by "Queue all": classify before summarising, hold at 'to_file' before writing. Migration 16. */
+  needs_filing: number;
+  /** The classifier's client pick; null when nothing clearly fitted. The pick for meeting type is meeting_type_id itself. */
+  suggested_client_id: string | null;
+  filing_confidence: string | null;
+  filing_reason: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -489,6 +497,21 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE recordings ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 16,
+    sql: `
+      -- "Queue all, file later" (see main/filingSuggestion.ts). A row
+      -- queued this way has no client or meeting type; the pipeline
+      -- classifies it after transcription and holds it at 'to_file'
+      -- before writing. suggested_client_id is deliberately not a foreign
+      -- key: it is advisory, and a client deleted in the meantime just
+      -- means the Inbox shows no pre-selection.
+      ALTER TABLE recordings ADD COLUMN needs_filing INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE recordings ADD COLUMN suggested_client_id TEXT;
+      ALTER TABLE recordings ADD COLUMN filing_confidence TEXT;
+      ALTER TABLE recordings ADD COLUMN filing_reason TEXT;
+    `,
+  },
 ];
 
 export function openDatabase(_path?: string): Database.Database {
@@ -731,6 +754,10 @@ export class State {
       | 'output_html'
       | 'output_apple_note'
       | 'attendees_json'
+      | 'needs_filing'
+      | 'suggested_client_id'
+      | 'filing_confidence'
+      | 'filing_reason'
     >,
   ): void {
     const now = Date.now();
@@ -791,7 +818,7 @@ export class State {
     const result = this.db
       .prepare(
         `UPDATE recordings SET status = 'skipped', updated_at = ?
-         WHERE id = ? AND status IN ('inbox', 'error', 'cancelled', 'complete')`,
+         WHERE id = ? AND status IN ('inbox', 'error', 'cancelled', 'complete', 'to_file')`,
       )
       .run(Date.now(), id);
     return result.changes > 0;
@@ -841,20 +868,24 @@ export class State {
    * normal claims (see evaluateSchedule in processingSchedule.ts), the
    * worker still wants urgent-flagged rows to jump straight through —
    * this restricts the claim to `urgent = 1` rows without otherwise
-   * changing the pause/step-allowed logic above.
+   * changing the pause/step-allowed logic above. A row whose next step
+   * is 'write' is claimable even then: writing is quick, never pausable,
+   * and only ever queued by something the user just did (filing a
+   * recording, turning on an output) — not worth waiting overnight for.
    */
   claimNextTagged(allowedSteps?: Set<PipelineStep>, urgentOnly = false): RecordingRow | undefined {
     return this.db.transaction((): RecordingRow | undefined => {
       const rows = this.db
         .prepare(
           `SELECT * FROM recordings
-           WHERE status = 'tagged' ${urgentOnly ? 'AND urgent = 1' : ''}
+           WHERE status = 'tagged'
            ORDER BY synced_at ASC`,
         )
         .all() as RecordingRow[];
       for (const row of rows) {
         const nextStep = nextNeededStep(row);
         if (allowedSteps && !allowedSteps.has(nextStep)) continue;
+        if (urgentOnly && row.urgent !== 1 && nextStep !== 'write') continue;
         const targetStatus: RecordingStatus =
           nextStep === 'download'
             ? 'downloading'
@@ -1075,6 +1106,7 @@ export class State {
              WHEN 'transcribing'THEN 2
              WHEN 'summarising' THEN 2
              WHEN 'writing'     THEN 2
+             WHEN 'to_file'     THEN 2
              WHEN 'inbox'       THEN 3
              WHEN 'cancelled'   THEN 4
              WHEN 'complete'    THEN 5
@@ -1102,10 +1134,48 @@ export class State {
     const result = this.db
       .prepare(
         `UPDATE recordings
-         SET client_id = ?, meeting_type_id = ?, attendees_json = ?, urgent = ?, status = 'tagged', updated_at = ?
+         SET client_id = ?, meeting_type_id = ?, attendees_json = ?, urgent = ?, needs_filing = 0,
+             status = 'tagged', updated_at = ?
          WHERE id = ? AND status = 'inbox'`,
       )
       .run(clientId, meetingTypeId, attendeesJson, urgent ? 1 : 0, Date.now(), id);
+    return result.changes > 0;
+  }
+
+  /**
+   * "Queue all": every untagged inbox recording goes to the pipeline with
+   * no client or meeting type, to be classified after transcription and
+   * held at 'to_file' before anything is written. Follows the processing
+   * schedule like any tagged row. Returns how many were queued.
+   */
+  queueAllForFiling(): number {
+    return this.db
+      .prepare(
+        `UPDATE recordings
+         SET status = 'tagged', needs_filing = 1, client_id = NULL, meeting_type_id = NULL,
+             urgent = 0, updated_at = ?
+         WHERE status = 'inbox'`,
+      )
+      .run(Date.now()).changes;
+  }
+
+  /**
+   * Confirm where a held recording goes and queue it to be written. When
+   * the chosen meeting type differs from the one it was summarised with,
+   * the summary is cleared so the worker regenerates it from the stored
+   * transcript first (see filingNeedsResummary). Only legal from
+   * 'to_file'.
+   */
+  fileRecording(id: string, clientId: string, meetingTypeId: string, resummarise: boolean): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE recordings
+         SET client_id = @clientId, meeting_type_id = @meetingTypeId, needs_filing = 0,
+             summary_text = CASE WHEN @resummarise THEN NULL ELSE summary_text END,
+             status = 'tagged', updated_at = @updated_at
+         WHERE id = @id AND status = 'to_file'`,
+      )
+      .run({ id, clientId, meetingTypeId, resummarise: resummarise ? 1 : 0, updated_at: Date.now() });
     return result.changes > 0;
   }
 
@@ -1143,9 +1213,10 @@ export class State {
       .all(...params) as { client_id: string; attendees_json: string }[];
   }
 
+  /** Recordings waiting on the user: untagged, or processed and waiting to be filed. */
   inboxCount(): number {
     const row = this.db
-      .prepare("SELECT COUNT(*) as n FROM recordings WHERE status = 'inbox'")
+      .prepare("SELECT COUNT(*) as n FROM recordings WHERE status IN ('inbox', 'to_file')")
       .get() as { n: number } | undefined;
     return row?.n ?? 0;
   }

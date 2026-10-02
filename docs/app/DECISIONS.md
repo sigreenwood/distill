@@ -441,3 +441,36 @@ lockstep.
   different filename, they can rename the file after writing.
 - Auto-rerunning summaries when prompts change (re-summarising for
   better titles is way too expensive for marginal benefit).
+
+---
+
+## 5. Process first, file afterwards (Oct 2026)
+
+**Context.** Tagging set the client and meeting type before anything
+ran. The meeting type chooses the summary prompt, and the client
+chooses the output folder. With overnight processing the user wanted to
+queue the backlog without tagging each recording and let the content
+decide where it is filed.
+
+**Decision.**
+
+- **Inbox-first still holds.** Nothing is queued automatically.
+  "Queue all" is an explicit action with a confirm dialog. Auto-queuing
+  on sync was considered and rejected for now.
+- **Classify from the opening of the transcript, before summarising, not
+  from the summary.** The summary's format depends on the meeting type,
+  so classifying from the summary would mean summarising twice whenever
+  the type changed.
+- **Hold before writing, always.** Every row queued this way stops at
+  `to_file`, whatever the confidence. Apple Notes has no move or upsert
+  (§1), so a note filed in the wrong folder can only be fixed by
+  duplicating it. Writing is fast, so holding it costs nothing
+  overnight.
+- **No match means no client.** The model may answer "none". The
+  Ready to file row then asks for a client, and nothing is written to
+  "Unclassified".
+
+**Revisit when** a few weeks of suggestions show how often they're
+right. An opt-in auto-file above a confidence threshold could then
+follow, in keeping with suggestion-only.
+

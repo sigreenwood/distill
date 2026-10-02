@@ -61,6 +61,9 @@ const api = {
       recordingId: string,
       targets: { markdown: boolean; html: boolean; appleNote: boolean },
     ) => ipcRenderer.invoke(Channels.InboxSetOutputTargets, recordingId, targets),
+    queueAll: () => ipcRenderer.invoke(Channels.InboxQueueAll),
+    file: (payload: { recordingId: string; clientId: string; meetingTypeId: string }) =>
+      ipcRenderer.invoke(Channels.InboxFile, payload),
   },
   pipeline: {
     cancel: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineCancel, recordingId),

@@ -205,6 +205,7 @@ const STATUS_LABELS: Record<InboxItemDTO['status'], string> = {
   transcribing: 'Transcribing',
   summarising: 'Summarising',
   writing: 'Writing',
+  to_file: 'To file',
   complete: 'Complete',
   error: 'Error',
   cancelled: 'Cancelled',

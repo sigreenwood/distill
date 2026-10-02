@@ -8,6 +8,7 @@ import type { JoinedRegisterItemRow } from './state.js';
 import { generateSummaryVersion, buildVersionList } from './summaryVersions.js';
 import type { SummaryVersionDTO } from '../shared/summaryVersion.js';
 import { suggestMeetingType } from './meetingTypeSuggestion.js';
+import { assertFileRecordingPayload, filingNeedsResummary, type FilingConfidence } from '../shared/filing.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -540,6 +541,43 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     ctx.logger.info({ recordingId, targets: t }, 'output targets updated');
     ctx.onStateChanged?.();
     broadcastInboxChanged();
+  });
+
+  ipcMain.handle(Channels.InboxQueueAll, () => {
+    const queued = ctx.state.queueAllForFiling();
+    ctx.logger.info({ queued }, 'inbox queued for processing; filing held for review');
+    if (queued > 0) {
+      ctx.onStateChanged?.();
+      broadcastInboxChanged();
+      ctx.getWorker()?.nudge();
+    }
+    return { queued };
+  });
+
+  ipcMain.handle(Channels.InboxFile, (_evt, payload) => {
+    const p = assertFileRecordingPayload(payload);
+    const row = ctx.state.getRecording(p.recordingId);
+    if (!row || row.status !== 'to_file') throw new Error('That recording is no longer waiting to be filed.');
+    if (!ctx.state.getClient(p.clientId)) throw new Error('That client no longer exists.');
+    if (!ctx.state.getMeetingType(p.meetingTypeId)) throw new Error('That meeting type no longer exists.');
+    const resummarise = filingNeedsResummary(row.meeting_type_id, p.meetingTypeId);
+    if (!ctx.state.fileRecording(p.recordingId, p.clientId, p.meetingTypeId, resummarise)) {
+      throw new Error('That recording is no longer waiting to be filed.');
+    }
+    ctx.logger.info(
+      {
+        recordingId: p.recordingId,
+        clientId: p.clientId,
+        meetingTypeId: p.meetingTypeId,
+        acceptedClient: p.clientId === row.suggested_client_id,
+        resummarise,
+      },
+      'recording filed',
+    );
+    ctx.onStateChanged?.();
+    broadcastInboxChanged();
+    ctx.getWorker()?.nudge();
+    return { resummarise };
   });
 
   ipcMain.handle(Channels.TagSave, (_evt, payload) => {
@@ -1581,6 +1619,13 @@ export function toInboxDTO(r: JoinedRecordingRow, outputs: OutputsConfig) {
     modelSnapshot: r.model_snapshot,
     processedExternally: r.processed_externally === 1,
     urgent: r.urgent === 1,
+    // 'to_file' rows: what the classifier suggested. The meeting type it
+    // picked is meetingTypeId (the summary was written with it).
+    clientId: r.client_id,
+    meetingTypeId: r.meeting_type_id,
+    suggestedClientId: r.suggested_client_id,
+    filingConfidence: r.filing_confidence as FilingConfidence | null,
+    filingReason: r.filing_reason,
     // Gates the "Full re-run" action: a local file to re-transcribe from,
     // or (Plaud rows only — retention never deletes their audio_path, but
     // the row may predate a local download, or the file may have been

@@ -5,7 +5,9 @@ import type { EssenceActivity } from '../essence/tokens.js';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type {
+  ClientDTO,
   InboxItemDTO,
+  MeetingTypeDTO,
   LocalImportProgressDTO,
   PipelineStep,
   TipJarStatusDTO,
@@ -343,6 +345,7 @@ function Inbox() {
   }
 
   const headerCount =
+    sections.toFile.length +
     sections.processing.length +
     sections.waiting.length +
     sections.errored.length +
@@ -394,6 +397,11 @@ function Inbox() {
           ))}
         </Section>
       )}
+      {sections.toFile.length > 0 && (
+        <Section title="Ready to file" count={sections.toFile.length}>
+          <FilingRows rows={sections.toFile} focusedId={focusedId} onSkip={onSkip} />
+        </Section>
+      )}
       {sections.processing.length > 0 && (
         <Section title="Processing" count={sections.processing.length}>
           {sections.processing.map((r) => (
@@ -403,6 +411,7 @@ function Inbox() {
       )}
       {sections.waiting.length > 0 && (
         <Section title="Waiting to tag" count={sections.waiting.length}>
+          <QueueAllBar count={sections.waiting.length} />
           {sections.waiting.map((r) => (
             <WaitingRow key={r.id} r={r} focused={focusedId === r.id} onTag={onTag} onSkip={onSkip} />
           ))}
@@ -565,6 +574,7 @@ function HiddenSection({ onChanged }: { onChanged: () => void }) {
 }
 
 interface Buckets {
+  toFile: InboxItemDTO[];
   processing: InboxItemDTO[];
   waiting: InboxItemDTO[];
   errored: InboxItemDTO[];
@@ -574,6 +584,7 @@ interface Buckets {
 
 function bucket(state: InboxState): Buckets {
   const out: Buckets = {
+    toFile: [],
     processing: [],
     waiting: [],
     errored: [],
@@ -592,6 +603,9 @@ function bucket(state: InboxState): Buckets {
         break;
       case 'inbox':
         out.waiting.push(r);
+        break;
+      case 'to_file':
+        out.toFile.push(r);
         break;
       case 'error':
         out.errored.push(r);
@@ -862,6 +876,155 @@ function WaitingRow(props: {
           Process…
         </button>
         <button onClick={() => void props.onSkip(props.r.id)} title="Hide this recording. You can bring it back from Hidden.">
+          Hide
+        </button>
+      </div>
+    </Row>
+  );
+}
+
+/**
+ * "Queue all": process every waiting recording without tagging it. Each is
+ * classified after transcription and held in Ready to file — nothing is
+ * written anywhere until its client is confirmed there.
+ */
+function QueueAllBar(props: { count: number }) {
+  const [busy, setBusy] = useState(false);
+  const onClick = async () => {
+    const n = props.count;
+    const ok = confirm(
+      `Queue ${n} recording${n === 1 ? '' : 's'} without tagging?\n\n` +
+        'Each will be transcribed and summarised on your processing schedule (Settings → General), ' +
+        'with the client and meeting type suggested from the transcript. Nothing is written until you ' +
+        'confirm where it goes under Ready to file.',
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await window.distill.inbox.queueAll();
+    } catch (e) {
+      alert(`Could not queue: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <li style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+      <button onClick={() => void onClick()} disabled={busy}>
+        Queue all
+      </button>
+      <span className="muted" style={{ fontSize: 11 }}>
+        Process without tagging; confirm the client afterwards.
+      </span>
+    </li>
+  );
+}
+
+/** Loads the client and meeting-type lists once for every Ready to file row. */
+function FilingRows(props: {
+  rows: InboxItemDTO[];
+  focusedId: string | null;
+  onSkip: (id: string) => Promise<void>;
+}) {
+  const [clients, setClients] = useState<ClientDTO[]>([]);
+  const [types, setTypes] = useState<MeetingTypeDTO[]>([]);
+  useEffect(() => {
+    void Promise.all([window.distill.clients.list(), window.distill.meetingTypes.list()])
+      .then(([c, t]) => {
+        setClients(c);
+        setTypes(t);
+      })
+      .catch((e) => alert(`Could not load clients and meeting types: ${String(e)}`));
+  }, []);
+  return (
+    <>
+      {props.rows.map((r) => (
+        <FilingRow
+          key={r.id}
+          r={r}
+          focused={props.focusedId === r.id}
+          clients={clients}
+          types={types}
+          onSkip={props.onSkip}
+        />
+      ))}
+    </>
+  );
+}
+
+function FilingRow(props: {
+  r: InboxItemDTO;
+  focused: boolean;
+  clients: ClientDTO[];
+  types: MeetingTypeDTO[];
+  onSkip: (id: string) => Promise<void>;
+}) {
+  const { r } = props;
+  const [clientId, setClientId] = useState(r.suggestedClientId ?? '');
+  const [typeId, setTypeId] = useState(r.meetingTypeId ?? '');
+  const [busy, setBusy] = useState(false);
+  // A suggestion for a client deleted since classification shows as no pick.
+  const clientKnown = props.clients.some((c) => c.id === clientId);
+  const resummarise = typeId !== '' && typeId !== r.meetingTypeId;
+  const suggestedName = props.clients.find((c) => c.id === r.suggestedClientId)?.name ?? null;
+  const onFile = async () => {
+    setBusy(true);
+    try {
+      await window.distill.inbox.file({ recordingId: r.id, clientId, meetingTypeId: typeId });
+    } catch (e) {
+      alert(`Could not file: ${e instanceof Error ? e.message : String(e)}`);
+      setBusy(false);
+    }
+  };
+  return (
+    <Row id={r.id} focused={props.focused}>
+      <Title r={r} />
+      <MetaLine r={r} />
+      <OutputTargetPicker r={r} />
+      <div style={{ fontSize: 11, marginBottom: 8 }}>
+        <span style={{ fontWeight: 600 }}>
+          {suggestedName ? `Suggested: ${suggestedName}` : 'No client suggested'}
+          {r.filingConfidence ? ` · ${r.filingConfidence} confidence` : ''}
+        </span>
+        {r.filingReason && <div className="muted">{r.filingReason}</div>}
+      </div>
+      <div className="row" style={{ marginBottom: 8, gap: 6 }}>
+        <select value={clientKnown ? clientId : ''} onChange={(e) => setClientId(e.target.value)} aria-label="Client">
+          <option value="" disabled>
+            Choose a client…
+          </option>
+          {props.clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+        <select value={typeId} onChange={(e) => setTypeId(e.target.value)} aria-label="Meeting type">
+          {props.types.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      {resummarise && (
+        <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
+          The summary was written as a different meeting type, so it will be regenerated from the
+          transcript first (on your processing schedule, unless marked urgent).
+        </div>
+      )}
+      <div className="row">
+        <button className="primary" disabled={busy || !clientKnown || typeId === ''} onClick={() => void onFile()}>
+          {resummarise ? 'File & re-summarise' : 'File'}
+        </button>
+        <button
+          onClick={() => {
+            void window.distill.meeting.open(r.id).catch((e) => alert(e instanceof Error ? e.message : String(e)));
+          }}
+        >
+          Read summary
+        </button>
+        <button onClick={() => void props.onSkip(r.id)} title="Hide this recording. You can bring it back from Hidden.">
           Hide
         </button>
       </div>

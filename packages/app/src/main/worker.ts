@@ -126,7 +126,7 @@ export class Worker {
         try {
           await this.runPipelineForId(claimed.id, abort.signal);
           const final = this.ctx.state.getRecording(claimed.id);
-          if (final && final.status !== 'cancelled' && final.status !== 'error') {
+          if (final && final.status !== 'cancelled' && final.status !== 'error' && final.status !== 'to_file') {
             this.ctx.state.setStatus(claimed.id, 'complete');
             this.cb.onComplete(claimed.id);
           }
@@ -202,6 +202,12 @@ export class Worker {
     }
     const afterSummarise = this.ctx.state.getRecording(id);
     if (!afterSummarise) return;
+    // Queued with "Queue all": nothing is written until the user confirms
+    // where it's filed (Channels.InboxFile), which clears needs_filing.
+    if (afterSummarise.needs_filing === 1) {
+      this.ctx.state.setStatus(id, 'to_file', { last_step: 'summarise' });
+      return;
+    }
     this.ctx.state.setStatus(id, 'writing', { last_step: 'write' });
     this.cb.onStateChanged();
     await doWriteOutputs(id, signal, this.ctx);

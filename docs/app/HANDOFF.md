@@ -783,6 +783,82 @@ Limitations worth retaining:
   couldn't connect, here's why" message beyond what the existing catch
   block already logs/notifies.
 
+## Step 12 — "Queue all", classify, then file: complete in source
+
+Checkpoint: the commit containing this update, titled
+`feat(filing): queue untagged recordings and confirm the client afterwards`.
+
+- Inbox → Waiting to tag gains **Queue all**. After a confirm dialog,
+  every `inbox` row moves to `tagged` with no client or meeting type and
+  `needs_filing = 1` (migration 16). The rows follow the processing
+  schedule like any other tagged row, so with Overnight mode they run
+  overnight.
+- Classification runs at the start of the summarise step, only for
+  `needs_filing` rows with no meeting type (`classifyForFiling` in
+  `pipelineSteps.ts`, built on `main/filingSuggestion.ts`). One local
+  Ollama call reads the title, duration and the first 12,000 characters
+  of the transcript, against the user's clients (C1…) and meeting types
+  (T1…). A JSON schema is used, at temperature 0. The client can be
+  "none". The chosen meeting type is stored on the row immediately, so
+  the summary uses that type's prompt and a retry does not classify
+  again. The client is stored only as `suggested_client_id`, with
+  `filing_confidence`/`filing_reason`. An unparseable reply falls back
+  to the first meeting type with no client, and the row says so.
+- After summarising, the worker holds `needs_filing` rows at the new
+  `to_file` status instead of writing. Nothing reaches Markdown, HTML or
+  Apple Notes until the user files the row. This matters because Notes
+  has no move or upsert, so a wrong folder can only be fixed by
+  duplicating the note.
+- Inbox → **Ready to file** (shown above Processing) pre-selects the
+  suggested client and the meeting type used. It also offers Read
+  summary and Hide. **File** sets the client and type, clears
+  `needs_filing` and requeues the row. When the type is unchanged, only
+  the write step runs. When the type changed, the summary is cleared and
+  regenerated from the stored transcript first (`filingNeedsResummary`).
+- `claimNextTagged` now lets a row whose next step is `write` through
+  even while the schedule blocks normal claims. Filing in the morning
+  therefore writes at once, and so does enabling an output on a finished
+  row. A re-summary after a type change still waits for the schedule
+  unless the row is marked urgent.
+- `inboxCount()` (tray digit, Inbox menu label) now counts `to_file`
+  too, because those rows are waiting on the user.
+
+Decision recorded in DECISIONS.md §5: "Queue all" is an explicit user
+action, so inbox-first holds. Filing stays suggestion-only, with no
+auto-file at any confidence for now.
+
+Verification: 273 tests. The new `filingSuggestion.test.ts` covers
+labels, transcript truncation, parsing including the no-client and
+invalid-type cases, the Ollama request shape, `filingNeedsResummary`
+and payload validation. Both typechecks and the production build pass.
+**Not exercised: the running app.** This session's shell was on
+Node 26 again. Before relying on it: under Node 22, set the schedule to
+Overnight with a window starting a few minutes out, press Queue all on
+two or three real recordings, and confirm each one:
+- reaches Ready to file;
+- shows a sensible client suggestion;
+- writes into the right client folder when filed;
+- when given a different type, re-summarises without re-transcribing.
+
+Limitations worth retaining:
+
+- Client-scoped vocabulary cannot help transcription, because the
+  client is unknown until after it. Global and organisation vocabulary
+  still apply. Client find-and-replace rules are not re-applied after
+  filing.
+- No auto-file, even at high confidence. Once suggestions have proved
+  reliable, an opt-in threshold would be the next step.
+- A client can't be created from the Ready to file row, only chosen.
+  Add new clients from the tag sheet or Settings first.
+- Classification uses only the opening of the transcript. A meeting
+  whose client only comes up late may get "no client".
+- No notification when a recording reaches Ready to file. The tray
+  digit shows the count.
+- Already present before this step and not fixed here: if a step is
+  paused between the claim and that step's own pause check, the worker
+  sets the row back to `tagged` and then marks it `complete`
+  (`worker.ts` loop). The window is narrow, but the bug is real.
+
 ## Next step
 
 Later ideas, not implemented or fully specified: diagnostics and
@@ -795,7 +871,8 @@ Step 7's limitations), configurable adaptive-context tuning (see Step
 8's limitations), post-transcript reclassification (see Step 9's
 limitations), live in-Inbox schedule status or multi-level priority
 (see Step 10's limitations), and live account-switching without a
-restart (see Step 11's limitations) are optional follow-ons to
+restart (see Step 11's limitations), and opt-in auto-filing above a
+confidence threshold (see Step 12's limitations) are optional follow-ons to
 already-shipped steps, not required by them. Long-meeting chunking (the
 original item 7) remains deliberately un-built — see Step 8 and
 BACKLOG.md's "Truncation guard" for why.

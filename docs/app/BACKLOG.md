@@ -233,6 +233,22 @@ itself, no per-recording priority beyond the single urgent flag).
 
 ---
 
+## Queue all, classify, then file — complete in source
+
+*Oct 2026 development checkpoint.* **Queue all** in the Inbox processes
+every waiting recording without tagging it. After transcription, a local
+model suggests the client and meeting type, and the summary uses that
+type's prompt. Each recording then waits under **Ready to file** until
+the user confirms or changes the client. Changing the type re-summarises
+from the stored transcript. Combined with the Overnight schedule, the
+morning job becomes one click per meeting. See
+[HANDOFF.md](./HANDOFF.md) Step 12.
+
+Follow-on, not built: an opt-in auto-file above a confidence
+threshold, once a few weeks of suggestions show how often they're right.
+
+---
+
 ## Silent degradation — the theme of the Jul 2026 shakedown
 
 *Logged Jul 2026 after a day of real use.* Almost every bug found that

@@ -11,6 +11,7 @@ import { loadVocabulary, applyReplacements } from './vocabulary.js';
 import { cleanWhisperRepetitions } from './transcriptCleanup.js';
 import { estimateTokenBudget, computeAdaptiveContextWindow } from './tokenBudget.js';
 import { writeOutputs } from './outputs.js';
+import { suggestFiling } from './filingSuggestion.js';
 import { CancelledError, isCancelled, throwIfAborted } from './cancellation.js';
 import type { Logger } from './logger.js';
 import type { AppConfig, OutputsConfig } from './config.js';
@@ -274,9 +275,12 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
   const row = ctx.state.getRecordingJoined(id);
   if (!row) throw new Error(`No such recording: ${id}`);
   if (!row.transcript_text) throw new Error('Cannot summarise without a transcript');
-  if (!row.meeting_type_id) throw new Error('Cannot summarise without a meeting type');
-  const meetingType = ctx.state.getMeetingType(row.meeting_type_id);
-  if (!meetingType) throw new Error(`Meeting type ${row.meeting_type_id} no longer exists`);
+  const meetingTypeId =
+    row.meeting_type_id ??
+    (row.needs_filing === 1 ? await classifyForFiling(row, row.transcript_text, signal, ctx) : null);
+  if (!meetingTypeId) throw new Error('Cannot summarise without a meeting type');
+  const meetingType = ctx.state.getMeetingType(meetingTypeId);
+  if (!meetingType) throw new Error(`Meeting type ${meetingTypeId} no longer exists`);
 
   // The attendee roster (if any) goes in the user message ahead of the
   // transcript, not the system prompt — meeting-type prompts are
@@ -366,6 +370,67 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
     { id, chars: summary.length, truncationWarning: budget.exceedsBudget },
     'summarisation complete',
   );
+}
+
+/**
+ * Pick a client and meeting type for a "Queue all" row and record them
+ * as a suggestion. The meeting type is stored on the row straight away,
+ * so a retry after a failed summary doesn't classify again; the client
+ * stays a suggestion until the user files it. An unparseable reply falls
+ * back to the first meeting type with no client, and the Inbox says so.
+ */
+async function classifyForFiling(
+  row: RecordingRow,
+  transcript: string,
+  signal: AbortSignal,
+  ctx: PipelineContext,
+): Promise<string | null> {
+  const types = ctx.state.listMeetingTypes();
+  if (types.length === 0) return null;
+  const clients = ctx.state
+    .listClients()
+    .filter((c) => c.id !== 'unclassified')
+    .map((c) => ({ id: c.id, name: c.name }));
+  const cfg = ctx.getConfig();
+  ctx.logger.info({ id: row.id, clients: clients.length, types: types.length }, 'classifying for filing');
+  let suggestion;
+  try {
+    suggestion = await suggestFiling(
+      { title: row.filename, durationSeconds: row.duration_seconds, transcript },
+      clients,
+      types,
+      ctx.ollama,
+      { model: cfg.ollama.model, keepAlive: cfg.ollama.keepAlive },
+      signal,
+    );
+  } catch (e) {
+    if (isCancelled(e)) throw new CancelledError('summarise');
+    throw e;
+  }
+  const patch: Partial<RecordingRow> = suggestion
+    ? {
+        meeting_type_id: suggestion.meetingTypeId,
+        suggested_client_id: suggestion.clientId,
+        filing_confidence: suggestion.confidence,
+        filing_reason: suggestion.reason,
+      }
+    : {
+        meeting_type_id: types[0].id,
+        suggested_client_id: null,
+        filing_confidence: null,
+        filing_reason: 'Could not classify this recording automatically.',
+      };
+  ctx.state.updateRecording(row.id, patch);
+  ctx.logger.info(
+    {
+      id: row.id,
+      meetingTypeId: patch.meeting_type_id,
+      clientId: patch.suggested_client_id,
+      confidence: patch.filing_confidence,
+    },
+    suggestion ? 'filing suggestion recorded' : 'filing classification unparseable; using default meeting type',
+  );
+  return patch.meeting_type_id ?? null;
 }
 
 export async function doWriteOutputs(id: string, signal: AbortSignal, ctx: PipelineContext): Promise<void> {

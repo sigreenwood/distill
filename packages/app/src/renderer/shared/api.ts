@@ -17,6 +17,7 @@ export type RecordingStatus =
   | 'transcribing'
   | 'summarising'
   | 'writing'
+  | 'to_file'
   | 'complete'
   | 'error'
   | 'cancelled'
@@ -27,6 +28,7 @@ import type { RegisterItem } from '../../shared/register';
 import type { SummaryVersionDTO } from '../../shared/summaryVersion';
 import type { MeetingTypeSuggestion } from '../../shared/meetingTypeSuggestion.js';
 import type { ProcessingSchedule } from '../../shared/processingSchedule.js';
+import type { FilingConfidence } from '../../shared/filing.js';
 
 export type PipelineStep = 'download' | 'transcribe' | 'summarise' | 'write';
 
@@ -62,6 +64,13 @@ export interface InboxItemDTO {
   processedExternally: boolean;
   /** Jumps an idle/overnight processing schedule; see shared/processingSchedule.ts. */
   urgent: boolean;
+  clientId: string | null;
+  /** For a 'to_file' row, the meeting type the classifier picked and the summary was written with. */
+  meetingTypeId: string | null;
+  /** The classifier's client pick for a 'to_file' row; null when nothing clearly fitted. */
+  suggestedClientId: string | null;
+  filingConfidence: FilingConfidence | null;
+  filingReason: string | null;
   /** Whether a "Full re-run" can re-transcribe this recording — a local audio file, or (Plaud only) a cloud copy to re-fetch. */
   audioAvailable: boolean;
   /** Effective per-destination targets: this row's override if it has one, else the current Settings -> Outputs default. */
@@ -307,6 +316,9 @@ export interface DistillApi {
       recordingId: string,
       targets: { markdown: boolean; html: boolean; appleNote: boolean },
     ): Promise<void>;
+    /** Queue every untagged recording; each is classified and held at 'to_file' before writing. */
+    queueAll(): Promise<{ queued: number }>;
+    file(payload: { recordingId: string; clientId: string; meetingTypeId: string }): Promise<{ resummarise: boolean }>;
   };
   pipeline: {
     cancel(recordingId: string): Promise<void>;
