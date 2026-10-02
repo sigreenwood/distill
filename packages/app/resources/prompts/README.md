@@ -1,7 +1,8 @@
-# Stale directory
+# Prompt resources
 
-This directory is a leftover from an earlier refactor and is unused.
-Seed prompts now live in `docs/app/PROMPTS.md` and are read by
-`src/main/seed.ts::findPromptsMarkdown`.
+`suggested-meeting-types.md` holds meeting types offered in Settings →
+Prompts as suggestions (accept to add, dismiss to hide). Bundled with
+the app via electron-builder's `resources/prompts` rule.
 
-Safe to delete in the next `git rm -r` pass.
+The built-in seed prompts are elsewhere: `docs/app/PROMPTS.md`, read by
+`src/main/seed.ts::findPromptsMarkdown` in dev trees only.

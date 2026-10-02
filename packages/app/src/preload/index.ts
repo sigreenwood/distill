@@ -112,6 +112,11 @@ const api = {
       ipcRenderer.invoke(Channels.MeetingTypesAdd, payload),
     delete: (id: string) => ipcRenderer.invoke(Channels.MeetingTypesDelete, id),
   },
+  promptSuggestions: {
+    list: () => ipcRenderer.invoke(Channels.PromptSuggestionsList),
+    accept: (id: string) => ipcRenderer.invoke(Channels.PromptSuggestionsAccept, id),
+    dismiss: (id: string) => ipcRenderer.invoke(Channels.PromptSuggestionsDismiss, id),
+  },
   localImport: {
     importPath: (path: string) => ipcRenderer.invoke(Channels.LocalImportPath, path),
     pickFiles: () => ipcRenderer.invoke(Channels.LocalImportPickFiles),

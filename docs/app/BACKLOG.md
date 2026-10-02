@@ -257,8 +257,15 @@ inbox, tag sheet and Queue all then suggest the account (from client
 names in the title or invitee domains), the invitees and the meeting
 type. See [HANDOFF.md](./HANDOFF.md) Step 13.
 
-Next: a corpus of meeting types and summary prompts built from real
-meetings, offered as suggestions in Settings → Prompts.
+## Suggested meeting types — complete in source
+
+*Oct 2026.* Eight meeting types written from three months of real
+meetings are offered in Settings → Prompts → Suggested: add or dismiss
+each. See [HANDOFF.md](./HANDOFF.md) Step 14.
+
+Follow-on, not built: offering revised versions of the existing
+Client Call and Training prompts (title line, no-speaker-label rules)
+as suggestions too.
 
 ---
 

@@ -18,7 +18,9 @@ export function parseStoredMatch(json: string | null): CalendarMatch | null {
  * A recording with no overlapping meeting keeps whatever match it had.
  */
 export function applyCalendarMatch(state: State, row: RecordingRow): CalendarMatch | null {
-  if (row.start_time === null) return null;
+  // A dragged-in file's start_time is the file's own timestamp (copied,
+  // exported, re-encoded), which says nothing about when the meeting was.
+  if (row.source !== 'plaud' || row.start_time === null) return null;
   const meetings = state.listCalendarMeetingsBetween(row.start_time - SEARCH_MARGIN_MS, row.start_time + SEARCH_MARGIN_MS);
   const match = matchRecording({ startMs: row.start_time, durationSeconds: row.duration_seconds }, meetings);
   if (!match) return null;

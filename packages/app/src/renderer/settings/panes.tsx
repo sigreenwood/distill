@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   GeneralDTO,
   MeetingTypeDTO,
+  PromptSuggestion,
   ModelSuggestionDTO,
   OutputsDTO,
   PerformanceDTO,
@@ -238,6 +239,49 @@ export function PromptsPane(props: {
   const [creating, setCreating] = useState<{ name: string; prompt: string } | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createSaving, setCreateSaving] = useState(false);
+  // Suggested meeting types (resources/prompts/suggested-meeting-types.md):
+  // previewed read-only, added only on "Add meeting type".
+  const [suggestions, setSuggestions] = useState<PromptSuggestion[]>([]);
+  const [previewing, setPreviewing] = useState<PromptSuggestion | null>(null);
+  const [suggestionBusy, setSuggestionBusy] = useState(false);
+
+  useEffect(() => {
+    void window.distill.promptSuggestions
+      .list()
+      .then(setSuggestions)
+      .catch(() => setSuggestions([]));
+  }, []);
+
+  const onAcceptSuggestion = useCallback(async () => {
+    if (!previewing) return;
+    setSuggestionBusy(true);
+    try {
+      const created = await window.distill.promptSuggestions.accept(previewing.id);
+      const next = [...prompts, created];
+      setPrompts(next);
+      props.onChanged(next);
+      setSuggestions((prev) => prev.filter((x) => x.id !== previewing.id));
+      setPreviewing(null);
+      setSelectedId(created.id);
+      setDraft(created.prompt);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSuggestionBusy(false);
+    }
+  }, [previewing, prompts, props]);
+
+  const onDismissSuggestion = useCallback(async () => {
+    if (!previewing) return;
+    setSuggestionBusy(true);
+    try {
+      await window.distill.promptSuggestions.dismiss(previewing.id);
+      setSuggestions((prev) => prev.filter((x) => x.id !== previewing.id));
+      setPreviewing(null);
+    } finally {
+      setSuggestionBusy(false);
+    }
+  }, [previewing]);
 
   const selected = useMemo(() => prompts.find((p) => p.id === selectedId), [prompts, selectedId]);
 
@@ -251,6 +295,7 @@ export function PromptsPane(props: {
       setSavedAt(null);
       setCreating(null);
       setCreateError(null);
+      setPreviewing(null);
     },
     [prompts],
   );
@@ -412,8 +457,8 @@ export function PromptsPane(props: {
               onClick={() => switchTo(p.id)}
               style={{
                 ...sidebarItemStyle,
-                background: p.id === selectedId && !creating ? 'var(--row-hover)' : 'transparent',
-                fontWeight: p.id === selectedId && !creating ? 500 : 400,
+                background: p.id === selectedId && !creating && !previewing ? 'var(--row-hover)' : 'transparent',
+                fontWeight: p.id === selectedId && !creating && !previewing ? 500 : 400,
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -439,9 +484,57 @@ export function PromptsPane(props: {
           >
             + New prompt…
           </button>
+          {suggestions.length > 0 && (
+            <>
+              <div className="muted" style={{ ...sidebarLabelStyle, marginTop: 16 }}>
+                Suggested
+              </div>
+              {suggestions.map((sug) => (
+                <button
+                  key={sug.id}
+                  onClick={() => {
+                    setPreviewing(sug);
+                    setCreating(null);
+                    setError(null);
+                  }}
+                  title={sug.useFor}
+                  style={{
+                    ...sidebarItemStyle,
+                    background: previewing?.id === sug.id ? 'var(--row-hover)' : 'transparent',
+                    fontWeight: previewing?.id === sug.id ? 500 : 400,
+                  }}
+                >
+                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{sug.name}</div>
+                  <div className="muted" style={sidebarMetaStyle}>
+                    Suggestion
+                  </div>
+                </button>
+              ))}
+            </>
+          )}
         </aside>
         <section style={editorStyle}>
-          {creating ? (
+          {previewing ? (
+            <>
+              <div style={editorHeaderStyle}>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>{previewing.name}</div>
+                <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>suggested meeting type</span>
+              </div>
+              <div style={{ fontSize: 12, marginBottom: 8 }}>
+                <strong>Use for:</strong> {previewing.useFor}
+              </div>
+              <textarea value={previewing.prompt} readOnly style={textareaStyle} spellCheck={false} />
+              <div className="muted" style={hintStyle}>
+                Adding it creates an ordinary meeting type you can edit or delete. The classifiers then
+                consider it for new recordings; existing summaries are unchanged.
+              </div>
+              {error && (
+                <div role="alert" style={errorBoxStyle}>
+                  {error}
+                </div>
+              )}
+            </>
+          ) : creating ? (
             <>
               <div style={editorHeaderStyle}>
                 <div style={{ fontSize: 13, fontWeight: 500 }}>New meeting type</div>
@@ -527,7 +620,16 @@ export function PromptsPane(props: {
           </span>
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          {creating ? (
+          {previewing ? (
+            <>
+              <button onClick={() => void onDismissSuggestion()} disabled={suggestionBusy} title="Hide this suggestion">
+                Dismiss
+              </button>
+              <button className="primary" onClick={() => void onAcceptSuggestion()} disabled={suggestionBusy}>
+                {suggestionBusy ? 'Adding…' : 'Add meeting type'}
+              </button>
+            </>
+          ) : creating ? (
             <>
               <button
                 onClick={() => {

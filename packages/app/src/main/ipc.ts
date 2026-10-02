@@ -18,6 +18,12 @@ import {
 } from './calendar/service.js';
 import { bundledCalendarScript } from './bundledResources.js';
 import { resolvePythonBinary } from './pipelineSteps.js';
+import {
+  DISMISSED_KEY,
+  parseDismissed,
+  pendingSuggestions,
+  readPromptSuggestions,
+} from './promptSuggestions.js';
 import { assertFileRecordingPayload, filingNeedsResummary, type FilingConfidence } from '../shared/filing.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -861,6 +867,42 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     ctx.logger.info({ meetingTypeId: id, name }, 'meeting type added');
     const saved = ctx.state.getMeetingType(id)!;
     return toMeetingTypeDTO(saved);
+  });
+
+  // Suggested meeting types (resources/prompts/suggested-meeting-types.md):
+  // shown in Settings → Prompts, added only when the user accepts one.
+  const listPendingSuggestions = () =>
+    pendingSuggestions(
+      readPromptSuggestions(ctx.resourcesDir),
+      ctx.state.listMeetingTypes(),
+      parseDismissed(ctx.state.getAppState(DISMISSED_KEY)),
+    );
+
+  ipcMain.handle(Channels.PromptSuggestionsList, () => listPendingSuggestions());
+
+  ipcMain.handle(Channels.PromptSuggestionsAccept, (_evt, id) => {
+    if (typeof id !== 'string') throw new Error('id must be a string');
+    const suggestion = listPendingSuggestions().find((s) => s.id === id);
+    if (!suggestion) throw new Error('That suggestion is no longer available.');
+    const maxOrder = Math.max(0, ...ctx.state.listMeetingTypes().map((m) => m.sort_order));
+    ctx.state.upsertMeetingType({
+      id: suggestion.id,
+      name: suggestion.name,
+      prompt: suggestion.prompt,
+      is_builtin: 0,
+      sort_order: maxOrder + 1,
+      original_prompt_hash: null,
+    });
+    ctx.logger.info({ meetingTypeId: id }, 'suggested meeting type accepted');
+    return toMeetingTypeDTO(ctx.state.getMeetingType(id)!);
+  });
+
+  ipcMain.handle(Channels.PromptSuggestionsDismiss, (_evt, id) => {
+    if (typeof id !== 'string') throw new Error('id must be a string');
+    const dismissed = new Set(parseDismissed(ctx.state.getAppState(DISMISSED_KEY)));
+    dismissed.add(id);
+    ctx.state.setAppState(DISMISSED_KEY, JSON.stringify([...dismissed]));
+    ctx.logger.info({ suggestionId: id }, 'suggested meeting type dismissed');
   });
 
   ipcMain.handle(Channels.MeetingTypesDelete, (_evt, id) => {

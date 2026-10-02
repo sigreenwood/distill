@@ -29,6 +29,8 @@ import type { SummaryVersionDTO } from '../../shared/summaryVersion';
 import type { MeetingTypeSuggestion } from '../../shared/meetingTypeSuggestion.js';
 import type { ProcessingSchedule } from '../../shared/processingSchedule.js';
 import type { FilingConfidence } from '../../shared/filing.js';
+import type { PromptSuggestion } from '../../shared/promptSuggestion.js';
+export type { PromptSuggestion };
 import type { CalendarCoverage, CalendarImportResult } from '../../shared/calendar.js';
 export type { CalendarCoverage, CalendarImportResult };
 
@@ -387,6 +389,12 @@ export interface DistillApi {
     list(): Promise<MeetingTypeDTO[]>;
     add(payload: { name: string; prompt: string }): Promise<MeetingTypeDTO>;
     delete(id: string): Promise<{ deletedId: string }>;
+  };
+  promptSuggestions: {
+    /** Suggested meeting types not yet added or dismissed. */
+    list(): Promise<PromptSuggestion[]>;
+    accept(id: string): Promise<MeetingTypeDTO>;
+    dismiss(id: string): Promise<void>;
   };
   localImport: {
     importPath(path: string): Promise<{ recordingId: string }>;

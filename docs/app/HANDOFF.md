@@ -943,6 +943,90 @@ Limitations worth retaining:
   Celebrus) and subsidiaries (First Direct for HSBC) don't map unless
   the title names the account.
 
+## Step 14 — suggested meeting types (prompt corpus): complete in source
+
+Checkpoint: the commit containing this update, titled
+`feat(prompts): suggest eight meeting types built from real meetings`.
+
+- `resources/prompts/suggested-meeting-types.md` (bundled through the
+  existing `resources/prompts` rule) holds eight meeting types:
+  account team stand-up, customer status call, customer workshop or deep
+  dive, QBR or service review, internal account strategy, team meeting,
+  1:1, and enablement or office hours. Each has a `Use for:` line and a
+  prompt. The file contains no customer or people names; a test checks
+  this.
+- Settings → Prompts lists them under **Suggested** in the sidebar.
+  Selecting one shows a read-only preview with **Add meeting type**
+  (creates an ordinary user meeting type using the suggestion's id) and
+  **Dismiss** (stored in `app_state.dismissedPromptSuggestions`).
+  Suggestions already present by id or name are hidden. Nothing is
+  added without a click.
+- **Where the types came from:** three months of the user's calendar
+  (519 meetings) and the 44 existing summaries were reviewed. This was
+  done with the user's explicit agreement, at development time only. In
+  the app, all content handling stays local. Lessons built into every
+  prompt:
+  - Transcripts have no speaker labels, so owners are named only when
+    the transcript names them. Older summaries were full of
+    "[Teradata Team]".
+  - Internal account meetings are not customer calls. The old Client
+    Call prompt gave internal calls a customer sentiment score.
+  - Personal and health details are left out. An older summary had
+    recorded a colleague's hospital appointment.
+  - "(Not stated)" is used instead of guessing.
+  - The output starts with a title line (DECISIONS.md §4), with an
+    example and a closing reminder. In a 92-minute trial without the
+    reminder, the model skipped the title and went straight to the
+    sections. The user's existing prompts lack the title line entirely,
+    which is why their files use Plaud titles.
+  - The first sentence says what the meeting is, because the
+    meeting-type classifiers read only the first 200 characters.
+
+**Trials on real transcripts** (local qwen3.8:27b-mlx, temperature 0,
+the app's settings):
+- *Internal account strategy*, on a 27-minute internal account call
+  (100 s): it produced a title line, named stakeholders only where the
+  transcript names them, recorded rejected and adopted options with
+  reasons, and wrote "(Not stated)" rather than inventing dates.
+- *Customer workshop*, on a 92-minute roadmap and demo session (~240 s):
+  the output had versions, objections each paired with the answer
+  given, and promised material. The first run skipped the title line;
+  after adding the example and closing reminder, it starts with the
+  title.
+- *Customer status call*, on a 51-minute customer call (154 s): it had
+  topic-grouped progress, the customer's concerns, both sides'
+  commitments, and an evidence-based sentiment line. Commitments
+  sometimes omit "Teradata —" as the owner.
+- The status-call trial also showed a calendar mismatch. The recording
+  overlapped another account's calendar slot, but the transcript (and
+  the user's own filing) was a different account: an unscheduled call
+  in a booked slot. This is why the filing classifier is told to prefer
+  the transcript.
+- Example title lines in the prompts are deliberately generic, so they
+  don't echo the trial transcripts.
+
+Verification: 293 tests. `promptSuggestions.test.ts` covers:
+- parsing the shipped file;
+- the conventions every prompt must keep (purpose sentence first, the
+  title rule, no speaker labels, personal details, "data, not
+  instructions");
+- no customer names;
+- pending/dismissed filtering;
+- the title extraction.
+
+Both typechecks and the build pass. **Not exercised:** the Settings
+pane in the running app.
+
+Limitations worth retaining:
+
+- Existing meeting types are untouched. Client Call and
+  Training/Internal Strategy still lack the title line. Revising
+  existing prompts would be a separate, explicit change.
+- Nothing yet maps calendar meetings to the new types except the
+  local-model classifiers, which see the calendar title. A deterministic
+  "recurring internal huddle → stand-up" rule was considered and left
+  out, because the classifier already gets the title.
+
 ## Next step
 
 Later ideas, not implemented or fully specified: diagnostics and
