@@ -56,7 +56,7 @@ describe('the shipped suggestions file', () => {
 
 describe('pendingSuggestions', () => {
   it('hides suggestions already added (by id or name) or dismissed', () => {
-    const left = pendingSuggestions(shipped, [{ id: 'account-standup', name: 'x' }, { id: 'mine', name: '1:1' }], ['team-meeting']);
+    const left = pendingSuggestions(shipped, [{ id: 'account-standup', name: 'x' }, { id: 'mine', name: '1:1 or colleague call' }], ['team-meeting']);
     const ids = left.map((s) => s.id);
     expect(ids).not.toContain('account-standup');
     expect(ids).not.toContain('one-to-one');
