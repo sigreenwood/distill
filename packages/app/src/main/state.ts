@@ -4,6 +4,7 @@ import Database from 'better-sqlite3';
 import { stateDbFile } from './paths.js';
 import type { OutputsConfig } from './config.js';
 import type { Attendee } from '../shared/attendees.js';
+import type { CalendarCoverage, CalendarMeeting } from '../shared/calendar.js';
 
 export type RecordingStatus =
   | 'inbox'
@@ -79,6 +80,8 @@ export interface RecordingRow {
   suggested_client_id: string | null;
   filing_confidence: string | null;
   filing_reason: string | null;
+  /** JSON CalendarMatch: the imported calendar meeting this recording overlapped. Migration 17. */
+  calendar_match_json: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -512,6 +515,25 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE recordings ADD COLUMN filing_reason TEXT;
     `,
   },
+  {
+    version: 17,
+    sql: `
+      -- Meetings read from Outlook calendar printouts (main/calendar/).
+      -- Re-importing a month replaces that period's meetings, so moved or
+      -- cancelled invites don't linger. The whole meeting is kept as JSON;
+      -- start/end are columns so matching can fetch just a recording's
+      -- neighbourhood.
+      CREATE TABLE calendar_meetings (
+        id           TEXT PRIMARY KEY,
+        start_ms     INTEGER NOT NULL,
+        end_ms       INTEGER NOT NULL,
+        meeting_json TEXT NOT NULL,
+        imported_at  INTEGER NOT NULL
+      );
+      CREATE INDEX idx_calendar_meetings_start ON calendar_meetings(start_ms);
+      ALTER TABLE recordings ADD COLUMN calendar_match_json TEXT;
+    `,
+  },
 ];
 
 export function openDatabase(_path?: string): Database.Database {
@@ -758,6 +780,7 @@ export class State {
       | 'suggested_client_id'
       | 'filing_confidence'
       | 'filing_reason'
+      | 'calendar_match_json'
     >,
   ): void {
     const now = Date.now();
@@ -1538,5 +1561,57 @@ export class State {
       this.db.prepare('UPDATE summary_versions SET is_active = 1 WHERE id = ?').run(versionId);
       return version.recording_id;
     })();
+  }
+
+  // --- calendar ------------------------------------------------------------
+
+  /** Replace every stored meeting starting within the imported period with the imported ones. */
+  replaceCalendarMeetings(meetings: CalendarMeeting[]): void {
+    if (meetings.length === 0) return;
+    const from = Math.min(...meetings.map((m) => m.startMs));
+    const to = Math.max(...meetings.map((m) => m.startMs));
+    const ins = this.db.prepare(
+      `INSERT OR REPLACE INTO calendar_meetings (id, start_ms, end_ms, meeting_json, imported_at) VALUES (?, ?, ?, ?, ?)`,
+    );
+    const now = Date.now();
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM calendar_meetings WHERE start_ms BETWEEN ? AND ?').run(from, to);
+      for (const m of meetings) ins.run(m.id, m.startMs, m.endMs, JSON.stringify(m), now);
+    })();
+  }
+
+  listCalendarMeetingsBetween(fromMs: number, toMs: number): CalendarMeeting[] {
+    return (
+      this.db
+        .prepare('SELECT meeting_json FROM calendar_meetings WHERE start_ms < ? AND end_ms > ? ORDER BY start_ms')
+        .all(toMs, fromMs) as { meeting_json: string }[]
+    ).map((r) => JSON.parse(r.meeting_json) as CalendarMeeting);
+  }
+
+  calendarCoverage(): CalendarCoverage {
+    return this.db
+      .prepare(
+        `SELECT COUNT(*) AS meetings, MIN(start_ms) AS firstMs, MAX(start_ms) AS lastMs, MAX(imported_at) AS importedAt
+         FROM calendar_meetings`,
+      )
+      .get() as CalendarCoverage;
+  }
+
+  /** Recordings that started in [fromMs, toMs] and aren't mid-pipeline. */
+  listRecordingsStartedBetween(fromMs: number, toMs: number): RecordingRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM recordings
+         WHERE start_time BETWEEN ? AND ?
+           AND status NOT IN ('downloading','transcribing','summarising','writing')`,
+      )
+      .all(fromMs, toMs) as RecordingRow[];
+  }
+
+  /** "Queue all" rows that haven't been transcribed yet. */
+  listQueuedForFilingUnstarted(): RecordingRow[] {
+    return this.db
+      .prepare(`SELECT * FROM recordings WHERE needs_filing = 1 AND status = 'tagged' AND transcript_text IS NULL`)
+      .all() as RecordingRow[];
   }
 }

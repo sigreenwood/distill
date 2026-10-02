@@ -65,6 +65,10 @@ const api = {
     file: (payload: { recordingId: string; clientId: string; meetingTypeId: string }) =>
       ipcRenderer.invoke(Channels.InboxFile, payload),
   },
+  calendar: {
+    coverage: () => ipcRenderer.invoke(Channels.CalendarCoverage),
+    importPdfs: () => ipcRenderer.invoke(Channels.CalendarImportPdfs),
+  },
   pipeline: {
     cancel: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineCancel, recordingId),
     retry: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineRetry, recordingId),
@@ -92,6 +96,7 @@ const api = {
     suggestMeetingType: (payload: { recordingId: string; clientId?: string; attendees: Attendee[] }) =>
       ipcRenderer.invoke(Channels.TagSuggestMeetingType, payload),
     clipboardAttendees: () => ipcRenderer.invoke(Channels.TagClipboardAttendees),
+    calendarContext: (recordingId: string) => ipcRenderer.invoke(Channels.TagCalendarContext, recordingId),
     getSheetRecordingId: (): string | null => {
       const arg = process.argv.find((a) => a.startsWith('--recording-id='));
       return arg ? arg.slice('--recording-id='.length) : null;

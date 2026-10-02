@@ -12,6 +12,8 @@ import { cleanWhisperRepetitions } from './transcriptCleanup.js';
 import { estimateTokenBudget, computeAdaptiveContextWindow } from './tokenBudget.js';
 import { writeOutputs } from './outputs.js';
 import { suggestFiling } from './filingSuggestion.js';
+import { accountFor } from './calendar/account.js';
+import { ensureCalendarMatch } from './calendar/service.js';
 import { CancelledError, isCancelled, throwIfAborted } from './cancellation.js';
 import type { Logger } from './logger.js';
 import type { AppConfig, OutputsConfig } from './config.js';
@@ -286,7 +288,9 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
   // transcript, not the system prompt — meeting-type prompts are
   // hash-tracked for the "modified from default" badge and must stay
   // exactly what the meeting type says, independent of any one recording.
-  const roster = buildAttendeeRoster(parseStoredAttendees(row.attendees_json));
+  // Re-read: classification may just have added invitees from the calendar.
+  const attendeesJson = ctx.state.getRecording(id)?.attendees_json ?? row.attendees_json;
+  const roster = buildAttendeeRoster(parseStoredAttendees(attendeesJson));
   const userContent = roster ? `${roster}\n\n${row.transcript_text}` : row.transcript_text;
 
   const cfg = ctx.getConfig();
@@ -391,12 +395,24 @@ async function classifyForFiling(
     .listClients()
     .filter((c) => c.id !== 'unclassified')
     .map((c) => ({ id: c.id, name: c.name }));
+  const calendar = ensureCalendarMatch(ctx.state, row);
+  const account = calendar ? accountFor(calendar, clients) : null;
+  const accountName = account ? clients.find((c) => c.id === account.clientId)?.name ?? null : null;
   const cfg = ctx.getConfig();
-  ctx.logger.info({ id: row.id, clients: clients.length, types: types.length }, 'classifying for filing');
+  ctx.logger.info(
+    { id: row.id, clients: clients.length, types: types.length, calendar: calendar !== null, calendarAccount: account?.clientId ?? null },
+    'classifying for filing',
+  );
   let suggestion;
   try {
     suggestion = await suggestFiling(
-      { title: row.filename, durationSeconds: row.duration_seconds, transcript },
+      {
+        title: row.filename,
+        durationSeconds: row.duration_seconds,
+        transcript,
+        calendar,
+        calendarAccount: account && accountName ? `${accountName} (${account.reason.replace(/^From the calendar: /, '').replace(/\.$/, '')})` : null,
+      },
       clients,
       types,
       ctx.ollama,
@@ -407,18 +423,21 @@ async function classifyForFiling(
     if (isCancelled(e)) throw new CancelledError('summarise');
     throw e;
   }
+  // When the model names no client but the calendar does, the calendar's
+  // account stands: it comes from the meeting title or invitees, which a
+  // transcript of an internal huddle may never name.
   const patch: Partial<RecordingRow> = suggestion
     ? {
         meeting_type_id: suggestion.meetingTypeId,
-        suggested_client_id: suggestion.clientId,
-        filing_confidence: suggestion.confidence,
-        filing_reason: suggestion.reason,
+        suggested_client_id: suggestion.clientId ?? account?.clientId ?? null,
+        filing_confidence: suggestion.clientId || !account ? suggestion.confidence : 'medium',
+        filing_reason: suggestion.clientId || !account ? suggestion.reason : `${suggestion.reason} ${account.reason}`.trim(),
       }
     : {
         meeting_type_id: types[0].id,
-        suggested_client_id: null,
-        filing_confidence: null,
-        filing_reason: 'Could not classify this recording automatically.',
+        suggested_client_id: account?.clientId ?? null,
+        filing_confidence: account ? 'medium' : null,
+        filing_reason: account ? account.reason : 'Could not classify this recording automatically.',
       };
   ctx.state.updateRecording(row.id, patch);
   ctx.logger.info(

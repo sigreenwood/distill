@@ -77,7 +77,7 @@ export function detectVenv(): VenvStatus {
   // the hallucination suppression and speed-up are quietly absent.
   // Reporting 'incomplete' instead sends the user through the setup
   // window, which pip-installs the current requirements.txt.
-  const importResult = spawnSync(py, ['-c', 'import mlx_whisper, onnxruntime'], {
+  const importResult = spawnSync(py, ['-c', 'import mlx_whisper, onnxruntime, pypdf'], {
     encoding: 'utf-8',
     timeout: IMPORT_CHECK_TIMEOUT_MS,
   });
@@ -205,7 +205,7 @@ export async function installVenv(opts: InstallVenvOptions): Promise<InstallVenv
   logger?.info('verifying mlx_whisper import');
   const verifyResult = await spawnLineByLine(
     venvPython(),
-    ['-c', 'import mlx_whisper, onnxruntime; print("ok")'],
+    ['-c', 'import mlx_whisper, onnxruntime, pypdf; print("ok")'],
     { signal, onProgress, phase: 'verifying' },
   );
   if (verifyResult.kind === 'cancelled') return { kind: 'cancelled' };

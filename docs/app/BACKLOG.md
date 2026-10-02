@@ -249,6 +249,19 @@ threshold, once a few weeks of suggestions show how often they're right.
 
 ---
 
+## Calendar printouts → meetings and accounts — complete in source
+
+*Oct 2026.* Import Outlook calendar PDFs (detailed agenda print) from
+the Inbox. Recordings are matched to the meeting they overlapped. The
+inbox, tag sheet and Queue all then suggest the account (from client
+names in the title or invitee domains), the invitees and the meeting
+type. See [HANDOFF.md](./HANDOFF.md) Step 13.
+
+Next: a corpus of meeting types and summary prompts built from real
+meetings, offered as suggestions in Settings → Prompts.
+
+---
+
 ## Silent degradation — the theme of the Jul 2026 shakedown
 
 *Logged Jul 2026 after a day of real use.* Almost every bug found that

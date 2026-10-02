@@ -24,5 +24,7 @@ export const bundledResourcesDir = (): string => path.join(bundledRoot(), 'resou
 export const bundledPythonDir = (): string => path.join(bundledRoot(), 'python');
 export const bundledTranscribeScript = (): string =>
   path.join(bundledRoot(), 'python', 'transcribe.py');
+export const bundledCalendarScript = (): string =>
+  path.join(bundledRoot(), 'python', 'calendar_pdf.py');
 export const bundledRequirementsFile = (): string =>
   path.join(bundledRoot(), 'python', 'requirements.txt');

@@ -41,7 +41,11 @@ function Tag() {
   // picks directly), which is also what stops the suggestion from
   // recomputing itself out from under a deliberate choice.
   const [clientTouched, setClientTouched] = useState(false);
-  const [clientSuggestion, setClientSuggestion] = useState<{ id: string; name: string } | null>(null);
+  const [clientSuggestion, setClientSuggestion] = useState<{ id: string; name: string; label?: string } | null>(null);
+  // The Outlook meeting this recording overlapped, if a calendar printout
+  // was imported: offered as suggestions, never applied unasked.
+  const [calendar, setCalendar] = useState<Awaited<ReturnType<typeof window.distill.tag.calendarContext>>>(null);
+  const [calendarOfferDismissed, setCalendarOfferDismissed] = useState(false);
   const [meetingTypeTouched, setMeetingTypeTouched] = useState(false);
   const [meetingTypeSuggestion, setMeetingTypeSuggestion] = useState<MeetingTypeSuggestion | null>(null);
   const [clipboardOffer, setClipboardOffer] = useState<Attendee[]>([]);
@@ -135,6 +139,14 @@ function Tag() {
     }
   }, [addMeetingType]);
 
+  useEffect(() => {
+    if (!recordingId) return;
+    void window.distill.tag
+      .calendarContext(recordingId)
+      .then(setCalendar)
+      .catch(() => setCalendar(null));
+  }, [recordingId]);
+
   // Offer attendees already on the clipboard, e.g. copied from the invite
   // just before opening this sheet. Offered, never added unasked.
   useEffect(() => {
@@ -164,6 +176,12 @@ function Tag() {
   // the user has made their own choice — shown as a suggestion to click,
   // never applied to selectedClientId on its own.
   useEffect(() => {
+    if (!clientTouched && calendar?.account) {
+      // The meeting title or invitees name the account — stronger than
+      // the domain history below, which needs past tagged meetings.
+      setClientSuggestion({ id: calendar.account.id, name: calendar.account.name, label: calendar.account.reason });
+      return;
+    }
     if (clientTouched || state.kind !== 'ready' || attendees.length === 0) {
       setClientSuggestion(null);
       return;
@@ -183,7 +201,7 @@ function Tag() {
     return () => {
       cancelled = true;
     };
-  }, [attendees, clientTouched, state]);
+  }, [attendees, clientTouched, state, calendar]);
 
   // Same idea for meeting type, but re-fires whenever the signals it
   // reasons over change (attendees pasted/added, client picked) since a
@@ -215,6 +233,7 @@ function Tag() {
 
   const addedKeys = useMemo(() => new Set(attendees.map(attendeeKey)), [attendees]);
   const clipboardNew = clipboardOffer.filter((a) => !addedKeys.has(attendeeKey(a)));
+  const calendarNew = calendarOfferDismissed ? [] : (calendar?.attendees ?? []).filter((a) => !addedKeys.has(attendeeKey(a)));
   const frequentNew = frequent.filter((a) => !addedKeys.has(attendeeKey(a)));
 
   const onAddAttendees = useCallback((toAdd: Attendee[]) => {
@@ -307,6 +326,12 @@ function Tag() {
   return wrap(
     <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div>
+        {calendar && (
+          <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
+            📅 Calendar: <strong>{calendar.subject}</strong>
+            {calendar.alternative ? ` (or “${calendar.alternative}”, which overlapped as much)` : ''}
+          </div>
+        )}
         <label>Client</label>
         {addClient.open ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -368,7 +393,15 @@ function Tag() {
             }}
           >
             <span style={{ flex: 1, minWidth: 0 }} className="muted">
-              Suggested from attendees' email domains: <strong>{clientSuggestion.name}</strong>
+              {clientSuggestion.label ? (
+                <>
+                  Suggested: <strong>{clientSuggestion.name}</strong> — {clientSuggestion.label}
+                </>
+              ) : (
+                <>
+                  Suggested from attendees' email domains: <strong>{clientSuggestion.name}</strong>
+                </>
+              )}
             </span>
             <button
               style={{ fontSize: 10, padding: '2px 8px' }}
@@ -480,6 +513,30 @@ function Tag() {
           "Name &lt;email&gt;" format all work. Used to help Whisper spell names
           correctly and to give the summary a roster to reference.
         </div>
+        {calendarNew.length > 0 && (
+          <div
+            className="row"
+            style={{
+              marginBottom: 6,
+              padding: '6px 8px',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              fontSize: 11,
+              alignItems: 'center',
+            }}
+          >
+            <span style={{ flex: 1, minWidth: 0 }} className="ellipsis">
+              Calendar invite has {calendarNew.length} {calendarNew.length === 1 ? 'person' : 'people'}:{' '}
+              {calendarNew.map((a) => a.name).join(', ')}
+            </span>
+            <button className="primary" onClick={() => onAddAttendees(calendarNew)}>
+              Add
+            </button>
+            <button onClick={() => setCalendarOfferDismissed(true)} title="Dismiss">
+              ×
+            </button>
+          </div>
+        )}
         {clipboardNew.length > 0 && (
           <div
             className="row"

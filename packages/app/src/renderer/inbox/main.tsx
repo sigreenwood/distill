@@ -5,6 +5,7 @@ import type { EssenceActivity } from '../essence/tokens.js';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type {
+  CalendarCoverage,
   ClientDTO,
   InboxItemDTO,
   MeetingTypeDTO,
@@ -411,6 +412,7 @@ function Inbox() {
       )}
       {sections.waiting.length > 0 && (
         <Section title="Waiting to tag" count={sections.waiting.length}>
+          <CalendarBar />
           <QueueAllBar count={sections.waiting.length} />
           {sections.waiting.map((r) => (
             <WaitingRow key={r.id} r={r} focused={focusedId === r.id} onTag={onTag} onSkip={onSkip} />
@@ -858,6 +860,7 @@ function WaitingRow(props: {
     <Row id={props.r.id} focused={props.focused}>
       <Title r={props.r} />
       <MetaLine r={props.r} />
+      <CalendarLine r={props.r} />
       <OutputTargetPicker r={props.r} />
       {lengthHint && (
         <div
@@ -880,6 +883,76 @@ function WaitingRow(props: {
         </button>
       </div>
     </Row>
+  );
+}
+
+/** The Outlook meeting a recording overlapped, and the account it points to. */
+function CalendarLine({ r }: { r: InboxItemDTO }) {
+  if (!r.calendarSubject) return null;
+  return (
+    <div className="muted" style={{ fontSize: 11, marginBottom: 6 }} title={r.calendarClientReason ?? undefined}>
+      📅 {r.calendarSubject}
+      {r.calendarClientName ? ` · ${r.calendarClientName}` : ''}
+      {r.calendarAlternative ? ` (or “${r.calendarAlternative}”)` : ''}
+    </div>
+  );
+}
+
+function formatDay(ms: number | null): string {
+  return ms === null ? '?' : new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+/**
+ * Import Outlook calendar printouts (Calendar → Print → detailed agenda,
+ * saved as PDF). Each recording is matched to the meeting it overlapped,
+ * which then suggests the account, attendees and meeting type. Read
+ * locally by python/calendar_pdf.py; nothing is sent anywhere.
+ */
+function CalendarBar() {
+  const [coverage, setCoverage] = useState<CalendarCoverage | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const load = useCallback(() => {
+    void window.distill.calendar.coverage().then(setCoverage).catch(() => setCoverage(null));
+  }, []);
+  useEffect(load, [load]);
+
+  const onImport = async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await window.distill.calendar.importPdfs();
+      if (!result) return;
+      const warnings = result.files.flatMap((f) => f.warnings.map((w) => `${f.name}: ${w}`));
+      setMessage(
+        `Read ${result.meetings.toLocaleString()} meetings from ${result.files.length} file${result.files.length === 1 ? '' : 's'}. ` +
+          `${result.matched} recording${result.matched === 1 ? '' : 's'} matched to a meeting, ${result.accountsSuggested} with an account.` +
+          (warnings.length > 0 ? ` ⚠ ${warnings.slice(0, 3).join(' · ')}` : ''),
+      );
+      load();
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <li style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', fontSize: 11 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <button onClick={() => void onImport()} disabled={busy}>
+          Import calendar PDFs…
+        </button>
+        <span className="muted">
+          {busy
+            ? 'Reading the printouts… (about 10 seconds for three months)'
+            : coverage && coverage.meetings > 0
+              ? `Calendar: ${coverage.meetings.toLocaleString()} meetings, ${formatDay(coverage.firstMs)} – ${formatDay(coverage.lastMs)}`
+              : 'Outlook → Print → detailed agenda, saved as PDF. Suggests accounts and attendees.'}
+        </span>
+      </div>
+      {message && <div style={{ marginTop: 6 }}>{message}</div>}
+    </li>
   );
 }
 
@@ -960,7 +1033,7 @@ function FilingRow(props: {
   onSkip: (id: string) => Promise<void>;
 }) {
   const { r } = props;
-  const [clientId, setClientId] = useState(r.suggestedClientId ?? '');
+  const [clientId, setClientId] = useState(r.suggestedClientId ?? r.calendarClientId ?? '');
   const [typeId, setTypeId] = useState(r.meetingTypeId ?? '');
   const [busy, setBusy] = useState(false);
   // A suggestion for a client deleted since classification shows as no pick.
@@ -988,6 +1061,7 @@ function FilingRow(props: {
         </span>
         {r.filingReason && <div className="muted">{r.filingReason}</div>}
       </div>
+      <CalendarLine r={r} />
       <div className="row" style={{ marginBottom: 8, gap: 6 }}>
         <select value={clientKnown ? clientId : ''} onChange={(e) => setClientId(e.target.value)} aria-label="Client">
           <option value="" disabled>

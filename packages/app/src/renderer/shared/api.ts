@@ -29,6 +29,8 @@ import type { SummaryVersionDTO } from '../../shared/summaryVersion';
 import type { MeetingTypeSuggestion } from '../../shared/meetingTypeSuggestion.js';
 import type { ProcessingSchedule } from '../../shared/processingSchedule.js';
 import type { FilingConfidence } from '../../shared/filing.js';
+import type { CalendarCoverage, CalendarImportResult } from '../../shared/calendar.js';
+export type { CalendarCoverage, CalendarImportResult };
 
 export type PipelineStep = 'download' | 'transcribe' | 'summarise' | 'write';
 
@@ -71,6 +73,14 @@ export interface InboxItemDTO {
   suggestedClientId: string | null;
   filingConfidence: FilingConfidence | null;
   filingReason: string | null;
+  /** Subject of the Outlook meeting this recording overlapped, from an imported calendar printout. */
+  calendarSubject: string | null;
+  /** Another meeting overlapped nearly as much. */
+  calendarAlternative: string | null;
+  /** The account that meeting points to, and why; a suggestion only. */
+  calendarClientId: string | null;
+  calendarClientName: string | null;
+  calendarClientReason: string | null;
   /** Whether a "Full re-run" can re-transcribe this recording — a local audio file, or (Plaud only) a cloud copy to re-fetch. */
   audioAvailable: boolean;
   /** Effective per-destination targets: this row's override if it has one, else the current Settings -> Outputs default. */
@@ -320,6 +330,11 @@ export interface DistillApi {
     queueAll(): Promise<{ queued: number }>;
     file(payload: { recordingId: string; clientId: string; meetingTypeId: string }): Promise<{ resummarise: boolean }>;
   };
+  calendar: {
+    coverage(): Promise<CalendarCoverage>;
+    /** Opens a picker for calendar PDFs; null when cancelled. */
+    importPdfs(): Promise<CalendarImportResult | null>;
+  };
   pipeline: {
     cancel(recordingId: string): Promise<void>;
     retry(recordingId: string): Promise<void>;
@@ -355,6 +370,13 @@ export interface DistillApi {
     }): Promise<MeetingTypeSuggestion | null>;
     /** Addresses found on the clipboard, if any. */
     clipboardAttendees(): Promise<Attendee[]>;
+    /** The Outlook meeting the recording overlapped (from an imported printout), or null. */
+    calendarContext(recordingId: string): Promise<{
+      subject: string;
+      alternative: string | null;
+      attendees: Attendee[];
+      account: { id: string; name: string; reason: string } | null;
+    } | null>;
     getSheetRecordingId(): string | null;
   };
   clients: {

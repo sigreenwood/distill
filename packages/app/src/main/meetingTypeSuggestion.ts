@@ -27,6 +27,8 @@ export interface SuggestionInput {
   durationSeconds: number | null;
   clientName: string | null;
   attendees: Attendee[];
+  /** Title of the Outlook meeting the recording overlapped, from an imported calendar printout. */
+  calendarSubject?: string | null;
 }
 
 /** How much of each candidate's prompt to show the model — enough to convey tone/purpose, not the whole thing. */
@@ -65,6 +67,7 @@ export function buildSuggestionMessages(
     : 'none pasted yet';
   const userContent = [
     `Recording: "${input.title}"`,
+    ...(input.calendarSubject ? [`Calendar meeting at that time: "${input.calendarSubject}"`] : []),
     `Duration: ${minutes != null ? `${minutes} minutes` : 'unknown'}`,
     `Client: ${input.clientName ?? 'not yet selected'}`,
     `Attendees (${input.attendees.length}): ${attendeeLine}`,
@@ -79,7 +82,8 @@ export function buildSuggestionMessages(
         role: 'system',
         content:
           'Pick which candidate meeting-type template best fits a recording, using only its title, ' +
-          'duration, client and attendee list — there is no transcript yet, so never assume specific ' +
+          'calendar meeting title (when given — usually the best clue), duration, client and attendee list — ' +
+          'there is no transcript yet, so never assume specific ' +
           'content was discussed. Return JSON only: {"type": one of the given labels, "confidence": ' +
           '"low"|"medium"|"high", "reason": one short sentence a user can read to judge the suggestion}. ' +
           'Always pick the closest candidate even if none fit well; use "low" confidence for a weak match ' +

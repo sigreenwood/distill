@@ -862,6 +862,87 @@ Limitations worth retaining:
   `test/worker.test.ts`, the first worker-loop test, which uses an
   in-memory fake State.
 
+## Step 13 — Outlook calendar printouts (PDF): meetings and accounts: complete in source
+
+Checkpoint: the commit containing this update, titled
+`feat(calendar): match recordings to meetings and accounts from Outlook calendar PDFs`.
+
+Replaces an abandoned .olm attempt. Outlook for Mac exported only shared
+and free/busy calendars, and never finished the archive. The printout
+(Outlook on the web → Print → detailed agenda → Save as PDF from Chrome)
+carries everything: subject, local times, location, organiser, required
+and optional attendees with email addresses, and the invite body.
+
+- **Parsing** (`python/calendar_pdf.py`, run in the app's own venv;
+  `pypdf` added to requirements.txt and the startup import check, so an
+  existing install goes through the setup window once). The script reads
+  text with font sizes and positions. An event is the run of
+  subject-sized lines directly above a time line such as
+  "Mon 2026-08-03 9:00 AM - 9:30 AM". The subject size is learned per
+  document, since print scaling varies. Then come Location / Organiser /
+  Required / Optional Attendees, then the body, cut where the
+  Teams/Webex dial-in block and the recording notice begin.
+  Private-use icon glyphs and zero-width page-break lines are stripped:
+  otherwise a subject at the foot of a page separates from its time on
+  the next. All-day entries are dropped. Layout rules only, no model.
+- **Storage:** migration 17 adds `calendar_meetings` and
+  `recordings.calendar_match_json`. Re-importing replaces every meeting
+  starting within the imported period. Meeting ids hash date, start and
+  subject, so the same event printed in two files is stored once.
+- **Matching** (`main/calendar/match.ts`): overlap ÷ union. It skips
+  "Canceled:" meetings and anything over 8 hours, and needs 5 minutes of
+  overlap (or half of a short recording). Personal blocks with no
+  organiser or invitees ("Lunch") score half. A runner-up at 80% or more
+  of the best is shown as an alternative.
+- **Account** (`main/calendar/account.ts`): keywords come from the
+  user's own client names, including the acronym ("Lloyds Banking
+  Group" → LBG, Lloyds), so there are no rules to maintain. The meeting
+  title scores 3, invitee email domains 2, the invite text 1. A tie
+  between clients gives no suggestion, and Unclassified is never
+  suggested.
+- **Where it shows up (suggestions only):**
+  - Inbox → Waiting to tag gains **Import calendar PDFs…** with
+    coverage. Rows show 📅 the meeting and its account.
+  - Tag sheet: the meeting line, the account as a click-to-apply client
+    suggestion (ahead of the domain-history heuristic), and an "Add"
+    offer for the invitees. The meeting-type suggestion (local model)
+    also gets the calendar title.
+  - Queue all: queued rows adopt the invitees as attendees before
+    transcription, for Whisper hints and the summary roster. The
+    classifier is given the meeting, invitee domains, invite notes and
+    account. If the model names no client, the calendar's account
+    stands. Ready to file pre-selects it.
+  - Manually tagged rows never adopt invitees automatically, because
+    the sheet saves exactly what the user kept.
+
+**Checked against real data** (3 printouts, Aug–Oct 2026, 562 pages):
+- 519 timed meetings in 10.5 s, with no warnings once the page-break
+  fix was in.
+- Of 249 Plaud recordings since 3 Aug, 203 match a meeting: 133 start
+  within 5 minutes and 19 are ambiguous.
+- 124 of the matched get an account: HSBC 68, LBG 36, AIB 20. Only 3
+  disagree with how those recordings were already filed. "Check in on
+  HSBC and AIB" correctly gets none.
+
+Verification: 287 tests. `calendarPdf.test.ts` covers local-time
+conversion, de-duplication, overlap scoring, personal blocks, cancelled
+meetings, ambiguity, attendee caps, account keywords/domains/ties and
+the classifier prompt. Both typechecks and the production build pass.
+The TS import path was run end to end on the three real PDFs (with a
+scratch venv). **Not exercised: the running app**, including the setup
+window installing pypdf (Node 26 shell again).
+
+Limitations worth retaining:
+
+- Times are read as the Mac's local zone, which assumes the printout
+  was made in the same zone as the recordings' Mac.
+- The Python parser has no automated test. It was validated on the
+  three real printouts only. A different Outlook print layout (classic
+  Outlook, another language) would need its time-line pattern adjusted.
+- Accounts come from client-name keywords only. Partner domains (e.g.
+  Celebrus) and subsidiaries (First Direct for HSBC) don't map unless
+  the title names the account.
+
 ## Next step
 
 Later ideas, not implemented or fully specified: diagnostics and

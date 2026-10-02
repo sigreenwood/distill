@@ -4,3 +4,5 @@ soundfile
 # Runs the bundled silero_vad.onnx for speech gating. Torch-free on
 # purpose — torch arrives with pyannote in v1.2.
 onnxruntime
+# Reads Outlook calendar printouts (calendar_pdf.py). Pure Python.
+pypdf

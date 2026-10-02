@@ -8,6 +8,16 @@ import type { JoinedRegisterItemRow } from './state.js';
 import { generateSummaryVersion, buildVersionList } from './summaryVersions.js';
 import type { SummaryVersionDTO } from '../shared/summaryVersion.js';
 import { suggestMeetingType } from './meetingTypeSuggestion.js';
+import { accountFor } from './calendar/account.js';
+import {
+  adoptCalendarAttendees,
+  applyCalendarMatch,
+  ensureCalendarMatch,
+  importCalendarPdfs,
+  parseStoredMatch,
+} from './calendar/service.js';
+import { bundledCalendarScript } from './bundledResources.js';
+import { resolvePythonBinary } from './pipelineSteps.js';
 import { assertFileRecordingPayload, filingNeedsResummary, type FilingConfidence } from '../shared/filing.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -424,7 +434,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       );
       ctx.onStateChanged?.();
     }
-    return ctx.state.listActiveJoined().map((r) => toInboxDTO(r, cfg.outputs));
+    const clients = ctx.state.listClients();
+    return ctx.state.listActiveJoined().map((r) => toInboxDTO(r, cfg.outputs, clients));
   });
 
   ipcMain.handle(Channels.InboxSkip, (_evt, recordingId) => {
@@ -492,7 +503,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     const cfg = ctx.getConfig();
     return {
       total: ctx.state.hiddenCount(),
-      items: ctx.state.listHiddenJoined().map((r) => toInboxDTO(r, cfg.outputs)),
+      items: ctx.state.listHiddenJoined().map((r) => toInboxDTO(r, cfg.outputs, ctx.state.listClients())),
     };
   });
 
@@ -504,7 +515,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     const cfg = ctx.getConfig();
     return {
       total: ctx.state.listAllCount(search),
-      items: ctx.state.listAllJoined(search, limit, offset).map((r) => toInboxDTO(r, cfg.outputs)),
+      items: ctx.state.listAllJoined(search, limit, offset).map((r) => toInboxDTO(r, cfg.outputs, ctx.state.listClients())),
     };
   });
 
@@ -543,8 +554,59 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     broadcastInboxChanged();
   });
 
+  ipcMain.handle(Channels.CalendarCoverage, () => ctx.state.calendarCoverage());
+
+  ipcMain.handle(Channels.CalendarImportPdfs, async () => {
+    const picked = await dialog.showOpenDialog({
+      title: 'Import Outlook calendar printouts',
+      message: 'Choose one or more calendar PDFs printed from Outlook (detailed agenda view).',
+      buttonLabel: 'Import',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    });
+    if (picked.canceled || picked.filePaths.length === 0) return null;
+    const started = Date.now();
+    const result = await importCalendarPdfs(ctx.state, picked.filePaths, {
+      binary: resolvePythonBinary(app.getAppPath()),
+      script: bundledCalendarScript(),
+    });
+    ctx.logger.info(
+      { files: result.files.length, meetings: result.meetings, matched: result.matched, accounts: result.accountsSuggested, ms: Date.now() - started },
+      'calendar printouts imported',
+    );
+    broadcastInboxChanged();
+    return result;
+  });
+
+  // What the calendar says about one recording, for the tag sheet: shown
+  // there as a subject line and click-to-apply suggestions, never applied
+  // on its own.
+  ipcMain.handle(Channels.TagCalendarContext, (_evt, recordingId) => {
+    if (typeof recordingId !== 'string') throw new Error('recordingId must be a string');
+    const row = ctx.state.getRecording(recordingId);
+    if (!row) return null;
+    const match = ensureCalendarMatch(ctx.state, row);
+    if (!match) return null;
+    const clients = ctx.state.listClients();
+    const account = accountFor(match, clients);
+    return {
+      subject: match.subject,
+      alternative: match.alternative,
+      attendees: match.alternative ? [] : match.attendees.map((a) => ({ name: a.name, email: a.email, company: null })),
+      account: account
+        ? { id: account.clientId, name: clients.find((c) => c.id === account.clientId)?.name ?? '', reason: account.reason }
+        : null,
+    };
+  });
+
   ipcMain.handle(Channels.InboxQueueAll, () => {
     const queued = ctx.state.queueAllForFiling();
+    // Queued rows skip the tag sheet, so they take their invitees from the
+    // calendar here, before transcription, where they help Whisper's hints.
+    for (const row of ctx.state.listQueuedForFilingUnstarted()) {
+      if (parseStoredMatch(row.calendar_match_json)) adoptCalendarAttendees(ctx.state, row);
+      else applyCalendarMatch(ctx.state, row);
+    }
     ctx.logger.info({ queued }, 'inbox queued for processing; filing held for review');
     if (queued > 0) {
       ctx.onStateChanged?.();
@@ -654,7 +716,13 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     meetingTypeSuggestionRuns.set(evt.sender.id, controller);
     try {
       return await suggestMeetingType(
-        { title: row.filename, durationSeconds: row.duration_seconds, clientName, attendees },
+        {
+          title: row.filename,
+          durationSeconds: row.duration_seconds,
+          clientName,
+          attendees,
+          calendarSubject: ensureCalendarMatch(ctx.state, row)?.subject ?? null,
+        },
         candidates,
         ctx.getConfig().ollama,
         controller.signal,
@@ -1582,8 +1650,10 @@ function describeVenvStatus(status: VenvStatus): string {
 
 // --- DTO mappers -----------------------------------------------------------
 
-export function toInboxDTO(r: JoinedRecordingRow, outputs: OutputsConfig) {
+export function toInboxDTO(r: JoinedRecordingRow, outputs: OutputsConfig, clients: Pick<ClientRow, 'id' | 'name'>[] = []) {
   const currentStep = statusToStep(r.status);
+  const calendar = parseStoredMatch(r.calendar_match_json);
+  const calendarAccount = calendar ? accountFor(calendar, clients) : null;
   const plan = stepPlanFor(r);
   const idx = currentStep ? plan.indexOf(currentStep) : -1;
   return {
@@ -1626,6 +1696,13 @@ export function toInboxDTO(r: JoinedRecordingRow, outputs: OutputsConfig) {
     suggestedClientId: r.suggested_client_id,
     filingConfidence: r.filing_confidence as FilingConfidence | null,
     filingReason: r.filing_reason,
+    // The Outlook meeting this recording overlapped, and the account it
+    // points to — shown as suggestions; see main/calendar/.
+    calendarSubject: calendar?.subject ?? null,
+    calendarAlternative: calendar?.alternative ?? null,
+    calendarClientId: calendarAccount?.clientId ?? null,
+    calendarClientName: calendarAccount ? (clients.find((c) => c.id === calendarAccount.clientId)?.name ?? null) : null,
+    calendarClientReason: calendarAccount?.reason ?? null,
     // Gates the "Full re-run" action: a local file to re-transcribe from,
     // or (Plaud rows only — retention never deletes their audio_path, but
     // the row may predate a local download, or the file may have been
