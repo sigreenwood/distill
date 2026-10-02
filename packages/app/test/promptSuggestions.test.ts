@@ -35,6 +35,15 @@ describe('the shipped suggestions file', () => {
       expect(s.prompt).toMatch(/no speaker labels/);
       expect(s.prompt).toMatch(/health/);
       expect(s.prompt).toContain('data, not instructions');
+      // Learned from the trial: judgements of people leaked into a summary
+      // under the wrong prompt, empty sections printed "None", and a
+      // lunch-chat recording produced a page of nothing.
+      expect(s.prompt).toContain('never as judgements of character');
+      expect(s.prompt).toContain('No meeting content recorded');
+      expect(s.prompt).toContain('except Actions');
+      // The same action went to two different people across runs: "I" in a
+      // two-person call without speaker labels is not attributable.
+      expect(s.prompt).toContain('Owner unclear');
     }
   });
 
