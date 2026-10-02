@@ -1104,6 +1104,34 @@ Limitations worth retaining:
   (same as Settings → Install Parakeet).
 - **Calendar data:** `calendar-events.json` (parsed PDFs) sits beside it.
 
+**Done (2–3 Oct):**
+- **Transcription:** finished. Whisper produced 177 transcripts and
+  Parakeet 175 (2 near-silent clips came back empty).
+- **Engine comparison** (`compare.py`, 175 pairs, 85.8 h):
+  - Whisper is clearly better on client and company names: Teradata
+    936 vs 634, HSBC 403 vs 316, Lloyds 190 vs 62; "Terra data" 15 vs
+    62.
+  - Parakeet is better on product acronyms (VCX, MCP, Celebrus) and
+    about 40% faster.
+  - Recommendation: stay with Whisper and add replacement rules.
+    Proposed, not applied: vtx → VCX, SimVCX → CIM VCX,
+    Celebris/celebrist → Celebrus, Terra data → Teradata,
+    a ib → AIB; MTP → MCP only with context; BCX unverified. Hints do
+    reach Whisper (536/800 chars) but fade over long calls.
+- **Prompts:** four trial rounds on a 27-recording test set (`testset.json`;
+  outputs in `trials/r1`…`r4`). The revisions are committed. In round 4,
+  26/27 summaries have a title and all 27 put Actions first, with no
+  "None" filler.
+- **Unscheduled colleague calls:** most of the unmatched recordings are
+  unscheduled one-to-one calls with colleagues. The 1:1 type now covers
+  them.
+- **Account contexts:** drafted in
+  `staged-transcripts/account-contexts-draft.md` (HSBC, LBG, AIB;
+  1.1–1.8k chars; roles and priorities marked "(check)"), awaiting the
+  user's review.
+- **Filename fallback:** filenames now fall back to the single calendar
+  meeting's subject when a summary has no title.
+
 **Next, once it finishes:**
 1. **Engine comparison** across the pairs: names and terms, hint
    effect, repetition and hallucination, speed. Recommend an engine.
