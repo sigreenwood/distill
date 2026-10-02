@@ -72,11 +72,28 @@ export function extractTitleFromSummary(summary: string | null): string | null {
   return title;
 }
 
+/**
+ * The calendar meeting's subject, when the recording matched exactly one
+ * meeting the transcript didn't contradict — a far better filename than
+ * Plaud's timestamp when the summary didn't open with a title line.
+ */
+export function calendarTitle(row: Pick<JoinedRecordingRow, 'calendar_match_json'>): string | null {
+  if (!row.calendar_match_json) return null;
+  try {
+    const m = JSON.parse(row.calendar_match_json) as { subject?: string; alternatives?: unknown[]; rejectedByTranscript?: boolean };
+    if (m.rejectedByTranscript || (m.alternatives?.length ?? 0) > 0) return null;
+    const subject = (m.subject ?? '').replace(/^\[external\]\s*/i, '').replace(/^(fw|re):\s*/i, '').trim();
+    return subject.length > 0 ? subject : null;
+  } catch {
+    return null;
+  }
+}
+
 export function buildFilenameStem(row: JoinedRecordingRow): string {
   const dateStr = formatDateForFilename(row.start_time);
   const client = sanitiseForFilename(row.client_name ?? 'Unclassified');
   const extracted = extractTitleFromSummary(row.summary_text);
-  const titleSource = extracted ?? row.filename;
+  const titleSource = extracted ?? calendarTitle(row) ?? row.filename;
   const title = sanitiseForFilename(titleSource).slice(0, 80);
   return `${dateStr} - ${client} - ${title}`;
 }

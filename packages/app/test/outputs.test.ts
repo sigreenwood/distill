@@ -3,6 +3,7 @@ import {
   buildHtmlFragment,
   buildMarkdown,
   buildFilenameStem,
+  calendarTitle,
   extractTitleFromSummary,
   uniquifyPath,
   sanitiseForFilename,
@@ -90,6 +91,19 @@ describe('filename generation', () => {
     );
     expect(stem).toContain('HSBC account review covering cloud strategy');
     expect(stem).toContain('Acme');
+  });
+
+  it('falls back to the single calendar meeting before the recording name', () => {
+    const cal = (m: object) => JSON.stringify({ subject: '[EXTERNAL] AIB/Teradata: Weekly sync', alternatives: [], ...m });
+    const noTitle = '## Actions\n- None agreed.';
+    const stem = buildFilenameStem(row({ summary_text: noTitle, calendar_match_json: cal({}) }));
+    expect(stem).toContain('Weekly sync');
+    expect(stem).not.toContain('EXTERNAL');
+    expect(stem).not.toContain('Meeting');
+    // Double-booked or contradicted by the transcript: the calendar can't name it.
+    expect(calendarTitle({ calendar_match_json: cal({ alternatives: [{}] }) })).toBeNull();
+    expect(calendarTitle({ calendar_match_json: cal({ rejectedByTranscript: true }) })).toBeNull();
+    expect(calendarTitle({ calendar_match_json: null })).toBeNull();
   });
 
   it('rejects generic first lines so the recording name is used instead', () => {
