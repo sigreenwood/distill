@@ -27,8 +27,8 @@ export interface SuggestionInput {
   durationSeconds: number | null;
   clientName: string | null;
   attendees: Attendee[];
-  /** Title of the Outlook meeting the recording overlapped, from an imported calendar printout. */
-  calendarSubject?: string | null;
+  /** Titles of the Outlook meetings booked over the recording (more than one when double-booked). */
+  calendarSubjects?: string[];
 }
 
 /** How much of each candidate's prompt to show the model — enough to convey tone/purpose, not the whole thing. */
@@ -67,7 +67,11 @@ export function buildSuggestionMessages(
     : 'none pasted yet';
   const userContent = [
     `Recording: "${input.title}"`,
-    ...(input.calendarSubject ? [`Calendar meeting at that time: "${input.calendarSubject}"`] : []),
+    ...(input.calendarSubjects && input.calendarSubjects.length === 1
+      ? [`Calendar meeting at that time: "${input.calendarSubjects[0]}"`]
+      : input.calendarSubjects && input.calendarSubjects.length > 1
+        ? [`Calendar meetings double-booked at that time (it was one of these): ${input.calendarSubjects.map((s) => `"${s}"`).join(', ')}`]
+        : []),
     `Duration: ${minutes != null ? `${minutes} minutes` : 'unknown'}`,
     `Client: ${input.clientName ?? 'not yet selected'}`,
     `Attendees (${input.attendees.length}): ${attendeeLine}`,

@@ -12,8 +12,10 @@ import { cleanWhisperRepetitions } from './transcriptCleanup.js';
 import { estimateTokenBudget, computeAdaptiveContextWindow } from './tokenBudget.js';
 import { writeOutputs } from './outputs.js';
 import { suggestFiling } from './filingSuggestion.js';
-import { accountFor } from './calendar/account.js';
+import { accountFor, accountForMatch } from './calendar/account.js';
 import { ensureCalendarMatch } from './calendar/service.js';
+import { attendeesOf, candidatesOf, chooseCandidate } from './calendar/match.js';
+import type { CalendarMatch } from '../shared/calendar.js';
 import { CancelledError, isCancelled, throwIfAborted } from './cancellation.js';
 import type { Logger } from './logger.js';
 import type { AppConfig, OutputsConfig } from './config.js';
@@ -396,11 +398,15 @@ async function classifyForFiling(
     .filter((c) => c.id !== 'unclassified')
     .map((c) => ({ id: c.id, name: c.name }));
   const calendar = ensureCalendarMatch(ctx.state, row);
-  const account = calendar ? accountFor(calendar, clients) : null;
-  const accountName = account ? clients.find((c) => c.id === account.clientId)?.name ?? null : null;
+  const candidates = calendar ? candidatesOf(calendar) : [];
+  const candidateAccounts = candidates.map((c) => {
+    const a = accountFor(c, clients);
+    const name = a ? clients.find((x) => x.id === a.clientId)?.name : null;
+    return a && name ? `${name} (${a.reason.replace(/^From the calendar: /, '').replace(/\.$/, '')})` : null;
+  });
   const cfg = ctx.getConfig();
   ctx.logger.info(
-    { id: row.id, clients: clients.length, types: types.length, calendar: calendar !== null, calendarAccount: account?.clientId ?? null },
+    { id: row.id, clients: clients.length, types: types.length, calendarCandidates: candidates.length },
     'classifying for filing',
   );
   let suggestion;
@@ -411,7 +417,7 @@ async function classifyForFiling(
         durationSeconds: row.duration_seconds,
         transcript,
         calendar,
-        calendarAccount: account && accountName ? `${accountName} (${account.reason.replace(/^From the calendar: /, '').replace(/\.$/, '')})` : null,
+        candidateAccounts,
       },
       clients,
       types,
@@ -423,9 +429,32 @@ async function classifyForFiling(
     if (isCancelled(e)) throw new CancelledError('summarise');
     throw e;
   }
+  // Which booked meeting this actually was, by the transcript. The choice
+  // replaces the time-based match, so the inbox, the summary roster and
+  // the account below all follow the meeting the transcript matches — not
+  // whichever of a double booking fitted the clock best.
+  let resolved: CalendarMatch | null = calendar;
+  if (calendar && suggestion?.meetingId !== undefined) {
+    resolved =
+      suggestion.meetingId === null
+        ? { ...calendar, alternatives: [], rejectedByTranscript: true }
+        : chooseCandidate(calendar, suggestion.meetingId) ?? calendar;
+    const patchCal: Partial<RecordingRow> = { calendar_match_json: JSON.stringify(resolved) };
+    const invitees = resolved.rejectedByTranscript ? [] : attendeesOf(resolved);
+    if (row.attendees_json === null && invitees.length > 0 && resolved.alternatives.length === 0) {
+      patchCal.attendees_json = JSON.stringify(invitees);
+    }
+    ctx.state.updateRecording(row.id, patchCal);
+    ctx.logger.info(
+      { id: row.id, candidates: candidates.length, chose: suggestion.meetingId === null ? 'none' : 'meeting' },
+      'calendar meeting resolved from the transcript',
+    );
+  }
   // When the model names no client but the calendar does, the calendar's
   // account stands: it comes from the meeting title or invitees, which a
-  // transcript of an internal huddle may never name.
+  // transcript of an internal huddle may never name. With unresolved
+  // overlapping meetings it's only used if they all agree.
+  const account = resolved ? accountForMatch(resolved, clients) : null;
   const patch: Partial<RecordingRow> = suggestion
     ? {
         meeting_type_id: suggestion.meetingTypeId,

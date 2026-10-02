@@ -889,11 +889,45 @@ and optional attendees with email addresses, and the invite body.
   `recordings.calendar_match_json`. Re-importing replaces every meeting
   starting within the imported period. Meeting ids hash date, start and
   subject, so the same event printed in two files is stored once.
-- **Matching** (`main/calendar/match.ts`): overlap ÷ union. It skips
-  "Canceled:" meetings and anything over 8 hours, and needs 5 minutes of
-  overlap (or half of a short recording). Personal blocks with no
-  organiser or invitees ("Lunch") score half. A runner-up at 80% or more
-  of the best is shown as an alternative.
+- **Matching** (`main/calendar/match.ts`): every real meeting covering at
+  least half of the recording, or half of the meeting if it is shorter,
+  is a candidate. Cancelled meetings and anything over 8 hours are
+  skipped. Personal blocks with no organiser or invitees ("Lunch") count
+  only when nothing else is booked. Candidates are ranked by
+  overlap ÷ union, and the best is stored with up to 3 `alternatives`.
+- **Overlapping meetings** (user's warning, checked on real data). Of
+  203 matched recordings, 47 were double-booked, and in 42 of those the
+  meetings point to different accounts. Some single recordings ran
+  across back-to-back meetings. The first version picked one meeting
+  by time fit and mentioned a runner-up only within 80%. That favoured
+  shorter meetings and silently chose the account. Now:
+  - **Account:** suggested only if *every* candidate points to the same
+    account (`accountForMatch`). A candidate with no account counts
+    against.
+  - **Attendees:** invitees are adopted only from a single, unambiguous
+    meeting.
+  - **Filing classifier:** sees all candidates as M1…Mn, each with
+    invitee domains and its own account. It answers which one the
+    transcript matches, or "none" for a call in a booked slot.
+    `classifyForFiling` stores the choice as the match
+    (`confirmedByTranscript`, or `rejectedByTranscript` for "none"),
+    takes that meeting's invitees for the summary roster, and then the
+    account.
+  - **Tag sheet:** lists the overlapping meetings ("Which was this?",
+    plus "Neither") and offers account and invitees only for the chosen
+    one. The tag sheet's meeting-type suggestion is told all the
+    double-booked titles.
+  - **Inbox rows:** show "📅 A — or “B”", with "overlapping meetings,
+    account unclear" when they disagree.
+  - **Trial** (local model, real transcripts): a 92-minute session
+    booked against another account's daily huddle chose the right
+    meeting and account. A call previously thought to be "unscheduled
+    in another account's slot" turned out to have a third booked
+    meeting the old single pick had hidden; the classifier chose it,
+    with high confidence.
+  - **Result on three months:** calendar account suggestions fell from
+    124 to 103, and disagreements with the user's own filing from 3
+    to 1.
 - **Account** (`main/calendar/account.ts`): keywords come from the
   user's own client names, including the acronym ("Lloyds Banking
   Group" → LBG, Lloyds), so there are no rules to maintain. The meeting

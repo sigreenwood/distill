@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { localTimeToMs, meetingId, toMeetings, type PrintedEvent } from '../src/main/calendar/pdfImport.js';
-import { attendeesFromMatch, matchRecording, MAX_INVITE_ATTENDEES } from '../src/main/calendar/match.js';
-import { accountFor, clientKeywords } from '../src/main/calendar/account.js';
-import { buildFilingMessages, describeCalendarMatch } from '../src/main/filingSuggestion.js';
+import { attendeesFromMatch, chooseCandidate, matchRecording, MAX_INVITE_ATTENDEES } from '../src/main/calendar/match.js';
+import { accountFor, accountForMatch, clientKeywords } from '../src/main/calendar/account.js';
+import { buildFilingMessages, describeCalendarCandidates, parseFilingSuggestion } from '../src/main/filingSuggestion.js';
 import type { CalendarMatch, CalendarMeeting } from '../src/shared/calendar.js';
 
 const printed = (e: Partial<PrintedEvent>): PrintedEvent => ({
@@ -34,38 +34,62 @@ describe('matchRecording', () => {
   const rec = (start: string, minutes: number) => ({ startMs: at(start), durationSeconds: minutes * 60 });
 
   it('picks the meeting the recording lines up with', () => {
-    const m = matchRecording(rec('09:01', 28), [
-      meeting({ id: 'a', subject: 'HSBC Daily Huddle' }),
-      meeting({ id: 'b', subject: 'Workshop', startMs: at('08:00'), endMs: at('12:00') }),
-    ]);
+    const m = matchRecording(rec('09:01', 28), [meeting({ id: 'a', subject: 'HSBC Daily Huddle' })]);
     expect(m?.subject).toBe('HSBC Daily Huddle');
-    expect(m?.alternative).toBeNull();
+    expect(m?.alternatives).toEqual([]);
   });
 
-  it('prefers a real meeting over a personal block like Lunch', () => {
-    const m = matchRecording(rec('12:00', 60), [
-      meeting({ id: 'lunch', subject: 'Lunch', startMs: at('12:00'), endMs: at('13:00'), organiser: null, required: [] }),
-      meeting({ id: 'call', subject: 'AIB Catchup', startMs: at('12:00'), endMs: at('12:45') }),
-    ]);
-    expect(m?.subject).toBe('AIB Catchup');
+  it('keeps every real meeting booked over the recording, not just the best time fit', () => {
+    // A 20-minute recording: the 30-minute call fits the clock better, but
+    // the hour-long one booked at the same time is just as possible.
+    const m = matchRecording(rec('14:00', 20), [
+      meeting({ id: 'a', subject: 'Account weekly catch-up', startMs: at('14:00'), endMs: at('14:30') }),
+      meeting({ id: 'b', subject: 'Advisory board', startMs: at('14:00'), endMs: at('15:00') }),
+    ])!;
+    expect(m.subject).toBe('Account weekly catch-up');
+    expect(m.alternatives.map((a) => a.subject)).toEqual(['Advisory board']);
   });
 
-  it('skips cancelled meetings and mere touching, and flags double bookings', () => {
+  it('lists back-to-back meetings a long recording runs across', () => {
+    const m = matchRecording(rec('08:00', 90), [
+      meeting({ id: 'a', subject: 'Huddle', startMs: at('08:00'), endMs: at('08:30') }),
+      meeting({ id: 'b', subject: 'Stand-up', startMs: at('08:30'), endMs: at('08:55') }),
+      meeting({ id: 'c', subject: 'Community call', startMs: at('08:30'), endMs: at('09:30') }),
+    ])!;
+    expect([m.subject, ...m.alternatives.map((a) => a.subject)].sort()).toEqual(['Community call', 'Huddle', 'Stand-up']);
+  });
+
+  it('ignores personal blocks when a real meeting is booked, but uses one when nothing else is', () => {
+    const lunch = meeting({ id: 'lunch', subject: 'Lunch', startMs: at('12:00'), endMs: at('13:00'), organiser: null, required: [] });
+    const m = matchRecording(rec('12:00', 45), [lunch, meeting({ id: 'call', subject: 'AIB Catchup', startMs: at('12:00'), endMs: at('12:45') })])!;
+    expect(m.subject).toBe('AIB Catchup');
+    expect(m.alternatives).toEqual([]);
+    expect(matchRecording(rec('12:00', 45), [lunch])?.subject).toBe('Lunch');
+  });
+
+  it('skips cancelled meetings and mere touching', () => {
     expect(matchRecording(rec('09:00', 30), [meeting({ subject: 'Canceled: AIB/Teradata: Weekly sync' })])).toBeNull();
     expect(matchRecording(rec('09:27', 30), [meeting({})])).toBeNull();
-    const m = matchRecording(rec('09:00', 30), [meeting({ id: 'a', subject: 'A' }), meeting({ id: 'b', subject: 'B' })]);
-    expect(m?.alternative).toBe('B');
+  });
+
+  it('turns a chosen candidate into the match, alternatives cleared', () => {
+    const m = matchRecording(rec('09:00', 30), [meeting({ id: 'a', subject: 'A' }), meeting({ id: 'b', subject: 'B' })])!;
+    const chosen = chooseCandidate(m, 'b')!;
+    expect(chosen.subject).toBe('B');
+    expect(chosen.alternatives).toEqual([]);
+    expect(chosen.confirmedByTranscript).toBe(true);
+    expect(chooseCandidate(m, 'nope')).toBeNull();
   });
 });
 
 describe('attendeesFromMatch', () => {
   const match = (m: Partial<CalendarMatch>): CalendarMatch => ({
-    meetingId: 'm', subject: 's', startMs: 0, endMs: 0, organiser: null, body: null, alternative: null,
+    meetingId: 'm', subject: 's', startMs: 0, endMs: 0, organiser: null, body: null, alternatives: [],
     attendees: [{ name: 'Sam Lee', email: 'sam@hsbc.com' }, { name: 'Sam Lee', email: 'sam@hsbc.com' }], ...m,
   });
-  it('de-duplicates, and gives nothing for an ambiguous match or a mass invite', () => {
+  it('de-duplicates, and gives nothing for a double booking or a mass invite', () => {
     expect(attendeesFromMatch(match({}))).toEqual([{ name: 'Sam Lee', email: 'sam@hsbc.com', company: null }]);
-    expect(attendeesFromMatch(match({ alternative: 'Other' }))).toEqual([]);
+    expect(attendeesFromMatch(match({ alternatives: [match({})] }))).toEqual([]);
     const many = Array.from({ length: MAX_INVITE_ATTENDEES + 1 }, (_, i) => ({ name: `P${i}`, email: `p${i}@x.com` }));
     expect(attendeesFromMatch(match({ attendees: many }))).toEqual([]);
   });
@@ -112,29 +136,48 @@ describe('accountFor', () => {
   it('does not match a keyword inside another word', () => {
     expect(accountFor(m('Haibun poetry'), clients)).toBeNull();
   });
+
+  it('with overlapping meetings, suggests an account only when every meeting agrees', () => {
+    const withAlts = (subject: string, ...alts: string[]) => ({ ...m(subject), alternatives: alts.map((a) => m(a)) });
+    expect(accountForMatch(withAlts('HSBC Daily Huddle', 'HSBC CIM catch-up'), clients)?.clientId).toBe('hsbc');
+    expect(accountForMatch(withAlts('HSBC Daily Huddle', 'AIB POC'), clients)).toBeNull();
+    // A meeting with no account counts against: it could have been the all-hands.
+    expect(accountForMatch(withAlts('HSBC AI Studio - Internal', 'CSA All-Hands'), clients)).toBeNull();
+    expect(accountForMatch({ ...m('HSBC Daily Huddle'), alternatives: [], rejectedByTranscript: true } as never, clients)).toBeNull();
+  });
 });
 
-describe('classifier prompt with a calendar meeting', () => {
-  const match: CalendarMatch = {
-    meetingId: 'm', subject: 'HSBC Daily Huddle', startMs: 0, endMs: 0, organiser: 'Tom Carroll',
-    attendees: [{ name: 'Sam Lee', email: 'sam@hsbc.com' }], body: 'Daily HSBC huddle', alternative: 'Lunch',
+describe('classifier prompt with calendar meetings', () => {
+  const huddle: CalendarMatch = {
+    meetingId: 'h', subject: 'HSBC Daily Huddle', startMs: at('09:00'), endMs: at('09:30'), organiser: 'Tom Carroll',
+    attendees: [{ name: 'Sam Lee', email: 'sam@hsbc.com' }], body: 'Daily HSBC huddle',
+    alternatives: [{ meetingId: 'p', subject: 'AIB POC', startMs: at('09:00'), endMs: at('10:00'), organiser: null, attendees: [], body: null }],
   };
 
-  it('describes the meeting with domains, not addresses', () => {
-    const lines = describeCalendarMatch(match, 'HSBC (the meeting title mentions HSBC)').join('\n');
-    expect(lines).toContain('"HSBC Daily Huddle"');
+  it('lists every booked meeting with domains, not addresses, and its account', () => {
+    const lines = describeCalendarCandidates([huddle, ...huddle.alternatives], ['HSBC (title)', 'AIB (title)']).join('\n');
+    expect(lines).toContain('M1: "HSBC Daily Huddle"');
+    expect(lines).toContain('M2: "AIB POC"');
     expect(lines).toContain('Sam Lee (hsbc.com)');
     expect(lines).not.toContain('sam@');
-    expect(lines).toContain('"Lunch"');
-    expect(lines).toContain('Account indicated by the calendar: HSBC');
+    expect(lines).toContain('Account indicated: AIB (title)');
   });
 
-  it('is included in the filing request', () => {
-    const user = buildFilingMessages(
-      { title: 't', durationSeconds: 60, transcript: 'x', calendar: match, calendarAccount: 'HSBC' },
+  it('asks which meeting the transcript matches, and maps the answer back', () => {
+    const built = buildFilingMessages(
+      { title: 't', durationSeconds: 60, transcript: 'x', calendar: huddle, candidateAccounts: [] },
       [{ id: 'hsbc', name: 'HSBC' }],
       [{ id: 't', name: 'Client call', prompt: 'p' }],
-    ).messages[1].content;
-    expect(user).toContain('Calendar meeting at the time of the recording');
+    );
+    expect(built.meetingIds).toEqual(['h', 'p']);
+    expect(built.messages[1].content).toContain('2 overlap');
+    const parse = (meeting: string) =>
+      parseFilingSuggestion(
+        JSON.stringify({ client: 'C1', type: 'T1', confidence: 'high', meeting }),
+        ['C1'], ['T1'], [{ id: 'hsbc', name: 'HSBC' }], [{ id: 't', name: 'Client call', prompt: 'p' }], built.meetingIds,
+      )!;
+    expect(parse('M2').meetingId).toBe('p');
+    expect(parse('none').meetingId).toBeNull();
+    expect('meetingId' in parse('M9')).toBe(false);
   });
 });

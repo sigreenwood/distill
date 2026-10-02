@@ -78,3 +78,22 @@ export function accountFor(
   if (!best || (second && second.score === best.score)) return null;
   return { clientId: best.clientId, reason: `From the calendar: ${best.reasons.join('; ')}.` };
 }
+
+/**
+ * The account for a recording's calendar match. With overlapping
+ * meetings, an account is suggested only when every candidate points at
+ * the same one. A candidate with no account counts against: a recording
+ * overlapping both an account call and a team all-hands could be either.
+ */
+export function accountForMatch(
+  match: Pick<CalendarMatch, 'subject' | 'attendees' | 'body'> & { alternatives: Pick<CalendarMatch, 'subject' | 'attendees' | 'body'>[] },
+  clients: { id: string; name: string }[],
+): AccountSuggestion | null {
+  if ((match as { rejectedByTranscript?: boolean }).rejectedByTranscript) return null;
+  const primary = accountFor(match, clients);
+  if (match.alternatives.length === 0 || !primary) return primary;
+  const agree = match.alternatives.every((c) => accountFor(c, clients)?.clientId === primary.clientId);
+  return agree
+    ? { clientId: primary.clientId, reason: `${primary.reason.replace(/\.$/, '')} (every overlapping meeting is for this account).` }
+    : null;
+}

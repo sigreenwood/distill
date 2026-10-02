@@ -891,9 +891,11 @@ function CalendarLine({ r }: { r: InboxItemDTO }) {
   if (!r.calendarSubject) return null;
   return (
     <div className="muted" style={{ fontSize: 11, marginBottom: 6 }} title={r.calendarClientReason ?? undefined}>
-      📅 {r.calendarSubject}
-      {r.calendarClientName ? ` · ${r.calendarClientName}` : ''}
-      {r.calendarAlternative ? ` (or “${r.calendarAlternative}”)` : ''}
+      📅 {r.calendarRejected ? 'Booked: ' : ''}
+      {r.calendarSubject}
+      {r.calendarAlternatives.length > 0 ? ` — or ${r.calendarAlternatives.map((a) => `“${a}”`).join(', or ')}` : ''}
+      {r.calendarRejected ? ' (the transcript doesn’t match it)' : ''}
+      {r.calendarClientName ? ` · ${r.calendarClientName}` : r.calendarAlternatives.length > 0 ? ' · overlapping meetings, account unclear' : ''}
     </div>
   );
 }

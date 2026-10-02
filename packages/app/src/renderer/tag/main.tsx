@@ -46,6 +46,11 @@ function Tag() {
   // was imported: offered as suggestions, never applied unasked.
   const [calendar, setCalendar] = useState<Awaited<ReturnType<typeof window.distill.tag.calendarContext>>>(null);
   const [calendarOfferDismissed, setCalendarOfferDismissed] = useState(false);
+  // Which booked meeting this was. Preselected when only one overlapped;
+  // with a double booking the user picks (or says neither) before any
+  // account or invitees are offered from the calendar.
+  const [chosenMeetingId, setChosenMeetingId] = useState<string | null>(null);
+  const meeting = calendar?.meetings.find((m) => m.meetingId === chosenMeetingId) ?? null;
   const [meetingTypeTouched, setMeetingTypeTouched] = useState(false);
   const [meetingTypeSuggestion, setMeetingTypeSuggestion] = useState<MeetingTypeSuggestion | null>(null);
   const [clipboardOffer, setClipboardOffer] = useState<Attendee[]>([]);
@@ -143,7 +148,10 @@ function Tag() {
     if (!recordingId) return;
     void window.distill.tag
       .calendarContext(recordingId)
-      .then(setCalendar)
+      .then((c) => {
+        setCalendar(c);
+        if (c && c.meetings.length === 1) setChosenMeetingId(c.meetings[0].meetingId);
+      })
       .catch(() => setCalendar(null));
   }, [recordingId]);
 
@@ -176,10 +184,10 @@ function Tag() {
   // the user has made their own choice — shown as a suggestion to click,
   // never applied to selectedClientId on its own.
   useEffect(() => {
-    if (!clientTouched && calendar?.account) {
+    if (!clientTouched && meeting?.account) {
       // The meeting title or invitees name the account — stronger than
       // the domain history below, which needs past tagged meetings.
-      setClientSuggestion({ id: calendar.account.id, name: calendar.account.name, label: calendar.account.reason });
+      setClientSuggestion({ id: meeting.account.id, name: meeting.account.name, label: meeting.account.reason });
       return;
     }
     if (clientTouched || state.kind !== 'ready' || attendees.length === 0) {
@@ -201,7 +209,7 @@ function Tag() {
     return () => {
       cancelled = true;
     };
-  }, [attendees, clientTouched, state, calendar]);
+  }, [attendees, clientTouched, state, meeting]);
 
   // Same idea for meeting type, but re-fires whenever the signals it
   // reasons over change (attendees pasted/added, client picked) since a
@@ -233,7 +241,7 @@ function Tag() {
 
   const addedKeys = useMemo(() => new Set(attendees.map(attendeeKey)), [attendees]);
   const clipboardNew = clipboardOffer.filter((a) => !addedKeys.has(attendeeKey(a)));
-  const calendarNew = calendarOfferDismissed ? [] : (calendar?.attendees ?? []).filter((a) => !addedKeys.has(attendeeKey(a)));
+  const calendarNew = calendarOfferDismissed ? [] : (meeting?.attendees ?? []).filter((a) => !addedKeys.has(attendeeKey(a)));
   const frequentNew = frequent.filter((a) => !addedKeys.has(attendeeKey(a)));
 
   const onAddAttendees = useCallback((toAdd: Attendee[]) => {
@@ -326,10 +334,38 @@ function Tag() {
   return wrap(
     <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div>
-        {calendar && (
+        {calendar && calendar.meetings.length === 1 && (
           <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
-            📅 Calendar: <strong>{calendar.subject}</strong>
-            {calendar.alternative ? ` (or “${calendar.alternative}”, which overlapped as much)` : ''}
+            📅 Calendar: <strong>{calendar.meetings[0].subject}</strong>
+          </div>
+        )}
+        {calendar && calendar.meetings.length > 1 && (
+          <div style={{ fontSize: 11, marginBottom: 8 }}>
+            <div className="muted" style={{ marginBottom: 4 }}>
+              📅 {calendar.meetings.length} meetings were booked at this time. Which was this?
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {calendar.meetings.map((m) => (
+                <button
+                  key={m.meetingId}
+                  className={chosenMeetingId === m.meetingId ? 'primary' : undefined}
+                  style={{ fontSize: 10, padding: '2px 8px' }}
+                  onClick={() => {
+                    setChosenMeetingId(m.meetingId);
+                    setCalendarOfferDismissed(false);
+                  }}
+                >
+                  {new Date(m.startMs).toTimeString().slice(0, 5)}–{new Date(m.endMs).toTimeString().slice(0, 5)} {m.subject}
+                </button>
+              ))}
+              <button
+                className={chosenMeetingId === '' ? 'primary' : undefined}
+                style={{ fontSize: 10, padding: '2px 8px' }}
+                onClick={() => setChosenMeetingId('')}
+              >
+                Neither
+              </button>
+            </div>
           </div>
         )}
         <label>Client</label>

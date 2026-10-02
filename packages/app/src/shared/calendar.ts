@@ -24,8 +24,8 @@ export interface CalendarMeeting {
   body: string | null;
 }
 
-/** The meeting a recording overlapped, as stored on the recording. */
-export interface CalendarMatch {
+/** A calendar meeting that overlapped a recording. */
+export interface CalendarCandidate {
   meetingId: string;
   subject: string;
   startMs: number;
@@ -33,8 +33,21 @@ export interface CalendarMatch {
   organiser: string | null;
   attendees: CalendarPerson[];
   body: string | null;
-  /** Another meeting overlapped nearly as much; its subject, so the user and the classifier can see both. */
-  alternative: string | null;
+}
+
+/**
+ * The meeting a recording overlapped, as stored on the recording. Calendars
+ * are double-booked often (46 of 203 matched recordings in three real
+ * months), so every other meeting that also covers the recording is kept
+ * as an alternative rather than silently picking one by time.
+ */
+export interface CalendarMatch extends CalendarCandidate {
+  /** Other meetings covering the recording, best time fit first. */
+  alternatives: CalendarCandidate[];
+  /** The transcript was checked against the candidates and this one chosen. */
+  confirmedByTranscript?: boolean;
+  /** The transcript matched none of the booked meetings: a call in a booked slot. No account or invitees are taken from it. */
+  rejectedByTranscript?: boolean;
 }
 
 /** Which account (client) a meeting belongs to, and the evidence. */

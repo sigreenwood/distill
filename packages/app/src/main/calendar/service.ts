@@ -1,13 +1,14 @@
 import type { AccountSuggestion, CalendarImportResult, CalendarMatch } from '../../shared/calendar.js';
 import type { RecordingRow, State } from '../state.js';
-import { accountFor } from './account.js';
+import { accountForMatch } from './account.js';
 import { attendeesFromMatch, matchRecording, SEARCH_MARGIN_MS } from './match.js';
 import { readCalendarPdfs } from './pdfImport.js';
 
 export function parseStoredMatch(json: string | null): CalendarMatch | null {
   if (!json) return null;
   try {
-    return JSON.parse(json) as CalendarMatch;
+    const m = JSON.parse(json) as CalendarMatch;
+    return { ...m, alternatives: Array.isArray(m.alternatives) ? m.alternatives : [] };
   } catch {
     return null;
   }
@@ -51,7 +52,7 @@ export function ensureCalendarMatch(state: State, row: RecordingRow): CalendarMa
 /** The account the recording's calendar meeting points to, if any. */
 export function calendarAccountFor(state: State, row: Pick<RecordingRow, 'calendar_match_json'>): AccountSuggestion | null {
   const match = parseStoredMatch(row.calendar_match_json);
-  return match ? accountFor(match, state.listClients()) : null;
+  return match ? accountForMatch(match, state.listClients()) : null;
 }
 
 export async function importCalendarPdfs(
@@ -71,7 +72,7 @@ export async function importCalendarPdfs(
       const match = applyCalendarMatch(state, row);
       if (!match) continue;
       matched++;
-      if (accountFor(match, clients)) accountsSuggested++;
+      if (accountForMatch(match, clients)) accountsSuggested++;
     }
   }
   return { files: summary, meetings: meetings.length, matched, accountsSuggested };

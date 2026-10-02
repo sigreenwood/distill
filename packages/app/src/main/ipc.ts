@@ -8,7 +8,8 @@ import type { JoinedRegisterItemRow } from './state.js';
 import { generateSummaryVersion, buildVersionList } from './summaryVersions.js';
 import type { SummaryVersionDTO } from '../shared/summaryVersion.js';
 import { suggestMeetingType } from './meetingTypeSuggestion.js';
-import { accountFor } from './calendar/account.js';
+import { accountFor, accountForMatch } from './calendar/account.js';
+import { attendeesOf, candidatesOf } from './calendar/match.js';
 import {
   adoptCalendarAttendees,
   applyCalendarMatch,
@@ -592,16 +593,22 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     const row = ctx.state.getRecording(recordingId);
     if (!row) return null;
     const match = ensureCalendarMatch(ctx.state, row);
-    if (!match) return null;
+    if (!match || match.rejectedByTranscript) return null;
     const clients = ctx.state.listClients();
-    const account = accountFor(match, clients);
+    const named = (a: { clientId: string; reason: string } | null) =>
+      a ? { id: a.clientId, name: clients.find((c) => c.id === a.clientId)?.name ?? '', reason: a.reason } : null;
+    // Every overlapping meeting, each with its own account and invitees:
+    // with a double booking the sheet asks which one this was rather than
+    // assuming the best time fit.
     return {
-      subject: match.subject,
-      alternative: match.alternative,
-      attendees: match.alternative ? [] : match.attendees.map((a) => ({ name: a.name, email: a.email, company: null })),
-      account: account
-        ? { id: account.clientId, name: clients.find((c) => c.id === account.clientId)?.name ?? '', reason: account.reason }
-        : null,
+      meetings: candidatesOf(match).map((c) => ({
+        meetingId: c.meetingId,
+        subject: c.subject,
+        startMs: c.startMs,
+        endMs: c.endMs,
+        attendees: attendeesOf(c),
+        account: named(accountFor(c, clients)),
+      })),
     };
   });
 
@@ -727,7 +734,10 @@ export function registerIpcHandlers(ctx: IpcContext): void {
           durationSeconds: row.duration_seconds,
           clientName,
           attendees,
-          calendarSubject: ensureCalendarMatch(ctx.state, row)?.subject ?? null,
+          calendarSubjects: (() => {
+            const m = ensureCalendarMatch(ctx.state, row);
+            return m && !m.rejectedByTranscript ? candidatesOf(m).map((c) => c.subject) : [];
+          })(),
         },
         candidates,
         ctx.getConfig().ollama,
@@ -1695,7 +1705,7 @@ function describeVenvStatus(status: VenvStatus): string {
 export function toInboxDTO(r: JoinedRecordingRow, outputs: OutputsConfig, clients: Pick<ClientRow, 'id' | 'name'>[] = []) {
   const currentStep = statusToStep(r.status);
   const calendar = parseStoredMatch(r.calendar_match_json);
-  const calendarAccount = calendar ? accountFor(calendar, clients) : null;
+  const calendarAccount = calendar ? accountForMatch(calendar, clients) : null;
   const plan = stepPlanFor(r);
   const idx = currentStep ? plan.indexOf(currentStep) : -1;
   return {
@@ -1741,7 +1751,8 @@ export function toInboxDTO(r: JoinedRecordingRow, outputs: OutputsConfig, client
     // The Outlook meeting this recording overlapped, and the account it
     // points to — shown as suggestions; see main/calendar/.
     calendarSubject: calendar?.subject ?? null,
-    calendarAlternative: calendar?.alternative ?? null,
+    calendarAlternatives: calendar?.alternatives.map((a) => a.subject) ?? [],
+    calendarRejected: calendar?.rejectedByTranscript === true,
     calendarClientId: calendarAccount?.clientId ?? null,
     calendarClientName: calendarAccount ? (clients.find((c) => c.id === calendarAccount.clientId)?.name ?? null) : null,
     calendarClientReason: calendarAccount?.reason ?? null,

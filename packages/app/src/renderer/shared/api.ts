@@ -77,8 +77,10 @@ export interface InboxItemDTO {
   filingReason: string | null;
   /** Subject of the Outlook meeting this recording overlapped, from an imported calendar printout. */
   calendarSubject: string | null;
-  /** Another meeting overlapped nearly as much. */
-  calendarAlternative: string | null;
+  /** Other meetings booked over the same recording (a double booking). */
+  calendarAlternatives: string[];
+  /** The transcript matched none of the booked meetings. */
+  calendarRejected: boolean;
   /** The account that meeting points to, and why; a suggestion only. */
   calendarClientId: string | null;
   calendarClientName: string | null;
@@ -374,10 +376,15 @@ export interface DistillApi {
     clipboardAttendees(): Promise<Attendee[]>;
     /** The Outlook meeting the recording overlapped (from an imported printout), or null. */
     calendarContext(recordingId: string): Promise<{
-      subject: string;
-      alternative: string | null;
-      attendees: Attendee[];
-      account: { id: string; name: string; reason: string } | null;
+      /** Every meeting booked over the recording; more than one is a double booking. */
+      meetings: {
+        meetingId: string;
+        subject: string;
+        startMs: number;
+        endMs: number;
+        attendees: Attendee[];
+        account: { id: string; name: string; reason: string } | null;
+      }[];
     } | null>;
     getSheetRecordingId(): string | null;
   };
