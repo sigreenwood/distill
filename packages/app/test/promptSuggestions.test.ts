@@ -38,6 +38,16 @@ describe('the shipped suggestions file', () => {
     }
   });
 
+  it('puts Actions first in every summary, for review at a glance', () => {
+    for (const s of shipped) {
+      const output = s.prompt.slice(s.prompt.indexOf('\nOUTPUT ('));
+      const firstSection = /\n## (.+)/.exec(output)?.[1];
+      expect(firstSection, s.id).toBe('Actions');
+      expect(s.prompt.match(/^## Actions$/gm)).toHaveLength(1);
+      expect(s.prompt).toContain('then ## Actions');
+    }
+  });
+
   it('contains no customer names', () => {
     const text = shipped.map((s) => s.prompt + s.useFor).join('\n');
     expect(text).not.toMatch(/HSBC|Lloyds|LBG|AIB/);

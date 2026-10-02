@@ -1051,6 +1051,12 @@ Verification: 293 tests. `promptSuggestions.test.ts` covers:
 Both typechecks and the build pass. **Not exercised:** the Settings
 pane in the running app.
 
+**Actions first** (user request, 2 Oct): summaries are a repository
+for later review, and actions should be scannable. Every suggested
+prompt puts `## Actions` straight after the title line, with the same
+heading everywhere ("- None agreed." when empty, and split
+Teradata/Customer for customer meetings). A test enforces this.
+
 Limitations worth retaining:
 
 - Existing meeting types are untouched. Client Call and
@@ -1060,6 +1066,55 @@ Limitations worth retaining:
   local-model classifiers, which see the calendar title. A deterministic
   "recurring internal huddle → stand-up" rule was considered and left
   out, because the classifier already gets the title.
+
+## In progress — local transcription of the inbox backlog, then the core prompts
+
+**Agreed with the user (2 Oct 2026):**
+- **No Plaud cloud transcription.** Everything is transcribed locally.
+- **Prompts are organised by meeting type, not by client.** About seven
+  types:
+  - customer side, shared by all clients: account stand-up, status
+    call, workshop / deep dive, QBR / service review;
+  - internal account strategy;
+  - team meeting;
+  - enablement / education;
+  - 1:1.
+- **Per-client specifics go in an account context,** one per client
+  (HSBC, LBG, AIB): programmes, glossary, stakeholders, current
+  priorities. It will be added to the summary request when the client
+  is set; this isn't built yet. No client needs a distinct output
+  format; summaries are a review repository, with actions at the top.
+- **Test set:** 3–4 example meetings per client per relevant type. Each
+  prompt must work across all three clients.
+
+**Transcription run** (started 2 Oct, ~16:35; about 5 hours estimated):
+- **Script:** `~/Library/Application Support/distill/staged-transcripts/run.ts`
+  runs detached via nohup and vite-node, outside the app.
+- **What it does:** it transcribes the 177 inbox Plaud recordings since
+  3 Aug (≥ 2 min, ~86 h of audio) with both Whisper large-v3-turbo
+  (vocabulary + calendar-invitee hints) and Parakeet, using the app's
+  venv and `transcribe.py`, the app's replacements and the repetition
+  cleanup.
+- **Outputs:** one JSON per recording per engine, in `whisper/` and
+  `parakeet/`, including the calendar match and alternatives.
+  `progress.log` records progress. It is resumable: re-run with
+  `cd packages/app && npx vite-node <run.ts>`.
+- **Side effects:** it does not touch state.db. Audio is downloaded into
+  the app's audio dir. `parakeet-mlx` was installed into the app venv
+  (same as Settings → Install Parakeet).
+- **Calendar data:** `calendar-events.json` (parsed PDFs) sits beside it.
+
+**Next, once it finishes:**
+1. **Engine comparison** across the pairs: names and terms, hint
+   effect, repetition and hallucination, speed. Recommend an engine.
+2. **Rewrite the eight suggested prompts** against the test set and
+   trial them on the local model.
+3. **Build the account-context feature** and draft each client's
+   context from its transcripts, for the user to review.
+4. **Load transcripts into the app,** only with the user's go-ahead and
+   the app quit. Write the chosen engine's `transcript_text` (plus
+   `audio_path`, `whisper_snapshot` and the vocabulary columns) into
+   those inbox rows, so processing skips straight to summarising.
 
 ## Next step
 
