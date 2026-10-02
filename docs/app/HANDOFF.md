@@ -854,10 +854,13 @@ Limitations worth retaining:
   whose client only comes up late may get "no client".
 - No notification when a recording reaches Ready to file. The tray
   digit shows the count.
-- Already present before this step and not fixed here: if a step is
-  paused between the claim and that step's own pause check, the worker
-  sets the row back to `tagged` and then marks it `complete`
-  (`worker.ts` loop). The window is narrow, but the bug is real.
+- Fixed in a follow-up commit (`fix(worker): …`): if a step was paused
+  between the claim and that step's own pause check, the worker set the
+  row back to `tagged` and then marked it `complete` anyway, with no
+  output written. The loop now marks a row `complete` only when it is
+  at `writing`, which only a finished write step leaves. Covered by
+  `test/worker.test.ts`, the first worker-loop test, which uses an
+  in-memory fake State.
 
 ## Next step
 

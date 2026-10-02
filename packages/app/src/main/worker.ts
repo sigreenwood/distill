@@ -126,7 +126,11 @@ export class Worker {
         try {
           await this.runPipelineForId(claimed.id, abort.signal);
           const final = this.ctx.state.getRecording(claimed.id);
-          if (final && final.status !== 'cancelled' && final.status !== 'error' && final.status !== 'to_file') {
+          // Only a run that got through the write step is done. Every
+          // early return leaves some other status: 'tagged' when a step
+          // was paused after the claim, 'to_file' when held for filing,
+          // 'cancelled' when cancelled mid-step.
+          if (final && final.status === 'writing') {
             this.ctx.state.setStatus(claimed.id, 'complete');
             this.cb.onComplete(claimed.id);
           }
