@@ -11,6 +11,7 @@ import type {
   VocabularyScopeDTO,
 } from '../shared/api.js';
 import { TabButton, headerStyle, readTabFromHash, shellStyle, tabBarStyle } from './ui.jsx';
+import { ClientsPane } from './clients.jsx';
 import {
   AboutPane,
   GeneralPane,
@@ -91,6 +92,7 @@ function Settings() {
         <TabButton label="Sources" active={tab === 'sources'} onClick={() => setTab('sources')} />
         <TabButton label="Outputs" active={tab === 'outputs'} onClick={() => setTab('outputs')} />
         <TabButton label="Prompts" active={tab === 'prompts'} onClick={() => setTab('prompts')} />
+        <TabButton label="Clients" active={tab === 'clients'} onClick={() => setTab('clients')} />
         <TabButton label="Vocabulary" active={tab === 'vocabulary'} onClick={() => setTab('vocabulary')} />
         <TabButton label="General" active={tab === 'general'} onClick={() => setTab('general')} />
         <TabButton
@@ -109,6 +111,9 @@ function Settings() {
       </div>
       <div style={{ display: tab === 'prompts' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
         <PromptsPane initial={prompts} onChanged={(next) => setPrompts(next)} />
+      </div>
+      <div style={{ display: tab === 'clients' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+        <ClientsPane />
       </div>
       <div style={{ display: tab === 'vocabulary' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
         <VocabularyPane

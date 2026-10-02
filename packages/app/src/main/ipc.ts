@@ -25,6 +25,7 @@ import {
   pendingSuggestions,
   readPromptSuggestions,
 } from './promptSuggestions.js';
+import { MAX_ACCOUNT_CONTEXT_CHARS } from '../shared/summaryInput.js';
 import { assertFileRecordingPayload, filingNeedsResummary, type FilingConfidence } from '../shared/filing.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -377,6 +378,10 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         {
           transcriptText: row.transcript_text,
           attendeesJson: row.attendees_json,
+          account: (() => {
+            const c = row.client_id ? ctx.state.getClient(row.client_id) : undefined;
+            return c ? { clientName: c.name, context: c.context } : null;
+          })(),
           meetingType: { name: meetingType.name, prompt: meetingType.prompt },
           model,
         },
@@ -635,7 +640,13 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     if (!row || row.status !== 'to_file') throw new Error('That recording is no longer waiting to be filed.');
     if (!ctx.state.getClient(p.clientId)) throw new Error('That client no longer exists.');
     if (!ctx.state.getMeetingType(p.meetingTypeId)) throw new Error('That meeting type no longer exists.');
-    const resummarise = filingNeedsResummary(row.meeting_type_id, p.meetingTypeId);
+    // The summary was written with the suggested client's account context;
+    // filing under a different client, when either has one, needs a fresh
+    // summary as much as a changed meeting type does.
+    const contextOf = (id: string | null) => (id ? ctx.state.getClient(id)?.context?.trim() || '' : '');
+    const resummarise =
+      filingNeedsResummary(row.meeting_type_id, p.meetingTypeId) ||
+      (p.clientId !== row.suggested_client_id && (contextOf(p.clientId) !== '' || contextOf(row.suggested_client_id) !== ''));
     if (!ctx.state.fileRecording(p.recordingId, p.clientId, p.meetingTypeId, resummarise)) {
       throw new Error('That recording is no longer waiting to be filed.');
     }
@@ -836,6 +847,16 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(Channels.ClientsList, () => {
     return ctx.state.listClients().map(toClientDTO);
+  });
+
+  ipcMain.handle(Channels.ClientsSetContext, (_evt, id, context) => {
+    if (typeof id !== 'string' || typeof context !== 'string') throw new Error('id and context must be strings');
+    if (context.length > MAX_ACCOUNT_CONTEXT_CHARS) {
+      throw new Error(`Keep the account context under ${MAX_ACCOUNT_CONTEXT_CHARS} characters; it goes into every summary for this client.`);
+    }
+    if (!ctx.state.setClientContext(id, context)) throw new Error('That client no longer exists.');
+    ctx.logger.info({ clientId: id, chars: context.trim().length }, 'account context saved');
+    return toClientDTO(ctx.state.getClient(id)!);
   });
 
   ipcMain.handle(Channels.ClientsAdd, (_evt, payload) => {
@@ -1789,6 +1810,7 @@ function toClientDTO(r: ClientRow) {
     name: r.name,
     is_builtin: r.is_builtin === 1,
     sort_order: r.sort_order,
+    context: r.context ?? '',
   };
 }
 

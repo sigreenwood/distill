@@ -97,6 +97,8 @@ export interface ClientRow {
   is_builtin: number;
   sort_order: number;
   created_at: number;
+  /** Account context added to every summary for this client (shared/summaryInput.ts). Migration 18. */
+  context: string | null;
 }
 
 export interface MeetingTypeRow {
@@ -534,6 +536,16 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE recordings ADD COLUMN calendar_match_json TEXT;
     `,
   },
+  {
+    version: 18,
+    sql: `
+      -- Per-client account context: programmes, glossary, stakeholders
+      -- and priorities, written by the user and added to the summary
+      -- request for that client's meetings (shared/summaryInput.ts).
+      -- Prompts stay per meeting type; this is what differs per client.
+      ALTER TABLE clients ADD COLUMN context TEXT;
+    `,
+  },
 ];
 
 export function openDatabase(_path?: string): Database.Database {
@@ -594,7 +606,7 @@ export class State {
     return this.db.prepare('SELECT * FROM clients WHERE id = ?').get(id) as ClientRow | undefined;
   }
 
-  upsertClient(row: Omit<ClientRow, 'created_at'>): void {
+  upsertClient(row: Omit<ClientRow, 'created_at' | 'context'>): void {
     const now = Date.now();
     this.db
       .prepare(
@@ -1613,5 +1625,10 @@ export class State {
     return this.db
       .prepare(`SELECT * FROM recordings WHERE needs_filing = 1 AND status = 'tagged' AND transcript_text IS NULL`)
       .all() as RecordingRow[];
+  }
+
+  setClientContext(id: string, context: string | null): boolean {
+    const text = context?.trim() ? context.trim() : null;
+    return this.db.prepare('UPDATE clients SET context = ? WHERE id = ?').run(text, id).changes > 0;
   }
 }

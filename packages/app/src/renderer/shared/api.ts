@@ -96,6 +96,8 @@ export interface ClientDTO {
   name: string;
   is_builtin: boolean;
   sort_order: number;
+  /** Account context added to every summary for this client; '' when none. */
+  context: string;
 }
 
 export interface MeetingTypeDTO {
@@ -391,6 +393,8 @@ export interface DistillApi {
   clients: {
     list(): Promise<ClientDTO[]>;
     add(payload: { name: string }): Promise<ClientDTO>;
+    /** Save the client's account context ('' clears it). */
+    setContext(id: string, context: string): Promise<ClientDTO>;
   };
   meetingTypes: {
     list(): Promise<MeetingTypeDTO[]>;

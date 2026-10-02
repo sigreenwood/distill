@@ -23,6 +23,7 @@ import { effectiveOutputTargets } from './state.js';
 import type { RecordingRow, State } from './state.js';
 import type { OllamaClient } from './ollama.js';
 import { parseStoredAttendees, buildAttendeeRoster } from '../shared/attendees.js';
+import { buildSummaryUserContent } from '../shared/summaryInput.js';
 
 /** The audio source the download step needs: just a temp-URL provider. */
 export interface AudioSource {
@@ -290,10 +291,17 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
   // transcript, not the system prompt — meeting-type prompts are
   // hash-tracked for the "modified from default" badge and must stay
   // exactly what the meeting type says, independent of any one recording.
-  // Re-read: classification may just have added invitees from the calendar.
-  const attendeesJson = ctx.state.getRecording(id)?.attendees_json ?? row.attendees_json;
-  const roster = buildAttendeeRoster(parseStoredAttendees(attendeesJson));
-  const userContent = roster ? `${roster}\n\n${row.transcript_text}` : row.transcript_text;
+  // Re-read: classification may just have added invitees from the calendar
+  // and a suggested client. A "Queue all" row is summarised before the user
+  // confirms its client, so it uses the suggested client's account
+  // context; filing it under a different client re-summarises (InboxFile).
+  const current = ctx.state.getRecording(id) ?? row;
+  const contextClient = ctx.state.getClient(current.client_id ?? current.suggested_client_id ?? '');
+  const userContent = buildSummaryUserContent({
+    transcript: row.transcript_text,
+    attendeesJson: current.attendees_json,
+    account: contextClient ? { clientName: contextClient.name, context: contextClient.context } : null,
+  });
 
   const cfg = ctx.getConfig();
   const budget = estimateTokenBudget(meetingType.prompt, userContent, cfg.ollama.contextWindow);

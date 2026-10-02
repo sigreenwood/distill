@@ -27,6 +27,7 @@ export type SettingsTab =
   | 'sources'
   | 'outputs'
   | 'prompts'
+  | 'clients'
   | 'vocabulary'
   | 'general'
   | 'performance'
@@ -38,6 +39,7 @@ export function readTabFromHash(): SettingsTab {
     case 'sources':
     case 'outputs':
     case 'prompts':
+    case 'clients':
     case 'vocabulary':
     case 'general':
     case 'performance':

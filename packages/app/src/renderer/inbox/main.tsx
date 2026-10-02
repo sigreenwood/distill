@@ -1040,7 +1040,13 @@ function FilingRow(props: {
   const [busy, setBusy] = useState(false);
   // A suggestion for a client deleted since classification shows as no pick.
   const clientKnown = props.clients.some((c) => c.id === clientId);
-  const resummarise = typeId !== '' && typeId !== r.meetingTypeId;
+  // Re-summarised on filing when the meeting type changes, or when the
+  // client changes and either client has an account context (the summary
+  // was written with the suggested client's context).
+  const contextOf = (id: string | null) => props.clients.find((c) => c.id === id)?.context.trim() ?? '';
+  const resummarise =
+    (typeId !== '' && typeId !== r.meetingTypeId) ||
+    (clientKnown && clientId !== r.suggestedClientId && (contextOf(clientId) !== '' || contextOf(r.suggestedClientId) !== ''));
   const suggestedName = props.clients.find((c) => c.id === r.suggestedClientId)?.name ?? null;
   const onFile = async () => {
     setBusy(true);
@@ -1085,8 +1091,9 @@ function FilingRow(props: {
       </div>
       {resummarise && (
         <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
-          The summary was written as a different meeting type, so it will be regenerated from the
-          transcript first (on your processing schedule, unless marked urgent).
+          The summary was written for a different meeting type or with another client's account context,
+          so it will be regenerated from the transcript first (on your processing schedule, unless marked
+          urgent).
         </div>
       )}
       <div className="row">

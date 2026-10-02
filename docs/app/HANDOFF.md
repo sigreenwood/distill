@@ -1109,8 +1109,20 @@ Limitations worth retaining:
    effect, repetition and hallucination, speed. Recommend an engine.
 2. **Rewrite the eight suggested prompts** against the test set and
    trial them on the local model.
-3. **Build the account-context feature** and draft each client's
-   context from its transcripts, for the user to review.
+3. **Draft each client's account context** (HSBC, LBG, AIB) from its
+   transcripts and calendar, for the user to review in Settings →
+   Clients. The mechanism is built:
+   - migration 18 adds `clients.context`;
+   - `shared/summaryInput.ts` builds the summary user message as account
+     context, then the roster, then the transcript. The context is
+     capped at 3,000 characters and labelled as background, never
+     reported as said;
+   - it is used by both `doSummarise` and the reader's alternative
+     summaries;
+   - a Queue all row is summarised with the *suggested* client's
+     context. Filing it under a different client, when either client
+     has a context, re-summarises it;
+   - a Settings → Clients tab edits the contexts.
 4. **Load transcripts into the app,** only with the user's go-ahead and
    the app quit. Write the chosen engine's `transcript_text` (plus
    `audio_path`, `whisper_snapshot` and the vocabulary columns) into

@@ -15,13 +15,15 @@ import { OllamaClient } from './ollama.js';
 import type { OllamaConfig } from './config.js';
 import { assertLocalInference } from './localInference.js';
 import { estimateTokenBudget, computeAdaptiveContextWindow } from './tokenBudget.js';
-import { parseStoredAttendees, buildAttendeeRoster } from '../shared/attendees.js';
+import { buildSummaryUserContent } from '../shared/summaryInput.js';
 import type { SummaryVersionRow } from './state.js';
 import type { SummaryVersionDTO } from '../shared/summaryVersion.js';
 
 export interface GenerateVersionInput {
   transcriptText: string;
   attendeesJson: string | null;
+  /** The recording's client and its account context, if any (shared/summaryInput.ts). */
+  account?: { clientName: string; context: string | null } | null;
   meetingType: { name: string; prompt: string };
   model: string;
 }
@@ -38,8 +40,11 @@ export async function generateSummaryVersion(
   signal: AbortSignal,
 ): Promise<GeneratedVersion> {
   assertLocalInference({ ...config, model: input.model }, 'Generating an alternative summary');
-  const roster = buildAttendeeRoster(parseStoredAttendees(input.attendeesJson));
-  const userContent = roster ? `${roster}\n\n${input.transcriptText}` : input.transcriptText;
+  const userContent = buildSummaryUserContent({
+    transcript: input.transcriptText,
+    attendeesJson: input.attendeesJson,
+    account: input.account,
+  });
   const budget = estimateTokenBudget(input.meetingType.prompt, userContent, config.contextWindow);
   const numCtx = config.adaptiveContextWindow
     ? computeAdaptiveContextWindow(budget.estimatedInputTokens, config.contextWindow)

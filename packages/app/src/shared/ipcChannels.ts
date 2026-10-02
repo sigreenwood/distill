@@ -44,6 +44,7 @@ export const Channels = {
   TagClipboardAttendees: 'tag.clipboardAttendees',
   ClientsList: 'clients.list',
   ClientsAdd: 'clients.add',
+  ClientsSetContext: 'clients.setContext',
   MeetingTypesList: 'meetingTypes.list',
   MeetingTypesAdd: 'meetingTypes.add',
   MeetingTypesDelete: 'meetingTypes.delete',
