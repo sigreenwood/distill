@@ -7,7 +7,7 @@
     "plaud-mcp": "./src/index.ts"
   },
   "dependencies": {
-    "@plaud/core": "*",
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "@plaud/core": "*"
   }
 }

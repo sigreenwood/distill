@@ -36,12 +36,15 @@ function renderTokens(tokens: Token[], query: string): React.ReactNode {
       case 'blockquote': content = <blockquote>{children()}</blockquote>; break;
       case 'br': content = <br />; break;
       case 'hr': content = <hr />; break;
+      // marked puts a task item's box in its own token at the start of the item.
+      case 'checkbox': {
+        const { checked } = token as Tokens.Checkbox;
+        content = <span aria-label={checked ? 'Completed' : 'Not completed'}>{checked ? '☑ ' : '☐ '}</span>;
+        break;
+      }
       case 'list': {
         const list = token as Tokens.List;
-        const items = list.items.map((item, i) => <li key={i}>
-          {item.task && <span aria-label={item.checked ? 'Completed' : 'Not completed'}>{item.checked ? '☑ ' : '☐ '}</span>}
-          {renderTokens(item.tokens, query)}
-        </li>);
+        const items = list.items.map((item, i) => <li key={i}>{renderTokens(item.tokens, query)}</li>);
         content = list.ordered ? <ol start={Number(list.start) || 1}>{items}</ol> : <ul>{items}</ul>;
         break;
       }

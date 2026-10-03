@@ -124,7 +124,7 @@ function Setup() {
 function renderState(
   state: SetupState,
   log: LogLine[],
-  logRef: React.RefObject<HTMLPreElement>,
+  logRef: React.RefObject<HTMLPreElement | null>,
   onInstall: () => Promise<void>,
   onQuit: () => void,
 ) {

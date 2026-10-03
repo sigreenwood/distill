@@ -15,6 +15,14 @@ describe('meeting text rendering', () => {
     expect(html).toContain('<td>Friday</td>');
   });
 
+  it('shows one box per task item and never the raw [ ] marker', () => {
+    const html = render('## Actions\n- [ ] Sam — send the deck — Friday\n- [x] Alex — book the room');
+    expect(html.match(/☐/g)).toHaveLength(1);
+    expect(html.match(/☑/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="Not completed"');
+    expect(html).not.toMatch(/\[[ x]\]/);
+  });
+
   it('never executes embedded HTML or loads links and images from meeting content', () => {
     const html = render('<script>alert(1)</script>\n\n<img src="https://example.com/pixel" onerror="alert(1)">\n\n[run](javascript:alert(1))\n\n![tracking](https://example.com/image)');
     expect(html).not.toMatch(/<(script|img|a)\b/);
