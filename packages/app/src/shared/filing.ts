@@ -67,3 +67,8 @@ export function autoFileDecision(input: AutoFileInput): { file: boolean; reason:
     reason: input.calendarClientId ? 'high confidence, confirmed by the calendar' : 'high confidence from the transcript',
   };
 }
+
+/** A recording known to be shorter than the configured minimum (0 = no minimum; unknown length is never too short). */
+export function isTooShort(durationSeconds: number | null, minMinutes: number): boolean {
+  return minMinutes > 0 && durationSeconds !== null && durationSeconds < minMinutes * 60;
+}

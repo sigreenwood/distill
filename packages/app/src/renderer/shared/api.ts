@@ -167,6 +167,8 @@ export interface GeneralDTO {
   processingSchedule: ProcessingSchedule;
   /** File "Queue all" recordings without Ready to file when confidence is high and the calendar agrees. */
   autoFileHighConfidence: boolean;
+  /** Plaud recordings shorter than this are hidden instead of processed; 0 keeps everything. */
+  minRecordingMinutes: number;
 }
 
 export interface PerformanceDTO {
@@ -341,7 +343,7 @@ export interface DistillApi {
       targets: { markdown: boolean; html: boolean; appleNote: boolean },
     ): Promise<void>;
     /** Queue every untagged recording; each is classified and held at 'to_file' before writing. */
-    queueAll(): Promise<{ queued: number }>;
+    queueAll(): Promise<{ queued: number; hidden: number }>;
     file(payload: { recordingId: string; clientId: string; meetingTypeId: string }): Promise<{ resummarise: boolean }>;
     /** Send a finished recording back to Ready to file (asks first; deletes its outputs). */
     refile(recordingId: string): Promise<{ refiled: boolean }>;

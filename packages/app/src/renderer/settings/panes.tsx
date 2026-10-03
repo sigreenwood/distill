@@ -1415,16 +1415,22 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
   const [launchAtLogin, setLaunchAtLogin] = useState(props.initial.launchAtLogin);
   const [schedule, setSchedule] = useState<ProcessingSchedule>(props.initial.processingSchedule);
   const [autoFile, setAutoFile] = useState(props.initial.autoFileHighConfidence);
+  const [minText, setMinText] = useState(String(props.initial.minRecordingMinutes));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
+  // Whole minutes, 0–120; anything else leaves Save disabled, like the other fields.
+  const minMinutes = /^\d+$/.test(minText.trim()) && Number(minText) <= 120 ? Number(minText) : NaN;
+
   const computed = useMemo<GeneralDTO | null>(() => {
+    if (Number.isNaN(minMinutes)) return null;
     const base = {
       launchAtLogin,
       launchAtLoginAvailable: props.initial.launchAtLoginAvailable,
       processingSchedule: schedule,
       autoFileHighConfidence: autoFile,
+      minRecordingMinutes: minMinutes,
     };
     const dismissTrimmed = dismissText.trim();
     const dismissParsed = Number(dismissTrimmed);
@@ -1444,7 +1450,7 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
       return null;
     }
     return { ...base, audioRetentionDays: parsed, autoDismissCompleteMinutes: dismissParsed };
-  }, [enabled, daysText, dismissText, launchAtLogin, schedule, autoFile, props.initial.launchAtLoginAvailable]);
+  }, [enabled, daysText, dismissText, launchAtLogin, schedule, autoFile, minMinutes, props.initial.launchAtLoginAvailable]);
 
   const isDirty = useMemo(() => {
     if (!computed) return false;
@@ -1456,7 +1462,8 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
       computed.processingSchedule.idleMinutes !== props.initial.processingSchedule.idleMinutes ||
       computed.processingSchedule.overnightStart !== props.initial.processingSchedule.overnightStart ||
       computed.processingSchedule.overnightEnd !== props.initial.processingSchedule.overnightEnd ||
-      computed.autoFileHighConfidence !== props.initial.autoFileHighConfidence
+      computed.autoFileHighConfidence !== props.initial.autoFileHighConfidence ||
+      computed.minRecordingMinutes !== props.initial.minRecordingMinutes
     );
   }, [
     computed,
@@ -1640,6 +1647,25 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
             marginBottom: 12,
           }}
         >
+          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Short recordings</div>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, marginBottom: 4 }}>
+            Skip recordings shorter than
+            <input
+              type="number"
+              min={0}
+              max={120}
+              step={1}
+              value={minText}
+              onChange={(e) => setMinText(e.target.value)}
+              style={{ width: 56 }}
+            />
+            minutes
+          </label>
+          <div className="muted" style={{ fontSize: 11, marginBottom: 14 }}>
+            New Plaud recordings shorter than this go to Hidden instead of the inbox, and Queue all hides them rather
+            than processing them. 0 keeps everything. Files you drag in are never skipped; bring a recording back from
+            Hidden if you need it.
+          </div>
           <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Automatic filing</div>
           <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12 }}>
             <input type="checkbox" checked={autoFile} onChange={(e) => setAutoFile(e.target.checked)} />

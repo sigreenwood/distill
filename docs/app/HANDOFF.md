@@ -1284,6 +1284,18 @@ changes):
   - paste the HSBC, LBG and AIB contexts.
 - **Settings → General:** turn on Automatic filing if wanted.
 
+**Minimum recording length** (3 Oct, 0.0.30):
+- Settings → General → Short recordings (`minRecordingMinutes`, whole
+  minutes 0–120, default 0 = keep all).
+- New Plaud recordings shorter than the minimum are inserted as hidden
+  (`skipped`) by the poller.
+- Queue all hides short inbox rows in the same transaction instead of
+  queueing them; its result reports how many.
+- Recordings with no known duration and dragged-in files are never
+  skipped. Hidden ones can be brought back from Hidden.
+- Queue all's confirmation text no longer claims nothing is written
+  until you confirm, which stopped being true with automatic filing.
+
 ## Next step
 
 Later ideas, not implemented or fully specified: diagnostics and

@@ -103,6 +103,12 @@ export interface AppConfig {
    * the user opts in (DECISIONS.md §5).
    */
   autoFileHighConfidence: boolean;
+  /**
+   * Plaud recordings shorter than this many minutes are hidden on arrival
+   * and by "Queue all" instead of being processed (pocket dials, false
+   * starts). 0 keeps everything. Dragged-in files are never skipped.
+   */
+  minRecordingMinutes: number;
 }
 
 export function defaultPauseConfig(): PauseConfig {
@@ -279,6 +285,7 @@ export function normaliseConfig(cfg: any): AppConfig {
     logLevel: cfg.logLevel ?? 'info',
     processingSchedule: normaliseProcessingSchedule(cfg.processingSchedule),
     autoFileHighConfidence: cfg.autoFileHighConfidence === true,
+    minRecordingMinutes: normaliseMinRecordingMinutes(cfg.minRecordingMinutes),
   };
 }
 
@@ -317,6 +324,12 @@ function normaliseAudioRetentionDays(raw: unknown): number | null {
   if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
   if (raw < 0) return null;
   return Math.floor(raw);
+}
+
+export const MAX_MIN_RECORDING_MINUTES = 120;
+
+export function normaliseMinRecordingMinutes(v: unknown): number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= MAX_MIN_RECORDING_MINUTES ? v : 0;
 }
 
 export function saveConfig(cfg: AppConfig): void {

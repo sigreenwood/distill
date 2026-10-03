@@ -37,7 +37,7 @@ import { audioFileExists } from './pipelineSteps.js';
 import { app, clipboard, dialog, ipcMain, shell, BrowserWindow } from 'electron';
 import { Channels, KEEPALIVE_PRESETS, WHISPER_MODEL_PRESETS } from '../shared/ipcChannels.js';
 import { userVocabularyDir } from './paths.js';
-import { saveConfig, type AppConfig, type OutputsConfig } from './config.js';
+import { MAX_MIN_RECORDING_MINUTES, saveConfig, type AppConfig, type OutputsConfig } from './config.js';
 import type { ProcessingSchedule } from './processingSchedule.js';
 import { hashPrompt, parsePromptsMarkdownDetailed, readSeedPrompt } from './seed.js';
 import { openSettings, openTagSheet, openMeetingReader } from './windows.js';
@@ -619,20 +619,20 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   });
 
   ipcMain.handle(Channels.InboxQueueAll, () => {
-    const queued = ctx.state.queueAllForFiling();
+    const { queued, hidden } = ctx.state.queueAllForFiling(ctx.getConfig().minRecordingMinutes * 60);
     // Queued rows skip the tag sheet, so they take their invitees from the
     // calendar here, before transcription, where they help Whisper's hints.
     for (const row of ctx.state.listQueuedForFilingUnstarted()) {
       if (parseStoredMatch(row.calendar_match_json)) adoptCalendarAttendees(ctx.state, row);
       else applyCalendarMatch(ctx.state, row);
     }
-    ctx.logger.info({ queued }, 'inbox queued for processing; filing held for review');
-    if (queued > 0) {
+    ctx.logger.info({ queued, hiddenTooShort: hidden }, 'inbox queued for processing; filing held for review');
+    if (queued > 0 || hidden > 0) {
       ctx.onStateChanged?.();
       broadcastInboxChanged();
       ctx.getWorker()?.nudge();
     }
-    return { queued };
+    return { queued, hidden };
   });
 
   ipcMain.handle(Channels.InboxRefile, async (_evt, recordingId) => {
@@ -1445,11 +1445,19 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     const general = assertGeneralDTO(payload);
     const autoFile = (payload as { autoFileHighConfidence?: unknown }).autoFileHighConfidence;
     if (autoFile !== undefined && typeof autoFile !== 'boolean') throw new Error('autoFileHighConfidence must be a boolean');
+    const minMinutes = (payload as { minRecordingMinutes?: unknown }).minRecordingMinutes;
+    if (
+      minMinutes !== undefined &&
+      (typeof minMinutes !== 'number' || !Number.isInteger(minMinutes) || minMinutes < 0 || minMinutes > MAX_MIN_RECORDING_MINUTES)
+    ) {
+      throw new Error(`The minimum length must be a whole number of minutes from 0 to ${MAX_MIN_RECORDING_MINUTES}.`);
+    }
     const updated = ctx.applyConfigUpdate({
       audioRetentionDays: general.audioRetentionDays,
       autoDismissCompleteMinutes: general.autoDismissCompleteMinutes,
       processingSchedule: general.processingSchedule,
       autoFileHighConfidence: autoFile ?? ctx.getConfig().autoFileHighConfidence,
+      minRecordingMinutes: (minMinutes as number | undefined) ?? ctx.getConfig().minRecordingMinutes,
     });
     saveConfig(updated);
     // Only touch the login item when it can mean something, and only when
@@ -1486,6 +1494,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         launchAtLogin,
         processingSchedule: updated.processingSchedule,
         autoFileHighConfidence: updated.autoFileHighConfidence,
+        minRecordingMinutes: updated.minRecordingMinutes,
       },
       'general settings saved',
     );
@@ -1918,6 +1927,7 @@ function toGeneralDTO(cfg: AppConfig) {
     launchAtLoginAvailable: launchAtLoginAvailable(),
     processingSchedule: cfg.processingSchedule,
     autoFileHighConfidence: cfg.autoFileHighConfidence,
+    minRecordingMinutes: cfg.minRecordingMinutes,
   };
 }
 

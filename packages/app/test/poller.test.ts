@@ -143,3 +143,43 @@ describe('Poller full-history backfill', () => {
     expect(appState.hasBackfilledFullHistory).toBe('true');
   });
 });
+
+describe('Poller minimum recording length', () => {
+  const logger = { info() {}, warn() {}, error() {}, debug() {} };
+  async function poll(recordings: PlaudRecording[], minMinutes: number) {
+    const rows = new Map<string, string>();
+    const appState: Record<string, string> = { hasCompletedInitialPoll: 'true', hasBackfilledFullHistory: 'true' };
+    let fresh: PlaudRecording[] = [];
+    await new Poller({
+      client: { listRecordings: async () => recordings } as never,
+      state: {
+        getAppState: (k: string) => appState[k],
+        setAppState: (k: string, v: string) => (appState[k] = v),
+        recordingExists: (id: string) => rows.has(id),
+        insertRecording: (r: { id: string; status: string }) => rows.set(r.id, r.status),
+      } as never,
+      logger: logger as never,
+      intervalMinutes: 5,
+      shouldPause: () => false,
+      onPoll: ((_r: unknown, f: PlaudRecording[]) => (fresh = f)) as never,
+      minRecordingMinutes: () => minMinutes,
+    } as never).syncNow();
+    return { rows, fresh };
+  }
+  // Plaud reports duration in milliseconds.
+  const withDuration = (id: string, minutes: number | null) =>
+    ({ id, start_time: 1, ...(minutes === null ? {} : { duration: minutes * 60_000 }) }) as PlaudRecording;
+
+  it('hides new recordings shorter than the minimum, and keeps the rest', async () => {
+    const { rows, fresh } = await poll([withDuration('short', 1.5), withDuration('long', 25), withDuration('unknown', null)], 2);
+    expect(rows.get('short')).toBe('skipped');
+    expect(rows.get('long')).toBe('inbox');
+    expect(rows.get('unknown')).toBe('inbox');
+    expect(fresh.map((r) => r.id).sort()).toEqual(['long', 'unknown']);
+  });
+
+  it('keeps everything when the minimum is 0', async () => {
+    const { rows } = await poll([withDuration('short', 0.5)], 0);
+    expect(rows.get('short')).toBe('inbox');
+  });
+});

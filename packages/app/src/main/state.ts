@@ -1212,15 +1212,30 @@ export class State {
    * held at 'to_file' before anything is written. Follows the processing
    * schedule like any tagged row. Returns how many were queued.
    */
-  queueAllForFiling(): number {
-    return this.db
-      .prepare(
-        `UPDATE recordings
-         SET status = 'tagged', needs_filing = 1, client_id = NULL, meeting_type_id = NULL,
-             urgent = 0, updated_at = ?
-         WHERE status = 'inbox'`,
-      )
-      .run(Date.now()).changes;
+  queueAllForFiling(minDurationSeconds = 0): { queued: number; hidden: number } {
+    return this.db.transaction(() => {
+      const now = Date.now();
+      // Shorter than the configured minimum: hidden rather than processed
+      // (recoverable from Hidden). Unknown length is never "too short".
+      const hidden =
+        minDurationSeconds > 0
+          ? this.db
+              .prepare(
+                `UPDATE recordings SET status = 'skipped', updated_at = ?
+                 WHERE status = 'inbox' AND duration_seconds IS NOT NULL AND duration_seconds < ?`,
+              )
+              .run(now, minDurationSeconds).changes
+          : 0;
+      const queued = this.db
+        .prepare(
+          `UPDATE recordings
+           SET status = 'tagged', needs_filing = 1, client_id = NULL, meeting_type_id = NULL,
+               urgent = 0, updated_at = ?
+           WHERE status = 'inbox'`,
+        )
+        .run(now).changes;
+      return { queued, hidden };
+    })();
   }
 
   /**

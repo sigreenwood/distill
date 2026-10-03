@@ -970,13 +970,17 @@ function QueueAllBar(props: { count: number }) {
     const ok = confirm(
       `Queue ${n} recording${n === 1 ? '' : 's'} without tagging?\n\n` +
         'Each will be transcribed and summarised on your processing schedule (Settings → General), ' +
-        'with the client and meeting type suggested from the transcript. Nothing is written until you ' +
-        'confirm where it goes under Ready to file.',
+        'with the client and meeting type suggested from the transcript. Each then waits under Ready to ' +
+        'file for you to confirm where it goes (unless Automatic filing is on and the match is high-' +
+        'confidence). Recordings shorter than your minimum length (Settings → General) are hidden instead.',
     );
     if (!ok) return;
     setBusy(true);
     try {
-      await window.distill.inbox.queueAll();
+      const { hidden } = await window.distill.inbox.queueAll();
+      if (hidden > 0) {
+        alert(`${hidden} recording${hidden === 1 ? ' was' : 's were'} shorter than your minimum length and moved to Hidden.`);
+      }
     } catch (e) {
       alert(`Could not queue: ${e instanceof Error ? e.message : String(e)}`);
     } finally {

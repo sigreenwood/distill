@@ -37,3 +37,20 @@ describe('autoFileHighConfidence', () => {
     expect(normaliseConfig({ autoFileHighConfidence: true } as never).autoFileHighConfidence).toBe(true);
   });
 });
+
+describe('minimum recording length', () => {
+  it('treats only known, shorter recordings as too short', async () => {
+    const { isTooShort } = await import('../src/shared/filing.js');
+    expect(isTooShort(90, 2)).toBe(true);
+    expect(isTooShort(120, 2)).toBe(false);
+    expect(isTooShort(null, 2)).toBe(false);
+    expect(isTooShort(30, 0)).toBe(false);
+  });
+
+  it('accepts whole minutes from 0 to 120, otherwise keeps everything', () => {
+    expect(normaliseConfig({}).minRecordingMinutes).toBe(0);
+    expect(normaliseConfig({ minRecordingMinutes: 3 } as never).minRecordingMinutes).toBe(3);
+    expect(normaliseConfig({ minRecordingMinutes: 2.5 } as never).minRecordingMinutes).toBe(0);
+    expect(normaliseConfig({ minRecordingMinutes: 500 } as never).minRecordingMinutes).toBe(0);
+  });
+});

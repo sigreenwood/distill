@@ -1,4 +1,5 @@
 import * as fsp from 'node:fs/promises';
+import { isTooShort } from '../shared/filing.js';
 import path from 'node:path';
 import type { PlaudClient, PlaudRecording } from '@plaud/core';
 import type { Logger } from './logger.js';
@@ -43,6 +44,8 @@ export interface PollerOptions {
    * marked skipped. 0 reproduces the original "skip everything" default.
    */
   initialPollInboxCount?: () => number;
+  /** Recordings shorter than this many minutes are hidden on arrival (0 = keep all); see config minRecordingMinutes. */
+  minRecordingMinutes?: () => number;
 }
 
 /**
@@ -162,12 +165,14 @@ export class Poller {
       const fresh: PlaudRecording[] = [];
       let processedExternallyCount = 0;
       let backfilledCount = 0;
+      let tooShortCount = 0;
+      const minMinutes = this.opts.minRecordingMinutes?.() ?? 0;
       for (const r of all) {
         if (this.opts.state.recordingExists(r.id)) continue;
         const durationSeconds = typeof r.duration === 'number' ? Math.round(r.duration / 1000) : null;
         const outsideLegacyWindow = legacyWindowIds !== null && !legacyWindowIds.has(r.id);
         if (outsideLegacyWindow) backfilledCount += 1;
-        const initialStatus =
+        const placed =
           outsideLegacyWindow
             ? ('skipped' as const)
             : initialInboxIds === null
@@ -175,6 +180,11 @@ export class Poller {
               : initialInboxIds.has(r.id)
                 ? ('inbox' as const)
                 : ('skipped' as const);
+        // Too short to be a meeting worth summarising: hidden, not lost
+        // (it can be brought back from Hidden).
+        const tooShort = placed === 'inbox' && isTooShort(durationSeconds, minMinutes);
+        if (tooShort) tooShortCount += 1;
+        const initialStatus = tooShort ? ('skipped' as const) : placed;
         const elsewhere = initialStatus === 'inbox' ? processedElsewhere.get(r.id) : undefined;
         const rowStatus = elsewhere ? ('complete' as const) : initialStatus;
         if (elsewhere) processedExternallyCount += 1;
@@ -215,6 +225,9 @@ export class Poller {
         if (rowStatus === 'inbox') fresh.push(r);
       }
 
+      if (tooShortCount > 0) {
+        this.opts.logger.info({ hidden: tooShortCount, minMinutes }, 'recordings shorter than the minimum hidden on arrival');
+      }
       if (isInitialPoll || isBackfillPoll) {
         this.opts.state.setAppState(FULL_HISTORY_KEY, 'true');
       }
