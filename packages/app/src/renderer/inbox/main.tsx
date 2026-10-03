@@ -378,10 +378,9 @@ function Inbox() {
       {/*
         Errors first, deliberately. The tray shows a ⚠ while any row is
         errored, and the only controls that clear it (Retry / Skip) live
-        on the row itself. This window is a fixed 640px and not
-        resizable, so with a handful of waiting rows above them the
-        error rows fell below the fold — the warning had no reachable
-        way to clear. listActiveJoined already ranks errors first
+        on the row itself. With a handful of waiting rows above them the
+        error rows fell below the fold — the warning had no obvious way
+        to clear, even now the list scrolls and the window resizes. listActiveJoined already ranks errors first
         (CASE r.status WHEN 'error' THEN 1); this matches that intent.
       */}
       {sections.errored.length > 0 && (
@@ -665,7 +664,10 @@ function Shell(props: ShellProps) {
           display: 'flex',
           alignItems: 'center',
           gap: 8,
-        }}
+          flexShrink: 0,
+          // The header is the window's drag handle (it's frameless).
+          WebkitAppRegion: 'drag',
+        } as React.CSSProperties}
       >
         <EssenceLogo activity={props.activity} completionKey={props.completionKey} size={22} decorative />
         <div style={{ fontWeight: 600 }}>Inbox</div>
@@ -699,7 +701,18 @@ function Shell(props: ShellProps) {
           activeOrQueued={activeOrQueued}
         />
       )}
-      <main style={{ flexGrow: 1, overflowY: 'auto' }}><MeetingSearch />{props.children}</main>
+      {/*
+        The list scrolls; nothing else does. Two things stopped it before:
+        the body is a window drag region (styles.css), and macOS doesn't
+        deliver wheel or trackpad scrolling over drag regions; and a flex
+        child grows to its content unless min-height is 0.
+      */}
+      <main
+        style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+      >
+        <MeetingSearch />
+        {props.children}
+      </main>
       {props.dragOver && (
         <div
           style={{

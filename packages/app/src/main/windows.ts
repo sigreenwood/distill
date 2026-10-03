@@ -23,6 +23,7 @@ let briefWin: BrowserWindow | null = null;
 let registerWin: BrowserWindow | null = null;
 let pendingFocusId: string | null = null;
 const readerWindows = new Map<string, BrowserWindow>();
+let lastInboxSize = { width: 480, height: 640 };
 
 export function configureWindows(c: WindowsContext): void {
   ctx = c;
@@ -42,11 +43,14 @@ export function openInbox(trayBounds?: Rectangle, focusRecordingId?: string): vo
     return;
   }
   inboxWin = new BrowserWindow({
-    width: 480,
-    height: 640,
+    width: lastInboxSize.width,
+    height: lastInboxSize.height,
+    minWidth: 400,
+    minHeight: 360,
     show: false,
     frame: false,
-    resizable: false,
+    // Frameless but resizable from its edges; the header is the drag handle.
+    resizable: true,
     alwaysOnTop: false,
     skipTaskbar: true,
     fullscreenable: false,
@@ -66,6 +70,12 @@ export function openInbox(trayBounds?: Rectangle, focusRecordingId?: string): vo
       inboxWin?.webContents.send(Channels.PushFocusRecording, pendingFocusId);
       pendingFocusId = null;
     }
+  });
+  // Reopen at the size the user left it (for this session).
+  inboxWin.on('resized', () => {
+    if (!inboxWin || inboxWin.isDestroyed()) return;
+    const [width, height] = inboxWin.getSize();
+    lastInboxSize = { width, height };
   });
   inboxWin.on('closed', () => {
     inboxWin = null;
@@ -376,6 +386,10 @@ function positionUnderTray(win: BrowserWindow, trayBounds?: Rectangle): void {
       x = workArea.x + workArea.width - bounds.width - 8;
     }
     if (x < workArea.x + 8) x = workArea.x + 8;
+    // A window resized taller than the space below the menu bar would open
+    // partly off-screen; shrink it to fit.
+    const available = workArea.y + workArea.height - y - 8;
+    if (bounds.height > available) win.setSize(bounds.width, Math.max(available, 200), false);
     win.setPosition(x, y, false);
   } else {
     centreOnCurrentDisplay(win);
