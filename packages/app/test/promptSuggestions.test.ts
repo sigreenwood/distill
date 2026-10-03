@@ -10,6 +10,7 @@ describe('the shipped suggestions file', () => {
   it('parses every suggested meeting type with a use-for line and a prompt', () => {
     expect(shipped.map((s) => s.id)).toEqual([
       'account-standup',
+      'team-standup',
       'customer-sync',
       'customer-workshop',
       'qbr-service-review',
@@ -55,6 +56,16 @@ describe('the shipped suggestions file', () => {
       expect(s.prompt.match(/^## Actions$/gm)).toHaveLength(1);
       expect(s.prompt).toContain('then ## Actions');
     }
+  });
+
+  it('keeps the two stand-up types apart for the classifier', () => {
+    const single = shipped.find((s) => s.id === 'account-standup')!;
+    const multi = shipped.find((s) => s.id === 'team-standup')!;
+    expect(single.prompt.slice(0, 200)).toContain('one customer account');
+    expect(multi.prompt.slice(0, 200)).toContain('several customer accounts');
+    // A round-robin stand-up must not blur one account's updates into another's.
+    expect(multi.prompt).toContain('Never move a point from one account to another');
+    expect(multi.prompt).toContain('### Account unclear');
   });
 
   it('contains no customer names', () => {
