@@ -64,6 +64,7 @@ const api = {
     queueAll: () => ipcRenderer.invoke(Channels.InboxQueueAll),
     file: (payload: { recordingId: string; clientId: string; meetingTypeId: string }) =>
       ipcRenderer.invoke(Channels.InboxFile, payload),
+    refile: (recordingId: string) => ipcRenderer.invoke(Channels.InboxRefile, recordingId),
   },
   calendar: {
     coverage: () => ipcRenderer.invoke(Channels.CalendarCoverage),

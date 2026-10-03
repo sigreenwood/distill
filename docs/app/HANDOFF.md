@@ -1219,6 +1219,71 @@ is already latest, and obsidian's moment).
    `audio_path`, `whisper_snapshot` and the vocabulary columns) into
    those inbox rows, so processing skips straight to summarising.
 
+## Step 15 — matching by description, retired types, LADFFA as an organisation, opt-in auto-filing: complete in source
+
+Checkpoints: `27bb14e` (naming and matching; packaged as 0.0.28) and the
+commit containing this update (auto-filing and Refile).
+
+**Naming and descriptions for automatic matching:**
+- **Descriptions** (migration 19, `meeting_types.description`): a
+  "when to use" text per type, edited in Settings → Prompts. Both
+  classifiers read it instead of the prompt's first 200 characters
+  (`shared/meetingTypeLine.ts`); the prompt opening is only a fallback.
+- **Retire/Restore** (`meeting_types.retired`): a retired type keeps
+  its past recordings but isn't offered in the pickers or chosen
+  automatically. At least one type must stay in use.
+- **Renamed suggestions:** suggested types now lead with their
+  audience (Customer · / Internal · / Club ·). Their `Use for:` lines
+  become the description and say who is present.
+- **Club types:** two generic types, Committee meeting and AGM.
+  LADFFA's own details (officers, standing agenda with the Bailiff
+  report, minutes header) belong in its account context. A draft is in
+  `staged-transcripts/ladffa-context-draft.md`.
+- **Add client:** Settings → Clients can now add a client or
+  organisation.
+- **Updates to added types:** a type already added from the
+  suggestions shows "Update available" when the shipped name,
+  description or prompt is newer. Applying it is a click; dismissing
+  hides that version only (`suggestionViews`).
+- **Matching trial** (the real filing classifier, local model, 25 test
+  recordings with corrected expected types): the user's current types
+  scored 16/25, even with lenient scoring for the old built-ins (they
+  pulled 8 meetings into the all-accounts stand-up). The renamed types
+  with descriptions scored 21/25. One of the four misses (a community
+  of practice) matched the Team meeting description as written.
+
+**Opt-in automatic filing** (see DECISIONS.md §5 update):
+- Settings → General → Automatic filing (`autoFileHighConfidence`, off
+  by default).
+- When it is on, the worker files a held Queue all recording itself
+  if `autoFileDecision` passes. It logs "held for filing: not filed
+  automatically" with the reason otherwise.
+- Migration 20 adds `recordings.auto_filed`. Auto-filed rows show
+  "Filed automatically".
+- **Refile…** on any finished recording deletes its outputs and returns
+  it to Ready to file (`State.refileRecording`, `Channels.InboxRefile`,
+  with a confirm dialog). This is the way to correct a filing, automatic
+  or not. Previously there was no way to change a finished recording's
+  client.
+
+**Verification:** 313 tests (`autoFile.test.ts`, extended
+`promptSuggestions.test.ts`), both typechecks and the build. **Not
+exercised in the running app:** the Settings controls, an actual
+auto-filing, Refile.
+
+**For the user to do in the app** (after installing a build with these
+changes):
+- **Settings → Prompts:**
+  - apply the "Update available" entries and add the missing suggested
+    types;
+  - retire Client Call, Training / Internal Strategy, Technical
+    All-Hands and LADFFA Meeting;
+  - describe Video Demo Summary.
+- **Settings → Clients:**
+  - add LADFFA and paste its context;
+  - paste the HSBC, LBG and AIB contexts.
+- **Settings → General:** turn on Automatic filing if wanted.
+
 ## Next step
 
 Later ideas, not implemented or fully specified: diagnostics and
@@ -1231,8 +1296,7 @@ Step 7's limitations), configurable adaptive-context tuning (see Step
 8's limitations), post-transcript reclassification (see Step 9's
 limitations), live in-Inbox schedule status or multi-level priority
 (see Step 10's limitations), and live account-switching without a
-restart (see Step 11's limitations), and opt-in auto-filing above a
-confidence threshold (see Step 12's limitations) are optional follow-ons to
+restart (see Step 11's limitations) are optional follow-ons to
 already-shipped steps, not required by them. Long-meeting chunking (the
 original item 7) remains deliberately un-built — see Step 8 and
 BACKLOG.md's "Truncation guard" for why.

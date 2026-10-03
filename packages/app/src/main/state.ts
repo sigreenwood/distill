@@ -82,6 +82,8 @@ export interface RecordingRow {
   filing_reason: string | null;
   /** JSON CalendarMatch: the imported calendar meeting this recording overlapped. Migration 17. */
   calendar_match_json: string | null;
+  /** Filed automatically at high confidence (migration 20). */
+  auto_filed: number;
   created_at: number;
   updated_at: number;
 }
@@ -562,6 +564,16 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE meeting_types ADD COLUMN retired INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 20,
+    sql: `
+      -- 1 when a "Queue all" recording was filed without waiting in Ready
+      -- to file, because the classifier was highly confident and the
+      -- calendar agreed (opt-in: config autoFileHighConfidence). Shown on
+      -- the row so an automatic filing is never mistaken for the user's.
+      ALTER TABLE recordings ADD COLUMN auto_filed INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 export function openDatabase(_path?: string): Database.Database {
@@ -809,6 +821,7 @@ export class State {
       | 'filing_confidence'
       | 'filing_reason'
       | 'calendar_match_json'
+      | 'auto_filed'
     >,
   ): void {
     const now = Date.now();
@@ -1663,5 +1676,40 @@ export class State {
     if (fields.length === 0) return false;
     fields.push('updated_at = @updated_at');
     return this.db.prepare(`UPDATE meeting_types SET ${fields.join(', ')} WHERE id = @id`).run(params).changes > 0;
+  }
+
+  /** File a held "Queue all" recording under its suggested client, marked as automatic. */
+  autoFileRecording(id: string, clientId: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE recordings SET client_id = ?, needs_filing = 0, auto_filed = 1, updated_at = ?
+           WHERE id = ? AND needs_filing = 1`,
+        )
+        .run(clientId, Date.now(), id).changes > 0
+    );
+  }
+
+  /**
+   * Send a finished recording back to Ready to file, with its current
+   * client and meeting type pre-selected: the way to correct a filing,
+   * automatic or not. The caller deletes the written outputs first; their
+   * tracking is cleared here so filing writes them afresh. The summary is
+   * kept: filing re-summarises only if the meeting type changes, or the
+   * client changes and either has an account context.
+   */
+  refileRecording(id: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE recordings
+           SET status = 'to_file', needs_filing = 1, auto_filed = 0, suggested_client_id = client_id,
+               markdown_path = NULL, html_path = NULL, apple_note_id = NULL,
+               markdown_written_at = NULL, html_written_at = NULL, apple_note_written_at = NULL,
+               error = NULL, updated_at = ?
+           WHERE id = ? AND status = 'complete' AND summary_text IS NOT NULL`,
+        )
+        .run(Date.now(), id).changes > 0
+    );
   }
 }

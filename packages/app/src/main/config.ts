@@ -96,6 +96,13 @@ export interface AppConfig {
    * An urgent-flagged recording (recordings.urgent) always bypasses this.
    */
   processingSchedule: ProcessingSchedule;
+  /**
+   * File "Queue all" recordings without waiting in Ready to file when the
+   * classifier is highly confident and the calendar agrees (autoFileDecision
+   * in shared/filing.ts). Off by default: filing stays a suggestion unless
+   * the user opts in (DECISIONS.md §5).
+   */
+  autoFileHighConfidence: boolean;
 }
 
 export function defaultPauseConfig(): PauseConfig {
@@ -271,6 +278,7 @@ export function normaliseConfig(cfg: any): AppConfig {
     initialPollInboxCount: normaliseInitialPollInboxCount(cfg.initialPollInboxCount),
     logLevel: cfg.logLevel ?? 'info',
     processingSchedule: normaliseProcessingSchedule(cfg.processingSchedule),
+    autoFileHighConfidence: cfg.autoFileHighConfidence === true,
   };
 }
 

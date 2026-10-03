@@ -1414,6 +1414,7 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
   const [dismissText, setDismissText] = useState(String(props.initial.autoDismissCompleteMinutes));
   const [launchAtLogin, setLaunchAtLogin] = useState(props.initial.launchAtLogin);
   const [schedule, setSchedule] = useState<ProcessingSchedule>(props.initial.processingSchedule);
+  const [autoFile, setAutoFile] = useState(props.initial.autoFileHighConfidence);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -1423,6 +1424,7 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
       launchAtLogin,
       launchAtLoginAvailable: props.initial.launchAtLoginAvailable,
       processingSchedule: schedule,
+      autoFileHighConfidence: autoFile,
     };
     const dismissTrimmed = dismissText.trim();
     const dismissParsed = Number(dismissTrimmed);
@@ -1442,7 +1444,7 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
       return null;
     }
     return { ...base, audioRetentionDays: parsed, autoDismissCompleteMinutes: dismissParsed };
-  }, [enabled, daysText, dismissText, launchAtLogin, schedule, props.initial.launchAtLoginAvailable]);
+  }, [enabled, daysText, dismissText, launchAtLogin, schedule, autoFile, props.initial.launchAtLoginAvailable]);
 
   const isDirty = useMemo(() => {
     if (!computed) return false;
@@ -1453,7 +1455,8 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
       computed.processingSchedule.mode !== props.initial.processingSchedule.mode ||
       computed.processingSchedule.idleMinutes !== props.initial.processingSchedule.idleMinutes ||
       computed.processingSchedule.overnightStart !== props.initial.processingSchedule.overnightStart ||
-      computed.processingSchedule.overnightEnd !== props.initial.processingSchedule.overnightEnd
+      computed.processingSchedule.overnightEnd !== props.initial.processingSchedule.overnightEnd ||
+      computed.autoFileHighConfidence !== props.initial.autoFileHighConfidence
     );
   }, [
     computed,
@@ -1628,6 +1631,27 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
                 : `Audio is deleted ${daysText || 'N'} day(s) after the most recent successful output write.`
               : 'Audio is kept indefinitely. You can sweep manually by deleting files in ~/Library/Application Support/distill/audio/.'}
           </div>
+        </section>
+        <section
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Automatic filing</div>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12 }}>
+            <input type="checkbox" checked={autoFile} onChange={(e) => setAutoFile(e.target.checked)} />
+            <span>
+              File "Queue all" recordings without waiting in Ready to file when the match is high-confidence.
+              <span className="muted" style={{ display: 'block', fontSize: 11, marginTop: 4 }}>
+                Only when the classifier is highly confident, names a client, the calendar (if it names an account)
+                agrees, and the meeting type is still in use. Everything else still waits for you. Rows filed this way
+                say "Filed automatically".
+              </span>
+            </span>
+          </label>
         </section>
         <section
           style={{

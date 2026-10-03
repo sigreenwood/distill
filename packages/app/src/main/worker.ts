@@ -6,6 +6,8 @@ import { prettifyError } from './errorMessages.js';
 import { doDownload, doTranscribe, doSummarise, doWriteOutputs } from './pipelineSteps.js';
 import type { PipelineContext } from './pipelineSteps.js';
 import type { PipelineStep } from './state.js';
+import { autoFileDecision } from '../shared/filing.js';
+import { calendarAccountFor } from './calendar/service.js';
 
 export interface WorkerCallbacks {
   /** Fired on every status transition so the tray + inbox can refresh. */
@@ -207,10 +209,30 @@ export class Worker {
     const afterSummarise = this.ctx.state.getRecording(id);
     if (!afterSummarise) return;
     // Queued with "Queue all": nothing is written until the user confirms
-    // where it's filed (Channels.InboxFile), which clears needs_filing.
+    // where it's filed (Channels.InboxFile), which clears needs_filing —
+    // unless the user opted in to automatic filing and every condition in
+    // autoFileDecision holds.
     if (afterSummarise.needs_filing === 1) {
-      this.ctx.state.setStatus(id, 'to_file', { last_step: 'summarise' });
-      return;
+      const cfg = this.ctx.getConfig();
+      if (!cfg.autoFileHighConfidence) {
+        this.ctx.state.setStatus(id, 'to_file', { last_step: 'summarise' });
+        return;
+      }
+      const decision = autoFileDecision({
+        confidence: afterSummarise.filing_confidence,
+        suggestedClientId: afterSummarise.suggested_client_id,
+        calendarClientId: calendarAccountFor(this.ctx.state, afterSummarise)?.clientId ?? null,
+        meetingTypeRetired: this.ctx.state.getMeetingType(afterSummarise.meeting_type_id ?? '')?.retired === 1,
+        summaryTitle: afterSummarise.summary_text?.split('\n').find((l) => l.trim())?.trim() ?? null,
+      });
+      if (!decision.file || !afterSummarise.suggested_client_id) {
+        this.ctx.logger.info({ id, reason: decision.reason }, 'held for filing: not filed automatically');
+        this.ctx.state.setStatus(id, 'to_file', { last_step: 'summarise' });
+        return;
+      }
+      this.ctx.state.autoFileRecording(id, afterSummarise.suggested_client_id);
+      this.ctx.state.updateRecording(id, { filing_reason: `Filed automatically: ${decision.reason}. ${afterSummarise.filing_reason ?? ''}`.trim() });
+      this.ctx.logger.info({ id, clientId: afterSummarise.suggested_client_id, reason: decision.reason }, 'filed automatically');
     }
     this.ctx.state.setStatus(id, 'writing', { last_step: 'write' });
     this.cb.onStateChanged();

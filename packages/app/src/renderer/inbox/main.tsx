@@ -1248,6 +1248,13 @@ function CompleteRow(props: {
           {vocabLine}
         </div>
       )}
+      {r.autoFiled && (
+        <div className="muted" style={{ fontSize: 11, marginBottom: 6 }} title={r.filingReason ?? undefined}>
+          Filed automatically{r.clientName ? ` under ${r.clientName}` : ''}
+          {r.meetingTypeName ? ` as ${r.meetingTypeName}` : ''} — high confidence. Wrong? Refile it.
+        </div>
+      )}
+      {!r.autoFiled && <CalendarLine r={r} />}
       <OutputLinks r={r} />
       <div className="row">
         <button className="primary" onClick={() => {
@@ -1257,6 +1264,14 @@ function CompleteRow(props: {
           Hide
         </button>
         <FullRerunButton r={r} />
+        <button
+          onClick={() => {
+            void window.distill.inbox.refile(r.id).catch((e) => alert(e instanceof Error ? e.message : String(e)));
+          }}
+          title="Move back to Ready to file to change the client or meeting type"
+        >
+          Refile…
+        </button>
       </div>
     </Row>
   );

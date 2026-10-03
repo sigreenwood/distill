@@ -474,3 +474,22 @@ decide where it is filed.
 right. An opt-in auto-file above a confidence threshold could then
 follow, in keeping with suggestion-only.
 
+### Update (3 Oct 2026): opt-in automatic filing
+
+The user asked for high-confidence matches to file themselves. Filing
+stays a suggestion by default; Settings → General → Automatic filing
+(`autoFileHighConfidence`, off by default) lets a "Queue all" recording
+skip Ready to file only when **every** condition in `autoFileDecision`
+(shared/filing.ts) holds:
+- the classifier's confidence is high;
+- it names a real client (not none or Unclassified);
+- the calendar, when it names an account, names the same one;
+- the meeting type isn't retired;
+- the summary isn't "No meeting content recorded".
+
+Auto-filed rows are marked (`recordings.auto_filed`, migration 20) and
+say so in the inbox. The undo is **Refile…** on any finished recording:
+it deletes the written outputs (including the Apple Note, which has no
+move) and returns the recording to Ready to file with its current choice
+selected.
+

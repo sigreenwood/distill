@@ -28,6 +28,7 @@ export const Channels = {
   InboxSetOutputTargets: 'inbox.setOutputTargets',
   InboxQueueAll: 'inbox.queueAll',
   InboxFile: 'inbox.file',
+  InboxRefile: 'inbox.refile',
   CalendarCoverage: 'calendar.coverage',
   CalendarImportPdfs: 'calendar.importPdfs',
   TagCalendarContext: 'tag.calendarContext',

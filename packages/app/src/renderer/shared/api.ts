@@ -84,6 +84,8 @@ export interface InboxItemDTO {
   /** The account that meeting points to, and why; a suggestion only. */
   calendarClientId: string | null;
   calendarClientName: string | null;
+  /** Filed automatically at high confidence, not by the user. */
+  autoFiled: boolean;
   calendarClientReason: string | null;
   /** Whether a "Full re-run" can re-transcribe this recording — a local audio file, or (Plaud only) a cloud copy to re-fetch. */
   audioAvailable: boolean;
@@ -163,6 +165,8 @@ export interface GeneralDTO {
    */
   launchAtLoginAvailable: boolean;
   processingSchedule: ProcessingSchedule;
+  /** File "Queue all" recordings without Ready to file when confidence is high and the calendar agrees. */
+  autoFileHighConfidence: boolean;
 }
 
 export interface PerformanceDTO {
@@ -339,6 +343,8 @@ export interface DistillApi {
     /** Queue every untagged recording; each is classified and held at 'to_file' before writing. */
     queueAll(): Promise<{ queued: number }>;
     file(payload: { recordingId: string; clientId: string; meetingTypeId: string }): Promise<{ resummarise: boolean }>;
+    /** Send a finished recording back to Ready to file (asks first; deletes its outputs). */
+    refile(recordingId: string): Promise<{ refiled: boolean }>;
   };
   calendar: {
     coverage(): Promise<CalendarCoverage>;

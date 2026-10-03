@@ -635,6 +635,36 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     return { queued };
   });
 
+  ipcMain.handle(Channels.InboxRefile, async (_evt, recordingId) => {
+    if (typeof recordingId !== 'string') throw new Error('recordingId must be a string');
+    const row = ctx.state.getRecording(recordingId);
+    if (!row || row.status !== 'complete' || !row.summary_text) throw new Error('Only a finished recording can be refiled.');
+    const { response } = await dialog.showMessageBox({
+      type: 'warning',
+      buttons: ['Cancel', 'Refile'],
+      defaultId: 0,
+      cancelId: 0,
+      message: 'Refile this recording?',
+      detail:
+        'This deletes its Markdown/HTML files and Apple Note, and moves it back to Ready to file with the ' +
+        'current client and meeting type selected. Filing it writes everything again. The summary is kept ' +
+        'unless you change the meeting type, or change the client where an account context applies.',
+    });
+    if (response !== 1) return { refiled: false };
+    if (row.markdown_path) fs.rmSync(row.markdown_path, { force: true });
+    if (row.html_path) fs.rmSync(row.html_path, { force: true });
+    if (row.apple_note_id) {
+      await deleteAppleNote(row.apple_note_id).catch((e) => {
+        ctx.logger.warn({ err: String(e), recordingId }, 'could not delete the Apple Note ahead of refiling — proceeding anyway');
+      });
+    }
+    if (!ctx.state.refileRecording(recordingId)) throw new Error('This recording can no longer be refiled.');
+    ctx.logger.info({ recordingId, wasAutoFiled: row.auto_filed === 1 }, 'recording sent back to Ready to file');
+    ctx.onStateChanged?.();
+    broadcastInboxChanged();
+    return { refiled: true };
+  });
+
   ipcMain.handle(Channels.InboxFile, (_evt, payload) => {
     const p = assertFileRecordingPayload(payload);
     const row = ctx.state.getRecording(p.recordingId);
@@ -1413,10 +1443,13 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(Channels.SettingsSaveGeneral, (_evt, payload) => {
     const general = assertGeneralDTO(payload);
+    const autoFile = (payload as { autoFileHighConfidence?: unknown }).autoFileHighConfidence;
+    if (autoFile !== undefined && typeof autoFile !== 'boolean') throw new Error('autoFileHighConfidence must be a boolean');
     const updated = ctx.applyConfigUpdate({
       audioRetentionDays: general.audioRetentionDays,
       autoDismissCompleteMinutes: general.autoDismissCompleteMinutes,
       processingSchedule: general.processingSchedule,
+      autoFileHighConfidence: autoFile ?? ctx.getConfig().autoFileHighConfidence,
     });
     saveConfig(updated);
     // Only touch the login item when it can mean something, and only when
@@ -1452,6 +1485,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         autoDismissCompleteMinutes: updated.autoDismissCompleteMinutes,
         launchAtLogin,
         processingSchedule: updated.processingSchedule,
+        autoFileHighConfidence: updated.autoFileHighConfidence,
       },
       'general settings saved',
     );
@@ -1808,6 +1842,7 @@ export function toInboxDTO(r: JoinedRecordingRow, outputs: OutputsConfig, client
     calendarRejected: calendar?.rejectedByTranscript === true,
     calendarClientId: calendarAccount?.clientId ?? null,
     calendarClientName: calendarAccount ? (clients.find((c) => c.id === calendarAccount.clientId)?.name ?? null) : null,
+    autoFiled: r.auto_filed === 1,
     calendarClientReason: calendarAccount?.reason ?? null,
     // Gates the "Full re-run" action: a local file to re-transcribe from,
     // or (Plaud rows only — retention never deletes their audio_path, but
@@ -1882,6 +1917,7 @@ function toGeneralDTO(cfg: AppConfig) {
     launchAtLogin: launchAtLoginAvailable() ? app.getLoginItemSettings().openAtLogin : false,
     launchAtLoginAvailable: launchAtLoginAvailable(),
     processingSchedule: cfg.processingSchedule,
+    autoFileHighConfidence: cfg.autoFileHighConfidence,
   };
 }
 

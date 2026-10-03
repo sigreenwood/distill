@@ -244,8 +244,9 @@ from the stored transcript. Combined with the Overnight schedule, the
 morning job becomes one click per meeting. See
 [HANDOFF.md](./HANDOFF.md) Step 12.
 
-Follow-on, not built: an opt-in auto-file above a confidence
-threshold, once a few weeks of suggestions show how often they're right.
+Opt-in auto-filing at high confidence is now built (Oct 2026; Settings →
+General → Automatic filing, off by default), with **Refile…** to correct
+any filing. See [HANDOFF.md](./HANDOFF.md) Step 15.
 
 ---
 
