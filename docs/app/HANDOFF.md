@@ -19,8 +19,9 @@ without the 149be1d fix, so VAD was likely off in them. Builds from this
 branch have both.
 
 Both Macs are moving to fresh clones in `~/Developer/distill`, outside
-iCloud (scripts in iCloud Drive/distill-migration). Develop with Node 22
-(`.nvmrc`); Node 26 breaks better-sqlite3 and electron-rebuild's CLI.
+iCloud (scripts in iCloud Drive/distill-migration). Develop with Node 26
+(`.nvmrc`; engines `>=22.12`). The Node 22 notes in older steps below
+predate the 3 Oct dependency upgrade (see "Dependency upgrade").
 Launching the app from a VS Code terminal needs
 `env -u ELECTRON_RUN_AS_NODE open …`.
 
@@ -1066,6 +1067,57 @@ Limitations worth retaining:
   local-model classifiers, which see the calendar title. A deterministic
   "recurring internal huddle → stand-up" rule was considered and left
   out, because the classifier already gets the title.
+
+## Dependency upgrade (3 Oct 2026) — branch `chore/upgrade-deps`
+
+Everything moved to the latest stable release unless noted, so the
+project builds on Node 26:
+
+| Area | From → to |
+|---|---|
+| Electron | 33.4 → 44.5 (bundles Node 24) |
+| better-sqlite3 | 11 → 13 (11 does not compile on Node 26) |
+| @electron/rebuild | 3 → 4 (v3 CLI cannot load yargs on Node 26) |
+| electron-builder | 25 → 26 |
+| electron-vite / Vite / plugin-react | 2 → 5 / 5 → 7.3 / 4 → 5.2 |
+| vitest / TypeScript | 3 → 5 / 5.9 → 7.0 |
+| React / marked / pino | 18 → 19 / 14 → 18 / 9 → 10 |
+| MCP SDK, obsidian esbuild | 1.29 → 1.32, 0.19 → 0.28 |
+
+**Held back:** Vite 8 and plugin-react 6, because electron-vite 5 (the
+latest stable) supports Vite only up to 7. `@types/node` is held at 24 to
+match Electron's runtime.
+
+**What the upgrade changed in behaviour, and the fixes:**
+- **Notifications need a signed bundle (Electron 42+).** An unsigned
+  app's notifications fail with "Notifications are not allowed". The
+  build is now ad-hoc signed (`identity: '-'`, hardened runtime off).
+  A test bundle signed this way showed its notification.
+- **Electron no longer downloads in postinstall.** A fresh `npm ci` made
+  tests that import `electron` fail. The root `postinstall` now runs
+  `install-electron`.
+- **marked 18 emits a `checkbox` token for task items.** The reader
+  showed "☐ [ ] …" for every action. It now renders the token; a test
+  covers this. Exported HTML is byte-identical.
+- **`clipboard.readText()` is async**, and is awaited.
+- **TypeScript 7** removed `baseUrl` and made `strict` and empty `types`
+  the defaults. The obsidian tsconfig now sets both explicitly.
+
+**Verification:**
+- clean `npm ci` on Node 26, then 304 tests, both typechecks, the build,
+  the obsidian build and `npm run package` (signature verifies).
+- The packaged app ran against a copy of state.db, with a scratch `HOME`
+  and all outputs redirected. It started, opened the DB, connected to
+  Plaud through the Keychain (keytar), passed the Ollama pre-flight, and
+  wrote Markdown and HTML outputs.
+
+**Not exercised:**
+- the windows themselves (React 19 renderer);
+- a notification from the packaged app;
+- the Keychain prompt the new signature may cause after install.
+
+Remaining `npm audit` items are build-time only (electron-builder, which
+is already latest, and obsidian's moment).
 
 ## In progress — local transcription of the inbox backlog, then the core prompts
 
