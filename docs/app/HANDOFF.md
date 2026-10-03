@@ -1131,6 +1131,17 @@ Limitations worth retaining:
   user's review.
 - **Filename fallback:** filenames now fall back to the single calendar
   meeting's subject when a summary has no title.
+- **Cross-account stand-up (3 Oct, 0.0.26):** a ninth suggested type,
+  `team-standup` ("Account team stand-up (all accounts)"), covers the
+  daily stand-up where the account team goes round every account. The
+  existing `account-standup` covers only one account. The new type keeps
+  each point under its own account, tags actions with the account, and
+  puts anything it can't place under "### Account unclear". A test keeps
+  the two types' opening sentences apart for the classifier. It needs a
+  single client when filing, so file it under an internal client.
+  **Not trialled** on a real stand-up yet. 0.0.26 was pushed and packaged
+  with Homebrew Node 22 (`/opt/homebrew/opt/node@22/bin`); the installer
+  was opened for the user.
 
 **Next, once it finishes:**
 1. **Engine comparison** across the pairs: names and terms, hint
