@@ -10,7 +10,8 @@
   },
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "postinstall": "install-electron"
   },
   "devDependencies": {
     "tsx": "^4.23.15",
