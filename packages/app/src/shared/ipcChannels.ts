@@ -48,6 +48,7 @@ export const Channels = {
   MeetingTypesList: 'meetingTypes.list',
   MeetingTypesAdd: 'meetingTypes.add',
   MeetingTypesDelete: 'meetingTypes.delete',
+  MeetingTypesUpdateMeta: 'meetingTypes.updateMeta',
   PromptSuggestionsList: 'promptSuggestions.list',
   PromptSuggestionsAccept: 'promptSuggestions.accept',
   PromptSuggestionsDismiss: 'promptSuggestions.dismiss',

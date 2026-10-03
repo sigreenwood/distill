@@ -1,7 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseDismissed, parsePromptSuggestions, pendingSuggestions, SUGGESTIONS_FILE } from '../src/main/promptSuggestions.js';
+import {
+  parseDismissed,
+  parsePromptSuggestions,
+  pendingSuggestions,
+  SUGGESTIONS_FILE,
+  suggestionVersion,
+  suggestionViews,
+} from '../src/main/promptSuggestions.js';
+import { describeMeetingType, offeredMeetingTypes } from '../src/shared/meetingTypeLine.js';
 import { extractTitleFromSummary } from '../src/main/outputs.js';
 
 const shipped = parsePromptSuggestions(fs.readFileSync(path.join(__dirname, '..', 'resources', SUGGESTIONS_FILE), 'utf8'));
@@ -18,6 +26,8 @@ describe('the shipped suggestions file', () => {
       'team-meeting',
       'one-to-one',
       'enablement-session',
+      'club-committee',
+      'club-agm',
     ]);
     for (const s of shipped) {
       expect(s.name.length).toBeGreaterThan(2);
@@ -41,7 +51,9 @@ describe('the shipped suggestions file', () => {
       // lunch-chat recording produced a page of nothing.
       expect(s.prompt).toContain('never as judgements of character');
       expect(s.prompt).toContain('No meeting content recorded');
-      expect(s.prompt).toContain('except Actions');
+      // Minutes list every agenda item ("Not discussed"), so only the work
+      // types leave out empty sections.
+      if (!s.id.startsWith('club-')) expect(s.prompt).toContain('except Actions');
       // The same action went to two different people across runs: "I" in a
       // two-person call without speaker labels is not attributable.
       expect(s.prompt).toContain('Owner unclear');
@@ -76,7 +88,7 @@ describe('the shipped suggestions file', () => {
 
 describe('pendingSuggestions', () => {
   it('hides suggestions already added (by id or name) or dismissed', () => {
-    const left = pendingSuggestions(shipped, [{ id: 'account-standup', name: 'x' }, { id: 'mine', name: '1:1 or colleague call' }], ['team-meeting']);
+    const left = pendingSuggestions(shipped, [{ id: 'account-standup', name: 'x' }, { id: 'mine', name: 'Internal · 1:1 or colleague call' }], ['team-meeting']);
     const ids = left.map((s) => s.id);
     expect(ids).not.toContain('account-standup');
     expect(ids).not.toContain('one-to-one');
@@ -96,5 +108,50 @@ describe('title line', () => {
     expect(extractTitleFromSummary('Account team aligns on upgrade plan and demo timing\n\n## Headlines')).toBe(
       'Account team aligns on upgrade plan and demo timing',
     );
+  });
+});
+
+describe('naming and descriptions for automatic matching', () => {
+  it('leads every name with its audience so neighbours are told apart', () => {
+    for (const s of shipped) expect(s.name, s.id).toMatch(/^(Customer|Internal|Club) · /);
+    expect(new Set(shipped.map((s) => s.name)).size).toBe(shipped.length);
+  });
+
+  it('says who is present in every use-for line', () => {
+    for (const s of shipped.filter((x) => x.name.startsWith('Customer'))) expect(s.useFor).toMatch(/^Customer staff present/);
+    for (const s of shipped.filter((x) => x.name.startsWith('Club'))) expect(s.useFor).toMatch(/members' organisation, not work/);
+  });
+
+  it('keeps organisation specifics out of the club prompts (they belong in the account context)', () => {
+    const club = shipped.filter((s) => s.id.startsWith('club-')).map((s) => s.prompt).join('\n');
+    expect(club).not.toMatch(/LADFFA|Leek|Fly Fishing|Bailiff/i);
+    expect(club).toContain('account context');
+  });
+
+  it('describes a type by its description, falling back to the prompt opening', () => {
+    expect(describeMeetingType({ name: 'A', prompt: 'You are an expert…', description: 'Weekly calls with the customer' })).toBe(
+      'A — use for: Weekly calls with the customer',
+    );
+    expect(describeMeetingType({ name: 'A', prompt: 'Summarise a call.', description: null })).toBe('A — Summarise a call.');
+    expect(offeredMeetingTypes([{ id: 'a', retired: 0 }, { id: 'b', retired: 1 }]).map((t) => t.id)).toEqual(['a']);
+  });
+});
+
+describe('suggestionViews', () => {
+  const standup = shipped.find((s) => s.id === 'account-standup')!;
+
+  it('offers an update when an added type differs from the shipped version, until that version is dismissed', () => {
+    const existing = [{ id: standup.id, name: 'Account team stand-up', prompt: standup.prompt, description: null }];
+    const views = suggestionViews(shipped, existing, []);
+    const update = views.find((v) => v.id === standup.id)!;
+    expect(update.kind).toBe('update');
+    expect(update.currentName).toBe('Account team stand-up');
+    expect(update.key).toBe(`${standup.id}@${suggestionVersion(standup)}`);
+    expect(suggestionViews(shipped, existing, [update.key]).some((v) => v.id === standup.id)).toBe(false);
+  });
+
+  it('offers nothing for a type already matching the shipped version', () => {
+    const existing = [{ id: standup.id, name: standup.name, prompt: standup.prompt, description: standup.useFor }];
+    expect(suggestionViews(shipped, existing, []).some((v) => v.id === standup.id)).toBe(false);
   });
 });

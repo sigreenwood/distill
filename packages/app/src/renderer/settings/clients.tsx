@@ -27,6 +27,7 @@ export function ClientsPane() {
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [newName, setNewName] = useState('');
 
   useEffect(() => {
     void window.distill.clients.list().then((list) => {
@@ -52,6 +53,25 @@ export function ClientsPane() {
     },
     [clients, dirty],
   );
+
+  // A client is also an organisation the user belongs to (a club or
+  // committee), not only a customer account: its notes file under its own
+  // folder, and its account context carries its people and terms.
+  const onAdd = useCallback(async () => {
+    const name = newName.trim();
+    if (!name) return;
+    if (dirty && !confirm('Discard unsaved changes to this account context?')) return;
+    try {
+      const created = await window.distill.clients.add({ name });
+      setClients((prev) => [...prev, created]);
+      setSelectedId(created.id);
+      setDraft(created.context);
+      setNewName('');
+      setMessage(`Added ${created.name}.`);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : String(e));
+    }
+  }, [newName, dirty]);
 
   const onSave = useCallback(async () => {
     if (!selected) return;
@@ -96,11 +116,21 @@ export function ClientsPane() {
               </div>
             </button>
           ))}
-          {clients.length === 0 && (
-            <div className="muted" style={{ fontSize: 11 }}>
-              No clients yet. Add one from the tag sheet.
-            </div>
-          )}
+          <div style={{ display: 'flex', gap: 4, marginTop: 10 }}>
+            <input
+              type="text"
+              value={newName}
+              placeholder="New client or organisation"
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void onAdd();
+              }}
+              style={{ flex: 1, minWidth: 0, fontSize: 11 }}
+            />
+            <button onClick={() => void onAdd()} disabled={!newName.trim()} style={{ fontSize: 11 }}>
+              Add
+            </button>
+          </div>
         </aside>
         <section style={editorStyle}>
           {selected ? (

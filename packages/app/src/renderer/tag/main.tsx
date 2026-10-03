@@ -70,7 +70,8 @@ function Tag() {
         ]);
         setState({ kind: 'ready', clients, meetingTypes });
         if (clients[0]) setSelectedClientId(clients[0].id);
-        if (meetingTypes[0]) setSelectedMeetingTypeId(meetingTypes[0].id);
+        const firstOffered = meetingTypes.find((m) => !m.retired) ?? meetingTypes[0];
+        if (firstOffered) setSelectedMeetingTypeId(firstOffered.id);
       } catch (e) {
         setState({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
       }
@@ -497,7 +498,8 @@ function Tag() {
               }
             }}
           >
-            {meetingTypes.map((m) => (
+            {/* Retired types are kept for past recordings, not offered for new ones. */}
+            {meetingTypes.filter((m) => !m.retired || m.id === selectedMeetingTypeId).map((m) => (
               <option key={m.id} value={m.id}>
                 {m.name}
               </option>

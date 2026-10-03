@@ -112,6 +112,8 @@ const api = {
     add: (payload: { name: string; prompt: string }) =>
       ipcRenderer.invoke(Channels.MeetingTypesAdd, payload),
     delete: (id: string) => ipcRenderer.invoke(Channels.MeetingTypesDelete, id),
+    updateMeta: (id: string, patch: { description?: string | null; retired?: boolean }) =>
+      ipcRenderer.invoke(Channels.MeetingTypesUpdateMeta, id, patch),
   },
   promptSuggestions: {
     list: () => ipcRenderer.invoke(Channels.PromptSuggestionsList),

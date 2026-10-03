@@ -10,6 +10,7 @@
  * never applied without going through the same Process button as a
  * manual choice.
  */
+import { describeMeetingType } from '../shared/meetingTypeLine.js';
 import { OllamaClient } from './ollama.js';
 import type { OllamaConfig } from './config.js';
 import { assertLocalInference } from './localInference.js';
@@ -20,6 +21,8 @@ export interface MeetingTypeCandidate {
   id: string;
   name: string;
   prompt: string;
+  /** "When to use"; preferred over the prompt's opening (shared/meetingTypeLine.ts). */
+  description?: string | null;
 }
 
 export interface SuggestionInput {
@@ -32,7 +35,6 @@ export interface SuggestionInput {
 }
 
 /** How much of each candidate's prompt to show the model — enough to convey tone/purpose, not the whole thing. */
-const PROMPT_EXCERPT_CHARS = 200;
 
 const SUGGESTION_SCHEMA = {
   type: 'object',
@@ -57,8 +59,7 @@ export function buildSuggestionMessages(
   const labels = candidates.map((_, i) => `T${i + 1}`);
   const candidateLines = candidates
     .map((c, i) => {
-      const excerpt = c.prompt.trim().slice(0, PROMPT_EXCERPT_CHARS).replace(/\s+/g, ' ');
-      return `${labels[i]}: ${c.name} — ${excerpt}`;
+      return `${labels[i]}: ${describeMeetingType(c)}`;
     })
     .join('\n');
   const minutes = input.durationSeconds != null ? Math.round(input.durationSeconds / 60) : null;

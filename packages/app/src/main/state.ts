@@ -108,6 +108,10 @@ export interface MeetingTypeRow {
   is_builtin: number;
   sort_order: number;
   original_prompt_hash: string | null;
+  /** When to use this type, for the classifiers and the user. Migration 19. */
+  description: string | null;
+  /** Kept for past recordings but no longer offered or auto-chosen. */
+  retired: number;
   created_at: number;
   updated_at: number;
 }
@@ -546,6 +550,18 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE clients ADD COLUMN context TEXT;
     `,
   },
+  {
+    version: 19,
+    sql: `
+      -- "When to use" per meeting type, read by both classifiers instead of
+      -- the prompt's opening (which for older prompts was boilerplate like
+      -- "You are an expert…"); and a retired flag, so overlapping older
+      -- types stop being offered or auto-chosen while past summaries keep
+      -- their type. Both are user-edited in Settings → Prompts.
+      ALTER TABLE meeting_types ADD COLUMN description TEXT;
+      ALTER TABLE meeting_types ADD COLUMN retired INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 export function openDatabase(_path?: string): Database.Database {
@@ -631,7 +647,7 @@ export class State {
       | undefined;
   }
 
-  upsertMeetingType(row: Omit<MeetingTypeRow, 'created_at' | 'updated_at'>): void {
+  upsertMeetingType(row: Omit<MeetingTypeRow, 'created_at' | 'updated_at' | 'description' | 'retired'>): void {
     const now = Date.now();
     this.db
       .prepare(
@@ -1630,5 +1646,22 @@ export class State {
   setClientContext(id: string, context: string | null): boolean {
     const text = context?.trim() ? context.trim() : null;
     return this.db.prepare('UPDATE clients SET context = ? WHERE id = ?').run(text, id).changes > 0;
+  }
+
+  /** Edit a meeting type's description and/or retired flag. Returns true iff a row changed. */
+  updateMeetingTypeMeta(id: string, patch: { description?: string | null; retired?: boolean }): boolean {
+    const fields: string[] = [];
+    const params: Record<string, unknown> = { id, updated_at: Date.now() };
+    if (patch.description !== undefined) {
+      fields.push('description = @description');
+      params.description = patch.description?.trim() ? patch.description.trim() : null;
+    }
+    if (patch.retired !== undefined) {
+      fields.push('retired = @retired');
+      params.retired = patch.retired ? 1 : 0;
+    }
+    if (fields.length === 0) return false;
+    fields.push('updated_at = @updated_at');
+    return this.db.prepare(`UPDATE meeting_types SET ${fields.join(', ')} WHERE id = @id`).run(params).changes > 0;
   }
 }

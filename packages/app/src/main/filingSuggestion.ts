@@ -11,6 +11,7 @@
  * confirms (or changes) the suggestion from the Inbox. See
  * Channels.InboxFile in ipc.ts.
  */
+import { describeMeetingType } from '../shared/meetingTypeLine.js';
 import type { OllamaClient } from './ollama.js';
 import type { FilingConfidence } from '../shared/filing.js';
 import type { CalendarCandidate, CalendarMatch } from '../shared/calendar.js';
@@ -22,6 +23,8 @@ export interface FilingCandidate {
 
 export interface FilingTypeCandidate extends FilingCandidate {
   prompt: string;
+  /** "When to use"; preferred over the prompt's opening (shared/meetingTypeLine.ts). */
+  description?: string | null;
 }
 
 export interface FilingInput {
@@ -81,7 +84,6 @@ export interface FilingSuggestion {
 
 /** Enough of the opening to hear introductions and the purpose of the call, small enough for a quick call. */
 export const TRANSCRIPT_HEAD_CHARS = 12_000;
-const PROMPT_EXCERPT_CHARS = 200;
 const NO_CLIENT = 'none';
 
 const FILING_SCHEMA = {
@@ -118,8 +120,7 @@ export function buildFilingMessages(
     : '(no clients yet)';
   const typeLines = types
     .map((t, i) => {
-      const excerpt = t.prompt.trim().slice(0, PROMPT_EXCERPT_CHARS).replace(/\s+/g, ' ');
-      return `${typeLabels[i]}: ${t.name} — ${excerpt}`;
+      return `${typeLabels[i]}: ${describeMeetingType(t)}`;
     })
     .join('\n');
   const minutes = input.durationSeconds != null ? Math.round(input.durationSeconds / 60) : null;

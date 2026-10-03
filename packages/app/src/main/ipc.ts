@@ -1,4 +1,5 @@
 import { searchMeetings, validateSearch } from './meetingSearch.js';
+import { offeredMeetingTypes } from '../shared/meetingTypeLine.js';
 import { loadMeetingDetail } from './meetingContent.js';
 import { generateClientBrief, type BriefInputMeeting } from './clientBrief.js';
 import type { BriefCandidate } from '../shared/brief.js';
@@ -22,8 +23,8 @@ import { resolvePythonBinary } from './pipelineSteps.js';
 import {
   DISMISSED_KEY,
   parseDismissed,
-  pendingSuggestions,
   readPromptSuggestions,
+  suggestionViews,
 } from './promptSuggestions.js';
 import { MAX_ACCOUNT_CONTEXT_CHARS } from '../shared/summaryInput.js';
 import { assertFileRecordingPayload, filingNeedsResummary, type FilingConfidence } from '../shared/filing.js';
@@ -733,7 +734,12 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     const attendees = p.attendees !== undefined ? assertAttendeesList(p.attendees) : [];
     const clientName =
       typeof p.clientId === 'string' ? (ctx.state.listClients().find((c) => c.id === p.clientId)?.name ?? null) : null;
-    const candidates = ctx.state.listMeetingTypes().map((m) => ({ id: m.id, name: m.name, prompt: m.prompt }));
+    const candidates = offeredMeetingTypes(ctx.state.listMeetingTypes()).map((m) => ({
+      id: m.id,
+      name: m.name,
+      prompt: m.prompt,
+      description: m.description,
+    }));
 
     meetingTypeSuggestionRuns.get(evt.sender.id)?.abort();
     const controller = new AbortController();
@@ -901,30 +907,56 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   });
 
   // Suggested meeting types (resources/prompts/suggested-meeting-types.md):
-  // shown in Settings → Prompts, added only when the user accepts one.
-  const listPendingSuggestions = () =>
-    pendingSuggestions(
+  // shown in Settings → Prompts, applied only when the user accepts one.
+  const listSuggestionViews = () =>
+    suggestionViews(
       readPromptSuggestions(ctx.resourcesDir),
       ctx.state.listMeetingTypes(),
       parseDismissed(ctx.state.getAppState(DISMISSED_KEY)),
     );
 
-  ipcMain.handle(Channels.PromptSuggestionsList, () => listPendingSuggestions());
+  ipcMain.handle(Channels.PromptSuggestionsList, () => listSuggestionViews());
 
-  ipcMain.handle(Channels.PromptSuggestionsAccept, (_evt, id) => {
-    if (typeof id !== 'string') throw new Error('id must be a string');
-    const suggestion = listPendingSuggestions().find((s) => s.id === id);
+  // Accept a new suggestion, or apply an update to one already added: the
+  // shipped name, description and prompt replace the current ones.
+  ipcMain.handle(Channels.PromptSuggestionsAccept, (_evt, key) => {
+    if (typeof key !== 'string') throw new Error('key must be a string');
+    const suggestion = listSuggestionViews().find((s) => s.key === key);
     if (!suggestion) throw new Error('That suggestion is no longer available.');
-    const maxOrder = Math.max(0, ...ctx.state.listMeetingTypes().map((m) => m.sort_order));
+    const types = ctx.state.listMeetingTypes();
+    const clash = types.find((m) => m.id !== suggestion.id && m.name.toLowerCase() === suggestion.name.toLowerCase());
+    if (clash) throw new Error(`Another meeting type is already called "${clash.name}". Rename it first.`);
+    const existing = types.find((m) => m.id === suggestion.id);
     ctx.state.upsertMeetingType({
       id: suggestion.id,
       name: suggestion.name,
       prompt: suggestion.prompt,
-      is_builtin: 0,
-      sort_order: maxOrder + 1,
-      original_prompt_hash: null,
+      is_builtin: existing?.is_builtin ?? 0,
+      sort_order: existing?.sort_order ?? Math.max(0, ...types.map((m) => m.sort_order)) + 1,
+      original_prompt_hash: existing?.original_prompt_hash ?? null,
     });
-    ctx.logger.info({ meetingTypeId: id }, 'suggested meeting type accepted');
+    ctx.state.updateMeetingTypeMeta(suggestion.id, { description: suggestion.useFor });
+    ctx.logger.info({ meetingTypeId: suggestion.id, kind: suggestion.kind }, 'suggested meeting type applied');
+    return toMeetingTypeDTO(ctx.state.getMeetingType(suggestion.id)!);
+  });
+
+  ipcMain.handle(Channels.MeetingTypesUpdateMeta, (_evt, id, patch) => {
+    if (typeof id !== 'string' || !patch || typeof patch !== 'object') throw new Error('id and patch are required');
+    const p = patch as { description?: unknown; retired?: unknown };
+    if (p.description !== undefined && p.description !== null && typeof p.description !== 'string') {
+      throw new Error('description must be a string');
+    }
+    if (p.retired !== undefined && typeof p.retired !== 'boolean') throw new Error('retired must be a boolean');
+    if (typeof p.description === 'string' && p.description.length > 600) {
+      throw new Error('Keep the description under 600 characters; the classifiers read it for every recording.');
+    }
+    if (p.retired === true && offeredMeetingTypes(ctx.state.listMeetingTypes()).filter((m) => m.id !== id).length === 0) {
+      throw new Error('At least one meeting type has to stay in use.');
+    }
+    if (!ctx.state.updateMeetingTypeMeta(id, { description: p.description as string | null | undefined, retired: p.retired as boolean | undefined })) {
+      throw new Error('That meeting type no longer exists.');
+    }
+    ctx.logger.info({ meetingTypeId: id, retired: p.retired, description: p.description !== undefined }, 'meeting type details saved');
     return toMeetingTypeDTO(ctx.state.getMeetingType(id)!);
   });
 
@@ -1826,6 +1858,8 @@ function toMeetingTypeDTO(r: MeetingTypeRow) {
     sort_order: r.sort_order,
     updated_at: r.updated_at,
     is_modified,
+    description: r.description ?? '',
+    retired: r.retired === 1,
   };
 }
 

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { offeredMeetingTypes } from '../shared/meetingTypeLine.js';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -399,7 +400,11 @@ async function classifyForFiling(
   signal: AbortSignal,
   ctx: PipelineContext,
 ): Promise<string | null> {
-  const types = ctx.state.listMeetingTypes();
+  // Retired types are kept for past recordings but never auto-chosen;
+  // if everything is retired, fall back rather than fail.
+  const allTypes = ctx.state.listMeetingTypes();
+  const offered = offeredMeetingTypes(allTypes);
+  const types = offered.length > 0 ? offered : allTypes;
   if (types.length === 0) return null;
   const clients = ctx.state
     .listClients()

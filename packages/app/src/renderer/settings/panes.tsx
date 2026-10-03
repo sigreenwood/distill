@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   GeneralDTO,
   MeetingTypeDTO,
-  PromptSuggestion,
+  SuggestionView,
   ModelSuggestionDTO,
   OutputsDTO,
   PerformanceDTO,
@@ -241,8 +241,10 @@ export function PromptsPane(props: {
   const [createSaving, setCreateSaving] = useState(false);
   // Suggested meeting types (resources/prompts/suggested-meeting-types.md):
   // previewed read-only, added only on "Add meeting type".
-  const [suggestions, setSuggestions] = useState<PromptSuggestion[]>([]);
-  const [previewing, setPreviewing] = useState<PromptSuggestion | null>(null);
+  const [suggestions, setSuggestions] = useState<SuggestionView[]>([]);
+  const [previewing, setPreviewing] = useState<SuggestionView | null>(null);
+  // "When to use" for the selected type: what automatic matching reads.
+  const [descDraft, setDescDraft] = useState<string>(props.initial[0]?.description ?? '');
   const [suggestionBusy, setSuggestionBusy] = useState(false);
 
   useEffect(() => {
@@ -256,14 +258,17 @@ export function PromptsPane(props: {
     if (!previewing) return;
     setSuggestionBusy(true);
     try {
-      const created = await window.distill.promptSuggestions.accept(previewing.id);
-      const next = [...prompts, created];
+      const created = await window.distill.promptSuggestions.accept(previewing.key);
+      const next = prompts.some((p) => p.id === created.id)
+        ? prompts.map((p) => (p.id === created.id ? created : p))
+        : [...prompts, created];
       setPrompts(next);
       props.onChanged(next);
       setSuggestions((prev) => prev.filter((x) => x.id !== previewing.id));
       setPreviewing(null);
       setSelectedId(created.id);
       setDraft(created.prompt);
+      setDescDraft(created.description);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -275,8 +280,8 @@ export function PromptsPane(props: {
     if (!previewing) return;
     setSuggestionBusy(true);
     try {
-      await window.distill.promptSuggestions.dismiss(previewing.id);
-      setSuggestions((prev) => prev.filter((x) => x.id !== previewing.id));
+      await window.distill.promptSuggestions.dismiss(previewing.key);
+      setSuggestions((prev) => prev.filter((x) => x.key !== previewing.key));
       setPreviewing(null);
     } finally {
       setSuggestionBusy(false);
@@ -291,6 +296,7 @@ export function PromptsPane(props: {
       if (!p) return;
       setSelectedId(id);
       setDraft(p.prompt);
+      setDescDraft(p.description);
       setError(null);
       setSavedAt(null);
       setCreating(null);
@@ -347,7 +353,9 @@ export function PromptsPane(props: {
     [prompts, props, selectedId],
   );
 
-  const isDirty = selected ? draft !== selected.prompt : false;
+  const promptDirty = selected ? draft !== selected.prompt : false;
+  const descDirty = selected ? descDraft.trim() !== selected.description.trim() : false;
+  const isDirty = promptDirty || descDirty;
 
   const onSave = useCallback(async () => {
     if (!selected) return;
@@ -359,15 +367,34 @@ export function PromptsPane(props: {
     setError(null);
     setSaving(true);
     try {
-      const updated = await window.distill.settings.savePrompt({ id: selected.id, prompt: draft });
+      let updated = selected;
+      if (promptDirty) updated = await window.distill.settings.savePrompt({ id: selected.id, prompt: draft });
+      if (descDirty) updated = await window.distill.meetingTypes.updateMeta(selected.id, { description: descDraft });
       applyUpdatedPrompt(updated);
+      setDescDraft(updated.description);
       setSavedAt(Date.now());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
-  }, [selected, draft, applyUpdatedPrompt]);
+  }, [selected, draft, descDraft, promptDirty, descDirty, applyUpdatedPrompt]);
+
+  // Retired types stay for past recordings but are no longer offered in
+  // the pickers or chosen by automatic matching.
+  const onToggleRetired = useCallback(async () => {
+    if (!selected) return;
+    setError(null);
+    setSaving(true);
+    try {
+      const updated = await window.distill.meetingTypes.updateMeta(selected.id, { retired: !selected.retired });
+      applyUpdatedPrompt(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [selected, applyUpdatedPrompt]);
 
   const onRevert = useCallback(async () => {
     if (!selected || !selected.is_builtin) return;
@@ -462,10 +489,11 @@ export function PromptsPane(props: {
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</span>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', opacity: p.retired ? 0.55 : 1 }}>{p.name}</span>
                 {p.is_modified && <ModifiedBadge />}
               </div>
               <div className="muted" style={sidebarMetaStyle}>
+                {p.retired ? 'Retired · ' : ''}
                 {p.is_builtin ? 'Built-in' : 'User'} · {formatRelative(p.updated_at)}
               </div>
             </button>
@@ -506,7 +534,7 @@ export function PromptsPane(props: {
                 >
                   <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{sug.name}</div>
                   <div className="muted" style={sidebarMetaStyle}>
-                    Suggestion
+                    {sug.kind === 'update' ? 'Update available' : 'Suggestion'}
                   </div>
                 </button>
               ))}
@@ -518,8 +546,16 @@ export function PromptsPane(props: {
             <>
               <div style={editorHeaderStyle}>
                 <div style={{ fontSize: 13, fontWeight: 500 }}>{previewing.name}</div>
-                <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>suggested meeting type</span>
+                <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+                  {previewing.kind === 'update' ? 'update to a type you already have' : 'suggested meeting type'}
+                </span>
               </div>
+              {previewing.kind === 'update' && (
+                <div style={{ fontSize: 12, marginBottom: 8 }}>
+                  Applying this replaces the name, description and prompt of your “{previewing.currentName}”, including
+                  any edits you made to it. Its past summaries are unchanged.
+                </div>
+              )}
               <div style={{ fontSize: 12, marginBottom: 8 }}>
                 <strong>Use for:</strong> {previewing.useFor}
               </div>
@@ -581,7 +617,22 @@ export function PromptsPane(props: {
                 {selected.is_modified && (
                   <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>modified from default</span>
                 )}
+                {selected.retired && <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>retired</span>}
               </div>
+              <label style={fieldLabelStyle}>When to use</label>
+              <textarea
+                value={descDraft}
+                onChange={(e) => {
+                  setDescDraft(e.target.value);
+                  setSavedAt(null);
+                }}
+                style={{ ...textareaStyle, minHeight: 54, flex: 'none', marginBottom: 6 }}
+                placeholder="e.g. Weekly calls with the customer present about progress and commitments (HSBC / Teradata catch-up, AIB weekly sync)"
+              />
+              <div className="muted" style={{ ...hintStyle, marginTop: 0, marginBottom: 10 }}>
+                Automatic matching reads this instead of the prompt. Typical meeting titles help.
+              </div>
+              <label style={fieldLabelStyle}>Prompt</label>
               <textarea
                 value={draft}
                 onChange={(e) => {
@@ -626,7 +677,7 @@ export function PromptsPane(props: {
                 Dismiss
               </button>
               <button className="primary" onClick={() => void onAcceptSuggestion()} disabled={suggestionBusy}>
-                {suggestionBusy ? 'Adding…' : 'Add meeting type'}
+                {suggestionBusy ? 'Applying…' : previewing.kind === 'update' ? 'Apply update' : 'Add meeting type'}
               </button>
             </>
           ) : creating ? (
@@ -659,6 +710,19 @@ export function PromptsPane(props: {
                   title="Reset this prompt to the version shipped in PROMPTS.md"
                 >
                   Revert to default
+                </button>
+              )}
+              {selected && (
+                <button
+                  onClick={() => void onToggleRetired()}
+                  disabled={saving || importing}
+                  title={
+                    selected.retired
+                      ? 'Offer this type again in the pickers and automatic matching'
+                      : 'Stop offering this type; past recordings keep it'
+                  }
+                >
+                  {selected.retired ? 'Restore' : 'Retire'}
                 </button>
               )}
               {selected && !selected.is_builtin && (

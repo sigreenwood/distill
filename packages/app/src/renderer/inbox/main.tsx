@@ -1082,7 +1082,7 @@ function FilingRow(props: {
           ))}
         </select>
         <select value={typeId} onChange={(e) => setTypeId(e.target.value)} aria-label="Meeting type">
-          {props.types.map((t) => (
+          {props.types.filter((t) => !t.retired || t.id === typeId).map((t) => (
             <option key={t.id} value={t.id}>
               {t.name}
             </option>
