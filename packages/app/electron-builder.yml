@@ -160,10 +160,17 @@ mac:
     - target: pkg
       arch: arm64
 
-  # Unsigned. Colleagues will need to right-click-Open the first time,
-  # or run `xattr -cr /Applications/distill.app` to clear the quarantine.
-  # If/when this goes wider we'll re-revisit Apple Developer ID.
-  identity: null
+  # Ad-hoc signed ("-"): no Apple Developer ID, so colleagues still need to
+  # right-click-Open the first time, or run
+  # `xattr -cr /Applications/distill.app` to clear the quarantine. Not
+  # `null` (unsigned): since Electron 42 macOS notifications go through
+  # UNNotification, which refuses apps whose bundle is not signed
+  # ("Notifications are not allowed for this application"). A test bundle
+  # signed this way showed its notification; the unsigned one failed.
+  identity: '-'
+  # Hardened runtime only matters for notarisation, which ad-hoc signing
+  # cannot get; left on, it adds library validation for the native modules.
+  hardenedRuntime: false
 
   # category for the installer UI
   category: public.app-category.productivity

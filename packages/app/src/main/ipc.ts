@@ -766,8 +766,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   // invite's attendee list. Only addresses count: plain names parsed
   // from arbitrary copied text would be noise. The raw clipboard text
   // never leaves the main process.
-  ipcMain.handle(Channels.TagClipboardAttendees, () => {
-    return parseAttendeesText(clipboard.readText()).filter((a) => a.email !== null);
+  ipcMain.handle(Channels.TagClipboardAttendees, async () => {
+    return parseAttendeesText(await clipboard.readText()).filter((a) => a.email !== null);
   });
 
   ipcMain.handle(Channels.TagOpenSheet, (_evt, recordingId) => {
