@@ -68,7 +68,7 @@ const api = {
   },
   calendar: {
     coverage: () => ipcRenderer.invoke(Channels.CalendarCoverage),
-    importPdfs: () => ipcRenderer.invoke(Channels.CalendarImportPdfs),
+    importPdfs: (paths?: string[]) => ipcRenderer.invoke(Channels.CalendarImportPdfs, paths),
   },
   pipeline: {
     cancel: (recordingId: string) => ipcRenderer.invoke(Channels.PipelineCancel, recordingId),

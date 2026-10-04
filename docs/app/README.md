@@ -59,6 +59,20 @@ Negotiated with the contributor before specs were written:
 
 Earlier spec drafts flagged a compliance question about routing client transcripts through Anthropic's API. Moving to local Ollama removes that concern entirely — no client content leaves the Mac at any point in the pipeline.
 
+## Inbox imports and urgency
+
+Drop Outlook calendar printouts (Print → detailed agenda → Save as PDF)
+onto the inbox, or use **Import calendar PDFs…**. Multiple PDFs are read
+as one batch; mixed drops also import audio, video and transcripts through
+their usual flow. Calendar coverage, results and warnings appear above
+search, including when the inbox is empty. Reading happens locally.
+
+**Mark urgent** moves a queued recording ahead of non-urgent recordings,
+after the current recording finishes. Recordings within each priority run
+oldest sync first. Urgency also bypasses idle/overnight scheduling, but
+does not override paused processing steps. **Unmark urgent** restores its
+ordinary queue position.
+
 ## Local meeting search
 
 The inbox includes a **Search your meetings** box. Ask a question such as “A call with HSBC that talked about DR”, then choose **Search summaries**. After results arrive, **Search available transcripts** runs the same question against transcript text only. There is no automatic transcript fallback, download, or transcription.

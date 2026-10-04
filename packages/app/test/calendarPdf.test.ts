@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { localTimeToMs, meetingId, toMeetings, type PrintedEvent } from '../src/main/calendar/pdfImport.js';
+import { localTimeToMs, meetingId, toMeetings, validateCalendarPdfPaths, type PrintedEvent } from '../src/main/calendar/pdfImport.js';
 import { attendeesFromMatch, chooseCandidate, matchRecording, MAX_INVITE_ATTENDEES } from '../src/main/calendar/match.js';
 import { accountFor, accountForMatch, clientKeywords } from '../src/main/calendar/account.js';
 import { buildFilingMessages, describeCalendarCandidates, parseFilingSuggestion } from '../src/main/filingSuggestion.js';
@@ -13,6 +13,26 @@ const at = (hhmm: string, date = '2026-08-03') => localTimeToMs(date, hhmm);
 const meeting = (m: Partial<CalendarMeeting>): CalendarMeeting => ({
   id: m.subject ?? 'm', subject: 'Sync', startMs: at('09:00'), endMs: at('09:30'), location: null,
   organiser: 'Tom Carroll', required: [{ name: 'Sam Lee', email: 'sam@hsbc.com' }], optional: [], body: null, ...m,
+});
+
+describe('validateCalendarPdfPaths', () => {
+  it('accepts PDF extensions regardless of case, and removes repeated normalized paths', () => {
+    expect(validateCalendarPdfPaths([
+      '/Users/sam/Calendar.PDF',
+      '/Users/sam/./Calendar.PDF',
+      '/Users/sam/Next month.pdf',
+    ])).toEqual(['/Users/sam/Calendar.PDF', '/Users/sam/Next month.pdf']);
+  });
+
+  it.each([undefined, null, [], '/Users/sam/Calendar.pdf', {}, [42], [''], ['Calendar.pdf'], ['file:///Calendar.pdf'], ['/tmp/Calendar.mp3'], ['/tmp/Calendar.pdf\0']])(
+    'rejects invalid input %j', (value) => {
+      expect(() => validateCalendarPdfPaths(value)).toThrow();
+    },
+  );
+
+  it('rejects the whole batch when one path is not a PDF', () => {
+    expect(() => validateCalendarPdfPaths(['/tmp/Calendar.pdf', '/tmp/audio.m4a'])).toThrow('PDF files');
+  });
 });
 
 describe('toMeetings', () => {

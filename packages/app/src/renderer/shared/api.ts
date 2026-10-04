@@ -66,7 +66,7 @@ export interface InboxItemDTO {
   contextWindowAtSubmit: number | null;
   modelSnapshot: string | null;
   processedExternally: boolean;
-  /** Jumps an idle/overnight processing schedule; see shared/processingSchedule.ts. */
+  /** Prioritises queued work and bypasses an idle/overnight processing schedule. */
   urgent: boolean;
   clientId: string | null;
   /** For a 'to_file' row, the meeting type the classifier picked and the summary was written with. */
@@ -350,14 +350,14 @@ export interface DistillApi {
   };
   calendar: {
     coverage(): Promise<CalendarCoverage>;
-    /** Opens a picker for calendar PDFs; null when cancelled. */
-    importPdfs(): Promise<CalendarImportResult | null>;
+    /** Imports PDF paths, or opens a picker when omitted; null when cancelled. */
+    importPdfs(paths?: string[]): Promise<CalendarImportResult | null>;
   };
   pipeline: {
     cancel(recordingId: string): Promise<void>;
     retry(recordingId: string): Promise<void>;
     fullRerun(recordingId: string): Promise<{ started: boolean }>;
-    /** Jump an idle/overnight processing schedule for this one recording. */
+    /** Prioritise the next claim and bypass idle/overnight scheduling for this recording. */
     setUrgent(recordingId: string, urgent: boolean): Promise<void>;
   };
   history: {

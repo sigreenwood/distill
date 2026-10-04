@@ -72,7 +72,7 @@ export interface RecordingRow {
    * and doTranscribe/doSummarise in pipelineSteps.ts for how it's used.
    */
   attendees_json: string | null;
-  /** Jumps an idle/overnight processing schedule; see migration 15. */
+  /** Prioritises the next claim and bypasses an idle/overnight processing schedule. */
   urgent: number;
   /** Queued by "Queue all": classify before summarising, hold at 'to_file' before writing. Migration 16. */
   needs_filing: number;
@@ -925,6 +925,10 @@ export class State {
    * at `tagged`. Pass the full set of four steps (or omit the
    * argument) for unrestricted claiming.
    *
+   * Urgent recordings are claimed first, oldest sync first within each
+   * priority. The current recording is allowed to finish before claiming
+   * another; setting urgency never interrupts its in-flight work.
+   *
    * Returns the row as it looked before the status change, or undefined
    * if nothing is ready (or nothing's next-step is allowed).
    *
@@ -943,7 +947,7 @@ export class State {
         .prepare(
           `SELECT * FROM recordings
            WHERE status = 'tagged'
-           ORDER BY synced_at ASC`,
+           ORDER BY urgent DESC, synced_at ASC, id ASC`,
         )
         .all() as RecordingRow[];
       for (const row of rows) {

@@ -1296,6 +1296,41 @@ changes):
 - Queue all's confirmation text no longer claims nothing is written
   until you confirm, which stopped being true with automatic filing.
 
+## Inbox PDF drops and urgent batch ordering — 2026-10-04
+
+- Drop one or more calendar PDFs anywhere in the inbox. PDFs (including
+  uppercase `.PDF`) go to the existing calendar importer as a batch;
+  audio, video and transcript files in the same drop retain their import
+  queue. The picker remains available without a waiting-to-tag row.
+- Calendar coverage and import feedback now appear above search in all
+  inbox states. Further drops queue behind an active calendar import.
+  Errors and warnings remain visible across queued batches, including
+  when a later batch succeeds. Unresolved file-path errors survive media
+  progress updates instead of being lost from the queue's backing ref.
+- `calendar.importPdfs(paths?)` validates absolute PDF paths and dedupes
+  before calling the existing parser/matching flow; omitting paths still
+  opens the picker. No parser, storage or matching changes.
+- Fixed urgency during batches: `claimNextTagged` previously sorted only
+  by `synced_at`, so urgency bypassed scheduling but never moved a row
+  ahead of normal work. Claims now sort urgent first, then oldest sync
+  (ID breaks ties). The processing list shows the active recording first,
+  then the same queue order. Tag-sheet help and button tooltip explain
+  that the current recording finishes before urgent work starts, and
+  paused steps still apply.
+
+Verification: both typechecks, production build and all 321 app tests
+pass (35 files). The Ollama transport tests need localhost access, so the
+full suite was rerun outside the restricted sandbox. Queue regression
+tests execute the actual claim SQL using Node 26's in-memory SQLite with
+a small transaction adapter, avoiding the Electron `better-sqlite3` ABI.
+They cover urgency during a batch, FIFO, unmarking, pauses and scheduling.
+An isolated Electron renderer with fake APIs passed eight UI scenarios:
+empty inbox, PDF-only/mixed drops, queued imports, retained failure and
+warning feedback, unresolved paths during media progress, picker fallback,
+and marking/unmarking urgency with visible queue reordering. Screenshots
+checked at 480px width. Native Finder drops and a live processing batch
+were not exercised; no package was installed or release published.
+
 ## Next step
 
 Later ideas, not implemented or fully specified: diagnostics and

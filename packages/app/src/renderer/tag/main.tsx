@@ -675,8 +675,8 @@ function Tag() {
         Urgent — process as soon as possible
       </label>
       <div className="muted" style={{ fontSize: 10, marginTop: -8 }}>
-        Only matters if Settings → General has processing limited to idle time or an overnight window;
-        otherwise everything already starts right away.
+        Runs ahead of non-urgent queued recordings after the current recording finishes.
+        Also bypasses idle/overnight scheduling; paused steps stay paused.
       </div>
       {saveError && (
         <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: -6 }}>{saveError}</div>

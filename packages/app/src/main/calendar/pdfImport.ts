@@ -26,6 +26,21 @@ interface ScriptOutput {
   files: { path: string; events: PrintedEvent[]; pages: number; warnings: string[] }[];
 }
 
+/** Validate renderer-supplied paths before passing them to the local PDF reader. */
+export function validateCalendarPdfPaths(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error('Choose at least one calendar PDF to import.');
+  }
+  const files = new Set<string>();
+  for (const file of value) {
+    if (typeof file !== 'string' || file.includes('\0') || !path.isAbsolute(file) || path.extname(file).toLowerCase() !== '.pdf') {
+      throw new Error('Calendar imports require absolute paths to PDF files.');
+    }
+    files.add(path.normalize(file));
+  }
+  return [...files];
+}
+
 /**
  * Local wall-clock "2026-08-03" + "09:30" → epoch ms in the Mac's own time
  * zone, which is the zone Outlook printed in for the same user.

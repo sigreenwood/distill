@@ -11,6 +11,7 @@ import type { SummaryVersionDTO } from '../shared/summaryVersion.js';
 import { suggestMeetingType } from './meetingTypeSuggestion.js';
 import { accountFor, accountForMatch } from './calendar/account.js';
 import { attendeesOf, candidatesOf } from './calendar/match.js';
+import { validateCalendarPdfPaths } from './calendar/pdfImport.js';
 import {
   adoptCalendarAttendees,
   applyCalendarMatch,
@@ -569,17 +570,21 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(Channels.CalendarCoverage, () => ctx.state.calendarCoverage());
 
-  ipcMain.handle(Channels.CalendarImportPdfs, async () => {
-    const picked = await dialog.showOpenDialog({
-      title: 'Import Outlook calendar printouts',
-      message: 'Choose one or more calendar PDFs printed from Outlook (detailed agenda view).',
-      buttonLabel: 'Import',
-      properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'PDF', extensions: ['pdf'] }],
-    });
-    if (picked.canceled || picked.filePaths.length === 0) return null;
+  ipcMain.handle(Channels.CalendarImportPdfs, async (_evt, paths?: unknown) => {
+    if (paths === undefined) {
+      const picked = await dialog.showOpenDialog({
+        title: 'Import Outlook calendar printouts',
+        message: 'Choose one or more calendar PDFs printed from Outlook (detailed agenda view).',
+        buttonLabel: 'Import',
+        properties: ['openFile', 'multiSelections'],
+        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+      });
+      if (picked.canceled || picked.filePaths.length === 0) return null;
+      paths = picked.filePaths;
+    }
+    const files = validateCalendarPdfPaths(paths);
     const started = Date.now();
-    const result = await importCalendarPdfs(ctx.state, picked.filePaths, {
+    const result = await importCalendarPdfs(ctx.state, files, {
       binary: resolvePythonBinary(app.getAppPath()),
       script: bundledCalendarScript(),
     });

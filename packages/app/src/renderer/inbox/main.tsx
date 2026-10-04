@@ -1,11 +1,12 @@
 import { MeetingSearch } from './MeetingSearch.js';
+import { resolveInboxDrop } from './importFiles.js';
+import { useCalendarImport } from './useCalendarImport.js';
 import { EssenceLogo } from '../essence/EssenceLogo.js';
 import { useEssenceActivity } from '../essence/useEssenceActivity.js';
 import type { EssenceActivity } from '../essence/tokens.js';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type {
-  CalendarCoverage,
   ClientDTO,
   InboxItemDTO,
   MeetingTypeDTO,
@@ -46,6 +47,8 @@ function Inbox() {
   const importQueueRef = useRef<ImportQueueEntry[]>([]);
   const importLoopRunningRef = useRef(false);
   const [tipJar, setTipJar] = useState<TipJarStatusDTO | null>(null);
+  const calendar = useCalendarImport();
+  const importCalendarPdfs = calendar.importPdfs;
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -267,28 +270,27 @@ function Inbox() {
       setDragOver(false);
       const files = Array.from(e.dataTransfer.files);
       if (files.length === 0) return;
-      const paths: string[] = [];
-      const failed: string[] = [];
-      for (const f of files) {
-        const p = window.distill.localImport.getPathForFile(f);
-        if (p) paths.push(p);
-        else failed.push(f.name);
-      }
-      if (failed.length > 0) {
-        setImportQueue((prev) => [
-          ...prev,
+      const { calendarPaths, recordingPaths, unresolvedNames } = resolveInboxDrop(
+        files,
+        window.distill.localImport.getPathForFile,
+      );
+      if (unresolvedNames.length > 0) {
+        importQueueRef.current = [
+          ...importQueueRef.current,
           {
-            sourcePath: `(drop) ${failed.join(', ')}`,
+            sourcePath: `(drop) ${unresolvedNames.join(', ')}`,
             status: 'error',
             phase: null,
             percent: null,
-            error: `Could not resolve ${failed.length} file(s) to a path. This usually means they came from a sandboxed source. Try the + button instead.`,
+            error: `Could not resolve ${unresolvedNames.length} file(s) to a path. Try Import calendar PDFs… for calendar printouts, or the + button for recordings and transcripts.`,
           },
-        ]);
+        ];
+        setImportQueue(importQueueRef.current);
       }
-      enqueueImports(paths);
+      if (calendarPaths.length > 0) void importCalendarPdfs(calendarPaths);
+      enqueueImports(recordingPaths);
     },
-    [enqueueImports],
+    [enqueueImports, importCalendarPdfs],
   );
 
   useEffect(() => {
@@ -320,6 +322,7 @@ function Inbox() {
     onOpenTipJar,
     activity,
     completionKey,
+    calendar,
   };
 
   if (state.kind === 'loading') {
@@ -367,7 +370,7 @@ function Inbox() {
           <br />
           New recordings will show up as Plaud syncs.
           <br />
-          <span style={{ fontStyle: 'italic' }}>Or drop an mp3/mp4 here to import.</span>
+          <span style={{ fontStyle: 'italic' }}>Drop audio, video, transcripts or calendar PDFs here to import.</span>
         </div>
       </Shell>
     );
@@ -411,7 +414,6 @@ function Inbox() {
       )}
       {sections.waiting.length > 0 && (
         <Section title="Waiting to tag" count={sections.waiting.length}>
-          <CalendarBar />
           <QueueAllBar count={sections.waiting.length} />
           {sections.waiting.map((r) => (
             <WaitingRow key={r.id} r={r} focused={focusedId === r.id} onTag={onTag} onSkip={onSkip} />
@@ -619,6 +621,13 @@ function bucket(state: InboxState): Buckets {
         break;
     }
   }
+  // Keep the running recording above the queue, then mirror claim priority.
+  out.processing.sort((a, b) =>
+    Number(a.status === 'tagged') - Number(b.status === 'tagged') ||
+    Number(b.urgent) - Number(a.urgent) ||
+    a.synced_at - b.synced_at ||
+    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
   return out;
 }
 
@@ -638,6 +647,7 @@ interface ShellProps {
   onOpenTipJar: () => void;
   activity: EssenceActivity;
   completionKey: string;
+  calendar: ReturnType<typeof useCalendarImport>;
   children: React.ReactNode;
 }
 
@@ -710,6 +720,7 @@ function Shell(props: ShellProps) {
       <main
         style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
+        <CalendarBar {...props.calendar} />
         <MeetingSearch />
         {props.children}
       </main>
@@ -745,6 +756,8 @@ function Shell(props: ShellProps) {
               Video: mp4 mov m4v mkv webm (needs ffmpeg)
               <br />
               Transcript: md txt — re-summarises without re-transcribing
+              <br />
+              Calendar: pdf — Outlook detailed agenda printouts
             </div>
           </div>
         </div>
@@ -852,7 +865,7 @@ function ProcessingRow(props: {
         {queued && (
           <button
             onClick={() => props.onToggleUrgent(r.id, !r.urgent)}
-            title="Jump an idle/overnight processing schedule — see Settings → General"
+            title="Run ahead of non-urgent queued recordings after the current recording finishes. Also bypasses the idle/overnight schedule; paused steps stay paused."
           >
             {r.urgent ? 'Unmark urgent' : 'Mark urgent'}
           </button>
@@ -923,51 +936,27 @@ function formatDay(ms: number | null): string {
  * which then suggests the account, attendees and meeting type. Read
  * locally by python/calendar_pdf.py; nothing is sent anywhere.
  */
-function CalendarBar() {
-  const [coverage, setCoverage] = useState<CalendarCoverage | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const load = useCallback(() => {
-    void window.distill.calendar.coverage().then(setCoverage).catch(() => setCoverage(null));
-  }, []);
-  useEffect(load, [load]);
-
-  const onImport = async () => {
-    setBusy(true);
-    setMessage(null);
-    try {
-      const result = await window.distill.calendar.importPdfs();
-      if (!result) return;
-      const warnings = result.files.flatMap((f) => f.warnings.map((w) => `${f.name}: ${w}`));
-      setMessage(
-        `Read ${result.meetings.toLocaleString()} meetings from ${result.files.length} file${result.files.length === 1 ? '' : 's'}. ` +
-          `${result.matched} recording${result.matched === 1 ? '' : 's'} matched to a meeting, ${result.accountsSuggested} with an account.` +
-          (warnings.length > 0 ? ` ⚠ ${warnings.slice(0, 3).join(' · ')}` : ''),
-      );
-      load();
-    } catch (e) {
-      setMessage(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
+function CalendarBar({ coverage, pending, messages, importPdfs }: ReturnType<typeof useCalendarImport>) {
   return (
-    <li style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', fontSize: 11 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <button onClick={() => void onImport()} disabled={busy}>
+    <section aria-label="Calendar import" style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', fontSize: 11 }}>
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <button onClick={() => void importPdfs()} disabled={pending > 0}>
           Import calendar PDFs…
         </button>
-        <span className="muted">
-          {busy
-            ? 'Reading the printouts… (about 10 seconds for three months)'
+        <span className="muted" role="status">
+          {pending > 0
+            ? `Reading calendar printouts…${pending > 1 ? ` (${pending - 1} more import${pending === 2 ? '' : 's'} queued)` : ''}`
             : coverage && coverage.meetings > 0
               ? `Calendar: ${coverage.meetings.toLocaleString()} meetings, ${formatDay(coverage.firstMs)} – ${formatDay(coverage.lastMs)}`
-              : 'Outlook → Print → detailed agenda, saved as PDF. Suggests accounts and attendees.'}
+              : 'Drop PDFs here, or choose files. Outlook → Print → detailed agenda → Save as PDF.'}
         </span>
       </div>
-      {message && <div style={{ marginTop: 6 }}>{message}</div>}
-    </li>
+      <div role="status">
+        {messages.map((message, index) => (
+          <div key={index} style={{ marginTop: 6, overflowWrap: 'anywhere' }}>{message}</div>
+        ))}
+      </div>
+    </section>
   );
 }
 
