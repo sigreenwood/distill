@@ -1,3 +1,4 @@
+import { meetingTypesForOrganisation } from '../../shared/meetingTypeLine.js';
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { MeetingDetail } from '../../shared/meeting.js';
 import type { SearchScope } from '../../shared/search.js';
@@ -126,6 +127,7 @@ export function MeetingReader({ recordingId, initialScope = 'summary' }: { recor
         <VersionsPanel
           recordingId={meeting.id}
           currentMeetingTypeId={meeting.meetingTypeId}
+          clientId={meeting.clientId}
           onActivated={() => {
             setNotice('Kept this version. Outputs will be re-written from it.');
             setRevision(value => value + 1);
@@ -304,6 +306,7 @@ function RegisterQuickAdd(props: {
 function VersionsPanel(props: {
   recordingId: string;
   currentMeetingTypeId: string | null;
+  clientId: string | null;
   onActivated: () => void;
   onError: (message: string) => void;
 }) {
@@ -323,7 +326,16 @@ function VersionsPanel(props: {
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    void window.distill.meetingTypes.list().then(setMeetingTypes);
+    const load = () => { void Promise.all([window.distill.meetingTypes.list(), window.distill.clients.list()]).then(([types, clients]) => {
+      const allowed = meetingTypesForOrganisation(types, clients.find(c => c.id === props.clientId));
+      setMeetingTypes(allowed);
+      setMeetingTypeId(current => allowed.some(t => t.id === current) ? current : allowed[0]?.id ?? '');
+    }).catch(e => props.onError(String(e))); };
+    load();
+    return window.distill.onInboxChanged(load);
+  }, [props.clientId]);
+
+  useEffect(() => {
     void window.distill.settings.listOllamaModels().then(result => {
       if (result.ok) {
         setModels(result.models);
@@ -368,6 +380,7 @@ function VersionsPanel(props: {
     <div className="reader-versions">
       <div className="reader-register-form">
         <select value={meetingTypeId} disabled={busy} onChange={e => setMeetingTypeId(e.target.value)}>
+          {meetingTypes.length === 0 && <option value="">No allowed prompts — Settings → Clients</option>}
           {meetingTypes.map(mt => <option key={mt.id} value={mt.id}>{mt.name}</option>)}
         </select>
         <select value={model} disabled={busy || models.length === 0} onChange={e => setModel(e.target.value)}>

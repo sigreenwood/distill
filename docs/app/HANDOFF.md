@@ -1385,13 +1385,37 @@ organisation allowed meeting types: `clients.meeting_type_ids_json`,
 `organisationPrompts*.test.ts`). They were stashed as
 `stash@{0}` "WIP found 2026-10-06: per-organisation allowed meeting
 types". They were kept out of this commit and the 0.0.32 package, and
-restored to the working tree afterwards. That feature is unfinished and
-untested here.
+restored to the working tree afterwards. It was then reviewed, tested
+(15 tests of its own, 363 in all) and committed in 0.0.33 (below).
 
 **Verification:** 348 tests (excluding the two WIP tests), both
 typechecks and the build. **Not exercised:** a real Keychain prompt,
 Setup running alongside polling, waking from sleep, and resizing or
 scrolling the windows.
+
+## Allowed meeting types per organisation — committed 2026-10-06 (0.0.33)
+
+This work was written in an earlier session, found uncommitted, and
+committed at the user's request.
+- **Storage:** migration 21 adds `clients.meeting_type_ids_json`. NULL
+  means every active type; an empty list deliberately offers none.
+- **Editing:** Settings → Clients edits the list
+  (`ClientsSetMeetingTypes`, which refuses ids that no longer exist).
+- **Where it applies:** the tag sheet, Ready to file, the reader's
+  alternative summaries, the tag-sheet type suggestion and the filing
+  classifier, which is told each client's allowed types. `TagSave` and
+  `InboxFile` refuse a type outside the list.
+- **Defaults:** `defaultMeetingTypeIds` makes a newly added "LADFFA"
+  client default to `club-agm` and `club-committee`. Migration 21 sets
+  the same for an existing LADFFA client. That is a one-time data write
+  in a migration, made at the user's request and editable afterwards in
+  Settings → Clients.
+- **Caveat:** if the Club types have not been added from the
+  suggestions yet, LADFFA is offered no types until they are.
+
+Verification: `organisationPrompts.test.ts` and
+`organisationPromptsIpc.test.ts` (15 tests), the full suite (363), both
+typechecks and the build. Not exercised in the running app.
 
 ## Next step
 

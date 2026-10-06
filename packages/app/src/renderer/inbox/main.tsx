@@ -1,3 +1,4 @@
+import { meetingTypesForOrganisation } from '../../shared/meetingTypeLine.js';
 import { MeetingSearch } from './MeetingSearch.js';
 import { resolveInboxDrop } from './importFiles.js';
 import { useCalendarImport } from './useCalendarImport.js';
@@ -1002,12 +1003,14 @@ function FilingRows(props: {
   const [clients, setClients] = useState<ClientDTO[]>([]);
   const [types, setTypes] = useState<MeetingTypeDTO[]>([]);
   useEffect(() => {
-    void Promise.all([window.distill.clients.list(), window.distill.meetingTypes.list()])
+    const load = () => { void Promise.all([window.distill.clients.list(), window.distill.meetingTypes.list()])
       .then(([c, t]) => {
         setClients(c);
         setTypes(t);
       })
-      .catch((e) => alert(`Could not load clients and meeting types: ${String(e)}`));
+      .catch((e) => alert(`Could not load clients and meeting types: ${String(e)}`)); };
+    load();
+    return window.distill.onInboxChanged(load);
   }, []);
   return (
     <>
@@ -1036,6 +1039,10 @@ function FilingRow(props: {
   const [clientId, setClientId] = useState(r.suggestedClientId ?? r.calendarClientId ?? '');
   const [typeId, setTypeId] = useState(r.meetingTypeId ?? '');
   const [busy, setBusy] = useState(false);
+  const availableTypes = useMemo(() => meetingTypesForOrganisation(props.types, props.clients.find(c => c.id === clientId)), [props.types, props.clients, clientId]);
+  useEffect(() => {
+    setTypeId(current => availableTypes.some(t => t.id === current) ? current : availableTypes[0]?.id ?? '');
+  }, [availableTypes]);
   // A suggestion for a client deleted since classification shows as no pick.
   const clientKnown = props.clients.some((c) => c.id === clientId);
   // Re-summarised on filing when the meeting type changes, or when the
@@ -1080,7 +1087,8 @@ function FilingRow(props: {
           ))}
         </select>
         <select value={typeId} onChange={(e) => setTypeId(e.target.value)} aria-label="Meeting type">
-          {props.types.filter((t) => !t.retired || t.id === typeId).map((t) => (
+          {availableTypes.length === 0 && <option value="">No allowed prompts — Settings → Clients</option>}
+          {availableTypes.map((t) => (
             <option key={t.id} value={t.id}>
               {t.name}
             </option>
@@ -1095,7 +1103,7 @@ function FilingRow(props: {
         </div>
       )}
       <div className="row">
-        <button className="primary" disabled={busy || !clientKnown || typeId === ''} onClick={() => void onFile()}>
+        <button className="primary" disabled={busy || !clientKnown || !availableTypes.some(t => t.id === typeId)} onClick={() => void onFile()}>
           {resummarise ? 'File & re-summarise' : 'File'}
         </button>
         <button

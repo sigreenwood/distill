@@ -18,3 +18,23 @@ export function describeMeetingType(t: { name: string; prompt: string; descripti
 export function offeredMeetingTypes<T extends { retired?: number | boolean }>(types: T[]): T[] {
   return types.filter((t) => !t.retired);
 }
+
+/** null means every active prompt; an empty list deliberately offers none. */
+export function meetingTypesForOrganisation<T extends { id: string; retired?: number | boolean }>(
+  types: T[], organisation?: { meetingTypeIds?: string[] | null } | null,
+): T[] {
+  const allowed = organisation?.meetingTypeIds;
+  return offeredMeetingTypes(types).filter(t => allowed == null || allowed.includes(t.id));
+}
+
+export function parseMeetingTypeIds(json: string | null | undefined): string[] | null {
+  if (json == null) return null;
+  try {
+    const value: unknown = JSON.parse(json);
+    return Array.isArray(value) && value.every(id => typeof id === 'string') ? value : [];
+  } catch { return []; }
+}
+
+export function defaultMeetingTypeIds(name: string): string[] | null {
+  return name.trim().toLowerCase() === 'ladffa' ? ['club-agm', 'club-committee'] : null;
+}

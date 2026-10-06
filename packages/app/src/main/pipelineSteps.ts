@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { offeredMeetingTypes } from '../shared/meetingTypeLine.js';
+import { offeredMeetingTypes, meetingTypesForOrganisation, parseMeetingTypeIds } from '../shared/meetingTypeLine.js';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -298,6 +298,10 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
   // context; filing it under a different client re-summarises (InboxFile).
   const current = ctx.state.getRecording(id) ?? row;
   const contextClient = ctx.state.getClient(current.client_id ?? current.suggested_client_id ?? '');
+  const allowedIds = parseMeetingTypeIds(contextClient?.meeting_type_ids_json);
+  if (allowedIds !== null && !allowedIds.includes(meetingTypeId)) {
+    throw new Error(`The selected meeting prompt is not allowed for ${contextClient?.name ?? 'this organisation'}. Choose an allowed prompt or update Settings → Clients.`);
+  }
   const userContent = buildSummaryUserContent({
     transcript: row.transcript_text,
     attendeesJson: current.attendees_json,
@@ -394,22 +398,20 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
  * stays a suggestion until the user files it. An unparseable reply falls
  * back to the first meeting type with no client, and the Inbox says so.
  */
-async function classifyForFiling(
+export async function classifyForFiling(
   row: RecordingRow,
   transcript: string,
   signal: AbortSignal,
   ctx: PipelineContext,
 ): Promise<string | null> {
-  // Retired types are kept for past recordings but never auto-chosen;
-  // if everything is retired, fall back rather than fail.
+  // Retired types are kept for past recordings but never auto-chosen.
   const allTypes = ctx.state.listMeetingTypes();
-  const offered = offeredMeetingTypes(allTypes);
-  const types = offered.length > 0 ? offered : allTypes;
+  const types = offeredMeetingTypes(allTypes);
   if (types.length === 0) return null;
   const clients = ctx.state
     .listClients()
     .filter((c) => c.id !== 'unclassified')
-    .map((c) => ({ id: c.id, name: c.name }));
+    .map((c) => ({ id: c.id, name: c.name, meetingTypeIds: parseMeetingTypeIds(c.meeting_type_ids_json) }));
   const calendar = ensureCalendarMatch(ctx.state, row);
   const candidates = calendar ? candidatesOf(calendar) : [];
   const candidateAccounts = candidates.map((c) => {
@@ -481,6 +483,16 @@ async function classifyForFiling(
         filing_confidence: account ? 'medium' : null,
         filing_reason: account ? account.reason : 'Could not classify this recording automatically.',
       };
+  const organisation = clients.find(c => c.id === patch.suggested_client_id);
+  const eligible = meetingTypesForOrganisation(types, organisation);
+  if (eligible.length === 0) {
+    throw new Error(`No active meeting prompts are allowed for ${organisation?.name ?? 'this recording'}. Update Settings → Clients and retry.`);
+  }
+  if (!eligible.some(t => t.id === patch.meeting_type_id)) {
+    patch.meeting_type_id = eligible[0].id;
+    patch.filing_confidence = 'low';
+    patch.filing_reason = `${patch.filing_reason ?? ''} The suggested prompt was unavailable for this organisation; using ${eligible[0].name}. Please confirm the meeting type.`.trim();
+  }
   ctx.state.updateRecording(row.id, patch);
   ctx.logger.info(
     {

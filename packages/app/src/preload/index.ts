@@ -106,6 +106,7 @@ const api = {
   clients: {
     list: () => ipcRenderer.invoke(Channels.ClientsList),
     add: (payload: { name: string }) => ipcRenderer.invoke(Channels.ClientsAdd, payload),
+    setMeetingTypes: (id: string, ids: string[] | null) => ipcRenderer.invoke(Channels.ClientsSetMeetingTypes, id, ids),
     setContext: (id: string, context: string) => ipcRenderer.invoke(Channels.ClientsSetContext, id, context),
   },
   meetingTypes: {

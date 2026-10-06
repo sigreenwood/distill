@@ -100,6 +100,7 @@ export interface ClientDTO {
   sort_order: number;
   /** Account context added to every summary for this client; '' when none. */
   context: string;
+  meetingTypeIds: string[] | null;
 }
 
 export interface MeetingTypeDTO {
@@ -407,6 +408,7 @@ export interface DistillApi {
     add(payload: { name: string }): Promise<ClientDTO>;
     /** Save the client's account context ('' clears it). */
     setContext(id: string, context: string): Promise<ClientDTO>;
+    setMeetingTypes(id: string, ids: string[] | null): Promise<ClientDTO>;
   };
   meetingTypes: {
     list(): Promise<MeetingTypeDTO[]>;

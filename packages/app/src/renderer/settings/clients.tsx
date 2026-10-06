@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ClientDTO } from '../shared/api.js';
+import type { ClientDTO, MeetingTypeDTO } from '../shared/api.js';
 import { MAX_ACCOUNT_CONTEXT_CHARS } from '../../shared/summaryInput.js';
 import {
   editorStyle,
@@ -28,6 +28,7 @@ export function ClientsPane() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
+  const [promptDirty, setPromptDirty] = useState(false);
 
   useEffect(() => {
     void window.distill.clients.list().then((list) => {
@@ -41,12 +42,14 @@ export function ClientsPane() {
   }, []);
 
   const selected = useMemo(() => clients.find((c) => c.id === selectedId), [clients, selectedId]);
-  const dirty = selected !== undefined && draft !== selected.context;
+  const contextDirty = selected !== undefined && draft !== selected.context;
+  const dirty = contextDirty || promptDirty;
 
   const switchTo = useCallback(
     (id: string) => {
-      if (dirty && !confirm('Discard unsaved changes to this account context?')) return;
+      if (dirty && !confirm('Discard unsaved changes for this organisation?')) return;
       const c = clients.find((x) => x.id === id);
+      setPromptDirty(false);
       setSelectedId(id);
       setDraft(c?.context ?? '');
       setMessage(null);
@@ -60,10 +63,11 @@ export function ClientsPane() {
   const onAdd = useCallback(async () => {
     const name = newName.trim();
     if (!name) return;
-    if (dirty && !confirm('Discard unsaved changes to this account context?')) return;
+    if (dirty && !confirm('Discard unsaved changes for this organisation?')) return;
     try {
       const created = await window.distill.clients.add({ name });
       setClients((prev) => [...prev, created]);
+      setPromptDirty(false);
       setSelectedId(created.id);
       setDraft(created.context);
       setNewName('');
@@ -141,6 +145,9 @@ export function ClientsPane() {
                 priorities, so they are understood and spelled right. Never reported as said in the meeting. Keep it
                 short; prompts handle the structure.
               </div>
+              <OrganisationPrompts key={selected.id} client={selected} onDirtyChange={setPromptDirty} onSaved={saved => {
+                setClients(prev => prev.map(c => c.id === saved.id ? saved : c));
+              }} />
               <textarea
                 value={draft}
                 onChange={(e) => {
@@ -172,12 +179,65 @@ export function ClientsPane() {
           <button
             className="primary"
             onClick={() => void onSave()}
-            disabled={!dirty || saving || draft.length > MAX_ACCOUNT_CONTEXT_CHARS}
+            disabled={!contextDirty || saving || draft.length > MAX_ACCOUNT_CONTEXT_CHARS}
           >
             {saving ? 'Saving…' : 'Save context'}
           </button>
         </div>
       </footer>
     </div>
+  );
+}
+
+
+function OrganisationPrompts({ client, onSaved, onDirtyChange }: { client: ClientDTO; onSaved: (client: ClientDTO) => void; onDirtyChange: (dirty: boolean) => void }) {
+  const [types, setTypes] = useState<MeetingTypeDTO[]>([]);
+  const [ids, setIds] = useState<string[] | null>(client.meetingTypeIds);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  useEffect(() => {
+    void window.distill.meetingTypes.list().then(setTypes).catch(e => setMessage(String(e)));
+  }, []);
+  const dirty = JSON.stringify(ids) !== JSON.stringify(client.meetingTypeIds);
+  useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
+  const save = async () => {
+    setBusy(true);
+    setMessage('');
+    try {
+      const saved = await window.distill.clients.setMeetingTypes(client.id, ids);
+      onSaved(saved);
+      setMessage('Prompt choices saved.');
+    } catch (e) { setMessage(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+  const missing = (ids ?? []).filter(id => !types.some(t => t.id === id));
+  return (
+    <fieldset disabled={busy} style={{ margin: '8px 0 12px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11 }}>
+      <legend>Meeting prompts for {client.name}</legend>
+      <label style={{ display: 'block', marginBottom: 6 }}>
+        <input type="checkbox" checked={ids === null} onChange={e => {
+          setIds(e.target.checked ? null : types.filter(t => !t.retired).map(t => t.id));
+          setMessage('');
+        }} /> All active prompts
+      </label>
+      {ids !== null && (
+        <div style={{ maxHeight: 150, overflowY: 'auto' }}>
+          {types.filter(t => !t.retired || ids.includes(t.id)).map(t => (
+            <label key={t.id} style={{ display: 'block', marginBottom: 4 }}>
+              <input type="checkbox" checked={ids.includes(t.id)} onChange={e => {
+                setIds(e.target.checked ? [...ids, t.id] : ids.filter(id => id !== t.id));
+                setMessage('');
+              }} /> {t.name}{t.retired ? ' (retired)' : ''}
+            </label>
+          ))}
+          {missing.map(id => <div key={id} className="muted">{id === 'club-agm' ? 'Club · AGM' : id === 'club-committee' ? 'Club · Committee meeting' : id} — add this prompt in Settings → Prompts.</div>)}
+          {ids.length === 0 && <div role="status">No prompts selected. Meetings for this organisation cannot be processed until a prompt is enabled.</div>}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+        <button disabled={!dirty || busy} onClick={() => void save()}>{busy ? 'Saving…' : 'Save prompt choices'}</button>
+        <span role="status">{message}</span>
+      </div>
+    </fieldset>
   );
 }

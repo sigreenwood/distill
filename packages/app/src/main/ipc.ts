@@ -1,5 +1,5 @@
 import { searchMeetings, validateSearch } from './meetingSearch.js';
-import { offeredMeetingTypes } from '../shared/meetingTypeLine.js';
+import { offeredMeetingTypes, meetingTypesForOrganisation, parseMeetingTypeIds } from '../shared/meetingTypeLine.js';
 import { loadMeetingDetail } from './meetingContent.js';
 import { generateClientBrief, type BriefInputMeeting } from './clientBrief.js';
 import type { BriefCandidate } from '../shared/brief.js';
@@ -368,6 +368,10 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     const model = typeof p?.model === 'string' && p.model.trim() ? p.model.trim() : ctx.getConfig().ollama.model;
     const meetingTypeId = typeof p?.meetingTypeId === 'string' && p.meetingTypeId ? p.meetingTypeId : row.meeting_type_id;
     if (!meetingTypeId) throw new Error('Pick a meeting type to summarise with.');
+    const organisation = row.client_id ? ctx.state.getClient(row.client_id) : undefined;
+    if (!meetingTypesForOrganisation(ctx.state.listMeetingTypes(), {
+      meetingTypeIds: parseMeetingTypeIds(organisation?.meeting_type_ids_json),
+    }).some(t => t.id === meetingTypeId)) throw new Error('Choose an active prompt allowed for this organisation in Settings → Clients.');
     const meetingType = ctx.state.getMeetingType(meetingTypeId);
     if (!meetingType) throw new Error('That meeting type no longer exists.');
 
@@ -670,12 +674,23 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     return { refiled: true };
   });
 
+  const assertOrganisationPrompt = (clientId: string, typeId: string) => {
+    const client = ctx.state.getClient(clientId);
+    if (!client) throw new Error('That organisation no longer exists.');
+    const allowed = meetingTypesForOrganisation(ctx.state.listMeetingTypes(), {
+      meetingTypeIds: parseMeetingTypeIds(client.meeting_type_ids_json),
+    });
+    if (!allowed.some(t => t.id === typeId)) {
+      throw new Error(`That prompt is not available for ${client.name}. Choose an allowed prompt or update Settings → Clients.`);
+    }
+  };
+
   ipcMain.handle(Channels.InboxFile, (_evt, payload) => {
     const p = assertFileRecordingPayload(payload);
     const row = ctx.state.getRecording(p.recordingId);
     if (!row || row.status !== 'to_file') throw new Error('That recording is no longer waiting to be filed.');
     if (!ctx.state.getClient(p.clientId)) throw new Error('That client no longer exists.');
-    if (!ctx.state.getMeetingType(p.meetingTypeId)) throw new Error('That meeting type no longer exists.');
+    assertOrganisationPrompt(p.clientId, p.meetingTypeId);
     // The summary was written with the suggested client's account context;
     // filing under a different client, when either has one, needs a fresh
     // summary as much as a changed meeting type does.
@@ -704,6 +719,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(Channels.TagSave, (_evt, payload) => {
     const p = assertTagSavePayload(payload);
+    assertOrganisationPrompt(p.clientId, p.meetingTypeId);
     const changed = ctx.state.tagRecording(p.recordingId, p.clientId, p.meetingTypeId, p.attendees, p.urgent);
     if (!changed) {
       throw new Error('Recording could not be tagged — it may already have been tagged or skipped.');
@@ -767,9 +783,11 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     const row = ctx.state.getRecording(p.recordingId);
     if (!row) throw new Error('This recording is no longer in the library.');
     const attendees = p.attendees !== undefined ? assertAttendeesList(p.attendees) : [];
-    const clientName =
-      typeof p.clientId === 'string' ? (ctx.state.listClients().find((c) => c.id === p.clientId)?.name ?? null) : null;
-    const candidates = offeredMeetingTypes(ctx.state.listMeetingTypes()).map((m) => ({
+    const client = typeof p.clientId === 'string' ? ctx.state.getClient(p.clientId) : undefined;
+    const clientName = client?.name ?? null;
+    const candidates = meetingTypesForOrganisation(ctx.state.listMeetingTypes(), {
+      meetingTypeIds: parseMeetingTypeIds(client?.meeting_type_ids_json),
+    }).map((m) => ({
       id: m.id,
       name: m.name,
       prompt: m.prompt,
@@ -888,6 +906,24 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(Channels.ClientsList, () => {
     return ctx.state.listClients().map(toClientDTO);
+  });
+
+  ipcMain.handle(Channels.ClientsSetMeetingTypes, (_evt, id, ids) => {
+    if (typeof id !== 'string') throw new Error('Client id must be a string.');
+    if (ids !== null && (!Array.isArray(ids) || ids.some(x => typeof x !== 'string'))) {
+      throw new Error('Choose a list of meeting prompts, or all prompts.');
+    }
+    const available = new Set(ctx.state.listMeetingTypes().map(t => t.id));
+    const existing = ctx.state.getClient(id);
+    if (!existing) throw new Error('That organisation no longer exists.');
+    // Preserve stored references to uninstalled/removed prompts when editing.
+    const previous = parseMeetingTypeIds(existing.meeting_type_ids_json) ?? [];
+    if (ids?.some((typeId: string) => !available.has(typeId) && !previous.includes(typeId))) {
+      throw new Error('One of those meeting prompts no longer exists.');
+    }
+    ctx.state.setClientMeetingTypes(id, ids === null ? null : [...new Set(ids as string[])]);
+    broadcastInboxChanged();
+    return toClientDTO(ctx.state.getClient(id)!);
   });
 
   ipcMain.handle(Channels.ClientsSetContext, (_evt, id, context) => {
@@ -1892,6 +1928,7 @@ function toClientDTO(r: ClientRow) {
     is_builtin: r.is_builtin === 1,
     sort_order: r.sort_order,
     context: r.context ?? '',
+    meetingTypeIds: parseMeetingTypeIds(r.meeting_type_ids_json),
   };
 }
 

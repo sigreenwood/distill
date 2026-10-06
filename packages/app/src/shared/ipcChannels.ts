@@ -46,6 +46,7 @@ export const Channels = {
   ClientsList: 'clients.list',
   ClientsAdd: 'clients.add',
   ClientsSetContext: 'clients.setContext',
+  ClientsSetMeetingTypes: 'clients.setMeetingTypes',
   MeetingTypesList: 'meetingTypes.list',
   MeetingTypesAdd: 'meetingTypes.add',
   MeetingTypesDelete: 'meetingTypes.delete',

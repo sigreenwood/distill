@@ -1,3 +1,4 @@
+import { meetingTypesForOrganisation } from '../../shared/meetingTypeLine.js';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { ClientDTO, FrequentAttendee, MeetingTypeDTO } from '../shared/api.js';
@@ -61,6 +62,18 @@ function Tag() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  const organisation = state.kind === 'ready' ? state.clients.find(c => c.id === selectedClientId) : undefined;
+  const availableTypes = useMemo(() => state.kind === 'ready'
+    ? meetingTypesForOrganisation(state.meetingTypes, organisation) : [], [state, organisation]);
+  useEffect(() => {
+    setSelectedMeetingTypeId(current => availableTypes.some(t => t.id === current) ? current : availableTypes[0]?.id ?? '');
+  }, [availableTypes]);
+  useEffect(() => {
+    setMeetingTypeTouched(false);
+    setMeetingTypeSuggestion(null);
+    setAddMeetingType({ open: false });
+  }, [selectedClientId]);
+
   useEffect(() => {
     (async () => {
       try {
@@ -70,13 +83,19 @@ function Tag() {
         ]);
         setState({ kind: 'ready', clients, meetingTypes });
         if (clients[0]) setSelectedClientId(clients[0].id);
-        const firstOffered = meetingTypes.find((m) => !m.retired) ?? meetingTypes[0];
+        const firstOffered = meetingTypesForOrganisation(meetingTypes, clients[0])[0];
         if (firstOffered) setSelectedMeetingTypeId(firstOffered.id);
       } catch (e) {
         setState({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
       }
     })();
   }, []);
+
+  useEffect(() => window.distill.onInboxChanged(() => {
+    void Promise.all([window.distill.clients.list(), window.distill.meetingTypes.list()])
+      .then(([clients, meetingTypes]) => setState({ kind: 'ready', clients, meetingTypes }))
+      .catch(e => setSaveError(String(e)));
+  }), []);
 
   const onAddClient = useCallback(async () => {
     if (!addClient.open) return;
@@ -220,12 +239,12 @@ function Tag() {
   // this is advisory, never something Process should wait on or fail for,
   // and never applied to selectedMeetingTypeId without the user clicking it.
   useEffect(() => {
-    if (meetingTypeTouched || state.kind !== 'ready' || !recordingId || state.meetingTypes.length < 2) {
+    if (meetingTypeTouched || state.kind !== 'ready' || !recordingId || availableTypes.length < 2) {
       setMeetingTypeSuggestion(null);
       return;
     }
     let cancelled = false;
-    const typeIds = new Set(state.meetingTypes.map((m) => m.id));
+    const typeIds = new Set(availableTypes.map((m) => m.id));
     void window.distill.tag
       .suggestMeetingType({ recordingId, clientId: selectedClientId || undefined, attendees })
       .then((suggestion) => {
@@ -238,7 +257,7 @@ function Tag() {
     return () => {
       cancelled = true;
     };
-  }, [recordingId, attendees, selectedClientId, meetingTypeTouched, state]);
+  }, [recordingId, attendees, selectedClientId, meetingTypeTouched, state, availableTypes]);
 
   const addedKeys = useMemo(() => new Set(attendees.map(attendeeKey)), [attendees]);
   const clipboardNew = clipboardOffer.filter((a) => !addedKeys.has(attendeeKey(a)));
@@ -499,20 +518,20 @@ function Tag() {
             }}
           >
             {/* Retired types are kept for past recordings, not offered for new ones. */}
-            {meetingTypes.filter((m) => !m.retired || m.id === selectedMeetingTypeId).map((m) => (
+            {availableTypes.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.name}
               </option>
             ))}
-            <option disabled>────────────</option>
-            <option value="__add__">+ Add new meeting type…</option>
+            {availableTypes.length === 0 && <option value="">No allowed prompts — configure Settings → Clients</option>}
+            {organisation?.meetingTypeIds == null && <option value="__add__">+ Add new meeting type…</option>}
           </select>
         )}
         {meetingTypeSuggestion &&
           meetingTypeSuggestion.meetingTypeId !== selectedMeetingTypeId &&
           !addMeetingType.open &&
           (() => {
-            const suggestedType = meetingTypes.find((m) => m.id === meetingTypeSuggestion.meetingTypeId);
+            const suggestedType = availableTypes.find((m) => m.id === meetingTypeSuggestion.meetingTypeId);
             if (!suggestedType) return null;
             return (
               <div
@@ -687,7 +706,7 @@ function Tag() {
           className="primary"
           onClick={() => void onSave()}
           disabled={
-            saving || !selectedClientId || !selectedMeetingTypeId || addClient.open || addMeetingType.open
+            saving || !selectedClientId || !availableTypes.some(t => t.id === selectedMeetingTypeId) || addClient.open || addMeetingType.open
           }
         >
           {saving ? 'Starting…' : 'Process'}

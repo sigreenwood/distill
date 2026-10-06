@@ -1,3 +1,4 @@
+import { defaultMeetingTypeIds } from '../shared/meetingTypeLine.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
@@ -101,6 +102,7 @@ export interface ClientRow {
   created_at: number;
   /** Account context added to every summary for this client (shared/summaryInput.ts). Migration 18. */
   context: string | null;
+  meeting_type_ids_json: string | null;
 }
 
 export interface MeetingTypeRow {
@@ -574,6 +576,20 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE recordings ADD COLUMN auto_filed INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 21,
+    sql: `
+      ALTER TABLE clients ADD COLUMN meeting_type_ids_json TEXT;
+      -- The requested LADFFA restriction, including already-created equivalents.
+      UPDATE clients SET meeting_type_ids_json = (
+        SELECT json_group_array(id) FROM (
+          SELECT 'club-agm' AS id UNION SELECT 'club-committee'
+          UNION SELECT id FROM meeting_types WHERE lower(trim(name)) IN
+            ('agm', 'committee meeting', 'club · agm', 'club · committee meeting')
+        )
+      ) WHERE lower(trim(name)) = 'ladffa';
+    `,
+  },
 ];
 
 export function openDatabase(_path?: string): Database.Database {
@@ -634,15 +650,16 @@ export class State {
     return this.db.prepare('SELECT * FROM clients WHERE id = ?').get(id) as ClientRow | undefined;
   }
 
-  upsertClient(row: Omit<ClientRow, 'created_at' | 'context'>): void {
+  upsertClient(row: Omit<ClientRow, 'created_at' | 'context' | 'meeting_type_ids_json'>): void {
     const now = Date.now();
+    const ids = defaultMeetingTypeIds(row.name);
     this.db
       .prepare(
-        `INSERT INTO clients (id, name, is_builtin, sort_order, created_at)
-         VALUES (@id, @name, @is_builtin, @sort_order, @created_at)
+        `INSERT INTO clients (id, name, is_builtin, sort_order, created_at, meeting_type_ids_json)
+         VALUES (@id, @name, @is_builtin, @sort_order, @created_at, @meeting_type_ids_json)
          ON CONFLICT(id) DO UPDATE SET name=excluded.name, sort_order=excluded.sort_order`,
       )
-      .run({ ...row, created_at: now });
+      .run({ ...row, created_at: now, meeting_type_ids_json: ids === null ? null : JSON.stringify(ids) });
   }
 
   // --- meeting types -------------------------------------------------------
@@ -1673,6 +1690,11 @@ export class State {
     return this.db
       .prepare(`SELECT * FROM recordings WHERE needs_filing = 1 AND status = 'tagged' AND transcript_text IS NULL`)
       .all() as RecordingRow[];
+  }
+
+  setClientMeetingTypes(id: string, ids: string[] | null): boolean {
+    return this.db.prepare('UPDATE clients SET meeting_type_ids_json = ? WHERE id = ?')
+      .run(ids === null ? null : JSON.stringify(ids), id).changes > 0;
   }
 
   setClientContext(id: string, context: string | null): boolean {
