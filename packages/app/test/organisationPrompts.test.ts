@@ -83,7 +83,11 @@ describe('organisation prompt storage', () => {
       CREATE TABLE meeting_types (id TEXT, name TEXT);
       INSERT INTO clients VALUES ('club', ' LADFFA '), ('hsbc', 'HSBC');
       INSERT INTO meeting_types VALUES ('custom-agm', 'AGM'), ('business', 'Customer call');`);
-    for (let version = 1; version <= 20; version++) db.prepare('INSERT INTO migrations VALUES (?, 0)').run(version);
+    // Exercise migration 21 alone: mark every other version applied, so
+    // later migrations (which touch tables this fixture lacks) don't run.
+    for (let version = 1; version <= 100; version++) {
+      if (version !== 21) db.prepare('INSERT INTO migrations VALUES (?, 0)').run(version);
+    }
     migrate(adapter);
     expect(parseMeetingTypeIds(state.getClient('club')!.meeting_type_ids_json)).toEqual(expect.arrayContaining(['club-agm', 'club-committee', 'custom-agm']));
     expect(state.getClient('hsbc')!.meeting_type_ids_json).toBeNull();

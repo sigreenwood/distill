@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { recordingQualityWarning } from '../shared/recordingQuality.js';
 import { offeredMeetingTypes, meetingTypesForOrganisation, parseMeetingTypeIds } from '../shared/meetingTypeLine.js';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -250,11 +251,18 @@ export async function doTranscribe(id: string, signal: AbortSignal, ctx: Pipelin
       'cleaned whisper repetitions',
     );
   }
+  const qualityWarning = recordingQualityWarning({
+    speechRatio: parsed.vad?.enabled ? parsed.vad.speech_ratio : null,
+    durationSeconds: row.duration_seconds ?? parsed.vad?.total_seconds ?? null,
+    words: cleaned.split(/\s+/).filter(Boolean).length,
+  });
+  if (qualityWarning) ctx.logger.warn({ id, vad: parsed.vad ?? null }, 'little speech captured');
   ctx.state.setStatus(id, 'transcribing', {
     transcript_text: cleaned,
     whisper_snapshot: parsed.model,
     vocabulary_sources: vocab.sources.join(','),
     vocabulary_rules_applied: applied,
+    quality_warning: qualityWarning,
   });
   ctx.logger.info(
     { id, chars: corrected.length, language: parsed.language, vad: parsed.vad ?? null },

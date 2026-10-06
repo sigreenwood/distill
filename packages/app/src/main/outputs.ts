@@ -165,7 +165,7 @@ export function buildMarkdown(row: JoinedRecordingRow, includeTranscript: boolea
   ]
     .filter((l): l is string => l !== null)
     .join('\n');
-  const header = `# ${row.filename}\n\n`;
+  const header = `# ${row.filename}\n\n${row.quality_warning ? `> ⚠ ${row.quality_warning}\n\n` : ''}`;
   const summarySection = `## Summary\n\n${row.summary_text?.trim() ?? ''}\n`;
   if (!includeTranscript) return frontmatter + header + summarySection;
   const transcriptSection = `\n---\n\n## Transcript\n\n${row.transcript_text?.trim() ?? ''}\n`;
@@ -251,7 +251,10 @@ export async function buildHtmlFragment(
   const summaryHtml = await marked.parse(neutraliseRawHtml(row.summary_text ?? ''), {
     async: true,
   });
-  let doc = `<h1>${title}</h1>\n${meta}\n<h2>Summary</h2>\n${summaryHtml}\n`;
+  const warning = row.quality_warning
+    ? `<p class="quality-warning"><strong>⚠ ${escapeHtml(row.quality_warning)}</strong></p>\n`
+    : '';
+  let doc = `<h1>${title}</h1>\n${meta}\n${warning}<h2>Summary</h2>\n${summaryHtml}\n`;
   if (includeTranscript && row.transcript_text) {
     const transcriptHtml = escapeHtml(row.transcript_text.trim());
     doc += `<hr class="divider">\n<h2>Transcript</h2>\n<div class="transcript">${transcriptHtml}</div>\n`;

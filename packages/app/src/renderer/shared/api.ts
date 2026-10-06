@@ -86,6 +86,8 @@ export interface InboxItemDTO {
   calendarClientName: string | null;
   /** Filed automatically at high confidence, not by the user. */
   autoFiled: boolean;
+  /** Little speech captured (wrong microphone?); see shared/recordingQuality.ts. */
+  qualityWarning: string | null;
   calendarClientReason: string | null;
   /** Whether a "Full re-run" can re-transcribe this recording — a local audio file, or (Plaud only) a cloud copy to re-fetch. */
   audioAvailable: boolean;

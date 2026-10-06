@@ -1893,6 +1893,7 @@ export function toInboxDTO(r: JoinedRecordingRow, outputs: OutputsConfig, client
     calendarClientId: calendarAccount?.clientId ?? null,
     calendarClientName: calendarAccount ? (clients.find((c) => c.id === calendarAccount.clientId)?.name ?? null) : null,
     autoFiled: r.auto_filed === 1,
+    qualityWarning: r.quality_warning,
     calendarClientReason: calendarAccount?.reason ?? null,
     // Gates the "Full re-run" action: a local file to re-transcribe from,
     // or (Plaud rows only — retention never deletes their audio_path, but

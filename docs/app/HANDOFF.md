@@ -1417,6 +1417,28 @@ Verification: `organisationPrompts.test.ts` and
 `organisationPromptsIpc.test.ts` (15 tests), the full suite (363), both
 typechecks and the build. Not exercised in the running app.
 
+## Little-speech warning (wrong microphone) — 2026-10-06 (0.0.34)
+
+A 54-minute call on 6 Oct was recorded on the wrong microphone.
+- **Effect:** VAD kept 23% of the audio (median kept loudness -48 dBFS,
+  discarded -66). Whisper's output was mostly repetition loops (9,044 of
+  12,583 characters), leaving about 11 words a minute.
+- **The warning:** `shared/recordingQuality.ts` now flags such
+  recordings at transcription when VAD speech is under 50% (over 2 min),
+  or the transcript is under 40 words a minute (over 5 min).
+- **Calibration:** 177 real recordings. Median speech ratio 91%, 5th
+  percentile 65%, 90–130 words a minute normally. Of 151 recordings over
+  10 minutes, only 3 fell below 50%, all broken or near-empty.
+- **Where it shows:** stored in `recordings.quality_warning`
+  (migration 22). It appears on every inbox and History row
+  (`MetaLine`), as a blockquote at the top of the Markdown output and as
+  a paragraph in HTML / Apple Notes. Loudness is not used; there is no
+  calibration data for it yet.
+- **Only new transcriptions:** existing recordings, including the 6 Oct
+  one, are not re-assessed.
+- **Test fixture fix:** `organisationPrompts.test.ts` now marks every
+  migration except 21 as applied; it had assumed 21 was the last.
+
 ## Next step
 
 Later ideas, not implemented or fully specified: diagnostics and

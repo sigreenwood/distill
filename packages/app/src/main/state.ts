@@ -85,6 +85,8 @@ export interface RecordingRow {
   calendar_match_json: string | null;
   /** Filed automatically at high confidence (migration 20). */
   auto_filed: number;
+  /** Little speech captured; see shared/recordingQuality.ts (migration 22). */
+  quality_warning: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -590,6 +592,15 @@ const MIGRATIONS: Migration[] = [
       ) WHERE lower(trim(name)) = 'ladffa';
     `,
   },
+  {
+    version: 22,
+    sql: `
+      -- Set at transcription when little speech was captured (wrong
+      -- microphone, or the other side of a call not heard); shown on the
+      -- inbox row and at the top of the summary. shared/recordingQuality.ts.
+      ALTER TABLE recordings ADD COLUMN quality_warning TEXT;
+    `,
+  },
 ];
 
 export function openDatabase(_path?: string): Database.Database {
@@ -839,6 +850,7 @@ export class State {
       | 'filing_reason'
       | 'calendar_match_json'
       | 'auto_filed'
+      | 'quality_warning'
     >,
   ): void {
     const now = Date.now();

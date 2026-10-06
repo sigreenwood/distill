@@ -68,10 +68,17 @@ export function Title({ r }: { r: InboxItemDTO }) {
 export function MetaLine({ r }: { r: InboxItemDTO }) {
   const tag = r.clientName && r.meetingTypeName ? `${r.clientName} · ${r.meetingTypeName}` : null;
   return (
-    <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
-      {formatWhen(r.start_time, r.synced_at)} · {formatDuration(r.duration_seconds)}
-      {tag ? ` · ${tag}` : ''}
-    </div>
+    <>
+      <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
+        {formatWhen(r.start_time, r.synced_at)} · {formatDuration(r.duration_seconds)}
+        {tag ? ` · ${tag}` : ''}
+      </div>
+      {r.qualityWarning && (
+        <div style={{ fontSize: 11, marginBottom: 8, color: 'var(--warning, #b58900)' }} title={r.qualityWarning}>
+          ⚠ Little speech captured — possibly the wrong microphone. The transcript is likely incomplete.
+        </div>
+      )}
+    </>
   );
 }
 
