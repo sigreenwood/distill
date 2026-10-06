@@ -1439,6 +1439,32 @@ A 54-minute call on 6 Oct was recorded on the wrong microphone.
 - **Test fixture fix:** `organisationPrompts.test.ts` now marks every
   migration except 21 as applied; it had assumed 21 was the last.
 
+## Coloured tray states for "needs you" — 2026-10-06 (0.0.35)
+
+- **New state:** `attention`. Precedence is error > attention > paused >
+  active > waiting > idle. Error and attention are drawn in colour: the
+  "!" drop in red and in amber. The Essence template PNGs are tinted at
+  load (`tintBgra` / `tintImage`), and a real Electron run produced both
+  scale representations. The other states stay monochrome templates.
+- **What counts as attention:**
+  - a Plaud warning (Keychain prompt waiting, not signed in, connection
+    failure);
+  - an Ollama warning;
+  - no successful Plaud check for 30 minutes while polling is not paused
+    (`STALE_POLL_MS`; the tray re-evaluates every minute).
+
+  Before this, these only appeared as a line inside the menu, which is
+  how the polling failures went unnoticed for days.
+- **Separate warnings:** the tray holds independent Plaud and Ollama
+  warnings (`setWarning(source, …)`, replacing the single
+  `setOllamaWarning` slot, where clearing one cleared the other).
+- **Ollama recheck:** a failed Ollama check now re-runs every 2 minutes
+  until it passes, so the amber clears once Ollama starts. It used to
+  persist until restart.
+
+Verification: 369 tests (`trayState.test.ts`), both typechecks, build.
+Not exercised: the icons in the real menu bar.
+
 ## Next step
 
 Later ideas, not implemented or fully specified: diagnostics and

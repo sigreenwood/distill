@@ -226,7 +226,7 @@ app.whenReady().then(async () => {
       }
       void connectPlaudAndStartPipeline().then((started) => {
         if (started) {
-          trayHandle?.setOllamaWarning(null);
+          trayHandle?.setWarning('plaud', null);
           notify({ title: 'distill — signed in', body: 'Syncing with Plaud has started.' });
         }
       });
@@ -438,11 +438,11 @@ app.whenReady().then(async () => {
           title: 'distill — sign in needed',
           body: 'Open Settings -> Sources to sign in to Plaud.',
         });
-        tray.setOllamaWarning('Plaud: not signed in');
+        tray.setWarning('plaud', 'Plaud: not signed in');
       } else {
         const msg = e instanceof Error ? e.message : String(e);
         localLogger.error({ err: msg }, 'failed to start Plaud poller');
-        tray.setOllamaWarning(`Plaud: ${msg}`);
+        tray.setWarning('plaud', `Plaud: ${msg}`);
       }
       return false;
     }
@@ -512,20 +512,34 @@ app.whenReady().then(async () => {
     });
     trayHandle = tray;
 
-    const ollama = new OllamaClient(cfg.ollama.host);
-    try {
-      const pf = await ollama.preflight(cfg.ollama.model);
-      if (!pf.ok) {
-        const msg = preflightMessage(pf);
-        localLogger.warn({ preflight: pf }, 'Ollama pre-flight failed');
-        tray.setOllamaWarning(`Ollama: ${pf.reason === 'unreachable' ? 'not running' : 'model missing'}`);
-        notify({ title: 'distill — Ollama check failed', body: msg });
-      } else {
+    // Checked at launch, then every 2 minutes while it's failing, so the
+    // tray's amber warning clears once Ollama is started (it used to stay
+    // until distill was restarted).
+    const checkOllama = async (notifyOnFailure: boolean): Promise<boolean> => {
+      try {
+        const pf = await new OllamaClient(cfg.ollama.host).preflight(cfg.ollama.model);
+        if (!pf.ok) {
+          tray.setWarning('ollama', `Ollama: ${pf.reason === 'unreachable' ? 'not running' : 'model missing'}`);
+          if (notifyOnFailure) {
+            localLogger.warn({ preflight: pf }, 'Ollama pre-flight failed');
+            notify({ title: 'distill — Ollama check failed', body: preflightMessage(pf) });
+          }
+          return false;
+        }
         localLogger.info({ model: pf.model }, 'Ollama pre-flight ok');
-        tray.setOllamaWarning(null);
+        tray.setWarning('ollama', null);
+        return true;
+      } catch (e) {
+        localLogger.warn({ err: String(e) }, 'Ollama pre-flight errored (non-fatal)');
+        return false;
       }
-    } catch (e) {
-      localLogger.warn({ err: String(e) }, 'Ollama pre-flight errored (non-fatal)');
+    };
+    if (!(await checkOllama(true))) {
+      const recheck = setInterval(() => {
+        void checkOllama(false).then((ok) => {
+          if (ok) clearInterval(recheck);
+        });
+      }, 120_000);
     }
 
     plaudStore = new KeychainCredentialStore();
@@ -547,14 +561,14 @@ app.whenReady().then(async () => {
     ]);
     if (!primedInTime) {
       localLogger.warn('waiting for Keychain access to the Plaud password; polling starts once it is approved');
-      tray.setOllamaWarning('Plaud: waiting for Keychain access — approve the macOS prompt');
+      tray.setWarning('plaud', 'Plaud: waiting for Keychain access — approve the macOS prompt');
       notify({
         title: 'distill — Keychain access needed',
         body: 'Approve the macOS Keychain prompt so distill can check Plaud for new recordings.',
       });
       void primed.then(async () => {
         localLogger.info('Keychain access granted; connecting to Plaud');
-        tray.setOllamaWarning(null);
+        tray.setWarning('plaud', null);
         await migratePlaudPassword();
         await connectPlaudAndStartPipeline();
       });

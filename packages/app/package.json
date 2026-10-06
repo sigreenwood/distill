@@ -1,6 +1,6 @@
 {
   "name": "@distill/app",
-  "version": "0.0.34",
+  "version": "0.0.35",
   "private": true,
   "description": "distill: local-first business meeting summarisation. Transcribes recordings on-device, summarises via Ollama, writes Markdown / HTML / Apple Notes. Supports Plaud as one source.",
   "author": "Si Greenwood",

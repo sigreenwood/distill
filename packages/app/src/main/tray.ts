@@ -20,7 +20,10 @@ import { TIP_JAR_URL } from './tipJar.js';
  * three (see resources/icons/EssenceActiveTemplate.png); the exact phase
  * is distinguished by the tooltip text instead (see humanProcessingLabel).
  */
-export type TrayState = 'idle' | 'waiting' | 'active' | 'paused' | 'error';
+export type TrayState = 'idle' | 'waiting' | 'active' | 'paused' | 'attention' | 'error';
+
+/** No successful Plaud check for this long (while connected) turns the icon amber. */
+export const STALE_POLL_MS = 30 * 60_000;
 
 export type LastPollResult =
   | { kind: 'ok'; at: number }
@@ -48,7 +51,8 @@ export interface TrayContext {
 export interface TrayHandle {
   refresh: () => void;
   setLastPoll: (r: LastPollResult) => void;
-  setOllamaWarning: (m: string | null) => void;
+  /** Show (or clear, with null) a warning for one source; Plaud and Ollama warnings are independent. */
+  setWarning: (source: 'plaud' | 'ollama', m: string | null) => void;
   destroy: () => void;
 }
 
@@ -64,8 +68,16 @@ export function computeTrayState(inputs: {
   paused: boolean;
   errorCount: number;
   waitingCount: number;
+  /**
+   * distill can't do its job without the user: not checking Plaud
+   * (Keychain prompt waiting, signed out, connection failed, or no
+   * successful check for STALE_POLL_MS) or Ollama unavailable. Shown in
+   * amber; before this, these only appeared as a line inside the menu.
+   */
+  attention?: boolean;
 }): TrayState {
   if (inputs.errorCount > 0) return 'error';
+  if (inputs.attention) return 'attention';
   if (inputs.paused) return 'paused';
   if (inputs.processingRunning) return 'active';
   if (inputs.waitingCount > 0) return 'waiting';
@@ -83,11 +95,26 @@ export function createTray(ctx: TrayContext): TrayHandle {
   };
 
   const tray = new Tray(iconFor('idle'));
+  // A stall produces no event, so look again every minute.
+  const staleTimer = setInterval(() => rebuild(), 60_000);
   tray.setToolTip('distill');
 
   let lastPoll: LastPollResult | null = null;
-  let ollamaWarning: string | null = null;
+  const warnings: Record<'plaud' | 'ollama', string | null> = { plaud: null, ollama: null };
   let currentState: TrayState = 'idle';
+  // Last successful Plaud check; null until the first one.
+  let lastOkPollAt: number | null = null;
+  const startedAt = Date.now();
+
+  // Polling has been running but nothing has succeeded for a while: a
+  // stall the app doesn't otherwise know about. Paused polling is not one.
+  const staleReason = (): string | null => {
+    const cfg = ctx.getConfig();
+    if (cfg.paused.all || cfg.paused.polling || lastPoll === null) return null;
+    const since = lastOkPollAt ?? startedAt;
+    const minutes = Math.round((Date.now() - since) / 60_000);
+    return Date.now() - since > STALE_POLL_MS ? `Plaud: no successful check for ${minutes} minutes` : null;
+  };
 
   const rebuild = () => {
     const inbox = ctx.state.inboxCount();
@@ -109,6 +136,7 @@ export function createTray(ctx: TrayContext): TrayHandle {
       paused: anyPaused,
       errorCount: errors,
       waitingCount: inbox + (scheduleBlocked ? processing.queued : 0),
+      attention: warnings.plaud !== null || warnings.ollama !== null || staleReason() !== null,
     });
     if (nextState !== currentState) {
       tray.setImage(iconFor(nextState));
@@ -127,9 +155,11 @@ export function createTray(ctx: TrayContext): TrayHandle {
     const template: Electron.MenuItemConstructorOptions[] = [
       { label: statusLine(inbox, errors, lastPoll, processing, cfg.paused, scheduleReason), enabled: false },
     ];
-    if (ollamaWarning) {
+    const stale = staleReason();
+    const lines = [warnings.plaud, warnings.ollama, stale].filter((l): l is string => l !== null);
+    if (lines.length > 0) {
       template.push({ type: 'separator' });
-      template.push({ label: ollamaWarning, enabled: false });
+      for (const label of lines) template.push({ label, enabled: false });
     }
     template.push(
       { type: 'separator' },
@@ -228,13 +258,17 @@ export function createTray(ctx: TrayContext): TrayHandle {
     refresh: rebuild,
     setLastPoll: (r) => {
       lastPoll = r;
+      if (r.kind === 'ok') lastOkPollAt = r.at;
       rebuild();
     },
-    setOllamaWarning: (m) => {
-      ollamaWarning = m;
+    setWarning: (source, m) => {
+      warnings[source] = m;
       rebuild();
     },
-    destroy: () => tray.destroy(),
+    destroy: () => {
+      clearInterval(staleTimer);
+      tray.destroy();
+    },
   };
 }
 
@@ -247,6 +281,8 @@ function trayTooltipLabel(
   switch (state) {
     case 'error':
       return `Needs attention (${errors} error${errors === 1 ? '' : 's'})`;
+    case 'attention':
+      return 'Needs your attention';
     case 'paused':
       return 'Paused';
     case 'active':
@@ -360,8 +396,49 @@ function formatRelative(epochMs: number): string {
 const STATE_COLOUR: Record<Exclude<TrayState, 'idle' | 'waiting'>, string> = {
   active: '#22c55e', // green-500
   paused: '#f59e0b', // amber-500
+  attention: '#f59e0b', // amber-500
   error: '#ef4444', // red-500
 };
+
+/**
+ * States drawn in colour; everything else stays a monochrome template that
+ * macOS adapts to the menu bar. Colour is kept for "look at me" so it keeps
+ * meaning something.
+ */
+export const TINTED_STATES: Partial<Record<TrayState, [number, number, number]>> = {
+  error: [0xef, 0x44, 0x44], // red-500
+  attention: [0xf5, 0x9e, 0x0b], // amber-500
+};
+
+/**
+ * Recolour a BGRA bitmap (as NativeImage.toBitmap returns, premultiplied)
+ * to one colour, keeping its alpha — turns a black template glyph into a
+ * coloured one without separate artwork.
+ */
+export function tintBgra(bitmap: Uint8Array, rgb: [number, number, number]): Buffer {
+  const out = Buffer.from(bitmap);
+  for (let i = 0; i + 3 < out.length; i += 4) {
+    const a = out[i + 3];
+    out[i] = Math.round((rgb[2] * a) / 255);
+    out[i + 1] = Math.round((rgb[1] * a) / 255);
+    out[i + 2] = Math.round((rgb[0] * a) / 255);
+  }
+  return out;
+}
+
+function tintImage(template: NativeImage, rgb: [number, number, number]): NativeImage {
+  const { width, height } = template.getSize();
+  const out = nativeImage.createEmpty();
+  for (const scaleFactor of [1, 2]) {
+    const bitmap = template.toBitmap({ scaleFactor });
+    const w = Math.round(width * scaleFactor);
+    const h = Math.round(height * scaleFactor);
+    if (bitmap.length !== w * h * 4) continue; // no representation at this scale
+    const png = nativeImage.createFromBitmap(tintBgra(bitmap, rgb), { width: w, height: h, scaleFactor }).toPNG();
+    out.addRepresentation({ scaleFactor, width: w, height: h, dataURL: `data:image/png;base64,${png.toString('base64')}` });
+  }
+  return out.isEmpty() ? template : out;
+}
 
 const PNG_FILENAME: Record<TrayState, string> = {
   idle: 'EssenceIdleTemplate.png',
@@ -369,6 +446,8 @@ const PNG_FILENAME: Record<TrayState, string> = {
   active: 'EssenceActiveTemplate.png',
   paused: 'EssencePausedTemplate.png',
   error: 'EssenceErrorTemplate.png',
+  // Same "!" drop as error, drawn amber: needs you, but nothing has failed.
+  attention: 'EssenceErrorTemplate.png',
 };
 
 /**
@@ -381,6 +460,12 @@ function loadTrayIcon(resourcesDir: string, state: TrayState, logger?: Logger): 
   const iconPath = path.join(resourcesDir, 'icons', filename);
   const fromFile = nativeImage.createFromPath(iconPath);
   if (!fromFile.isEmpty()) {
+    const tint = TINTED_STATES[state];
+    if (tint) {
+      const coloured = tintImage(fromFile, tint);
+      coloured.setTemplateImage(false);
+      return coloured;
+    }
     fromFile.setTemplateImage(true);
     return fromFile;
   }
