@@ -2,7 +2,9 @@ import { searchMeetings, validateSearch } from './meetingSearch.js';
 import { offeredMeetingTypes, meetingTypesForOrganisation, parseMeetingTypeIds } from '../shared/meetingTypeLine.js';
 import { loadMeetingDetail } from './meetingContent.js';
 import { generateClientBrief, type BriefInputMeeting } from './clientBrief.js';
-import type { BriefCandidate } from '../shared/brief.js';
+import { parseSavedBrief, savedBriefSummary, type BriefCandidate, type ClientBrief } from '../shared/brief.js';
+import { extractFollowUps, followUpCountLabel } from '../shared/followUps.js';
+import { isFollowUpsReviewed, listMeetingFollowUps, summaryHash } from './followUpsList.js';
 import { checkRegisterAdd } from '../shared/register.js';
 import type { RegisterItem, RegisterItemKind } from '../shared/register.js';
 import type { JoinedRegisterItemRow } from './state.js';
@@ -264,7 +266,12 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     briefRuns.set(evt.sender.id, controller);
     ctx.logger.info({ clientId: client.id, meetings: meetings.length }, 'client brief started');
     try {
-      const brief = await generateClientBrief(client.name, meetings, ctx.getConfig().ollama, controller.signal);
+      const generated = await generateClientBrief(client.name, meetings, ctx.getConfig().ollama, controller.signal);
+      // Saved as generated, so it can be read again from Saved briefs.
+      const brief: ClientBrief = { ...generated, id: crypto.randomUUID(), savedAt: Date.now() };
+      ctx.state.addClientBrief({
+        id: brief.id!, client_id: client.id, created_at: brief.savedAt!, model: brief.model, brief_json: JSON.stringify(brief),
+      });
       ctx.logger.info(
         { clientId: client.id, dropped: brief.dropped, model: brief.model },
         'client brief complete',
@@ -280,6 +287,57 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(Channels.BriefCancel, (evt) => {
     briefRuns.get(evt.sender.id)?.abort();
+  });
+
+  ipcMain.handle(Channels.BriefListSaved, (_evt, clientId) => {
+    if (typeof clientId !== 'string') throw new Error('clientId must be a string');
+    return ctx.state.listClientBriefs(clientId).flatMap((row) => {
+      const brief = parseSavedBrief(row.brief_json);
+      return brief ? [savedBriefSummary(brief, row.id, row.created_at)] : [];
+    });
+  });
+
+  ipcMain.handle(Channels.BriefGetSaved, (_evt, id) => {
+    if (typeof id !== 'string') throw new Error('id must be a string');
+    const row = ctx.state.getClientBrief(id);
+    const brief = row ? parseSavedBrief(row.brief_json) : null;
+    if (!row || !brief) throw new Error('That brief is no longer saved.');
+    return { ...brief, id: row.id, savedAt: row.created_at };
+  });
+
+  ipcMain.handle(Channels.BriefDeleteSaved, (_evt, id) => {
+    if (typeof id !== 'string') throw new Error('id must be a string');
+    ctx.state.deleteClientBrief(id);
+  });
+
+  // --- follow-ups ------------------------------------------------------------
+  // Meetings whose summaries recorded actions or decisions (followUpsList.ts).
+  // Reviewing only marks the meeting as looked at; it never changes the
+  // summary or the register.
+
+  ipcMain.handle(Channels.FollowUpsList, (_evt, filter) => {
+    const f = (filter ?? {}) as { clientId?: unknown; sinceDays?: unknown; unreviewedOnly?: unknown };
+    if (f.clientId != null && typeof f.clientId !== 'string') throw new Error('clientId must be a string');
+    if (f.sinceDays != null && (typeof f.sinceDays !== 'number' || f.sinceDays <= 0)) {
+      throw new Error('sinceDays must be a positive number or null');
+    }
+    return listMeetingFollowUps(ctx.state.listSummarisedJoined(), {
+      clientId: (f.clientId as string | null | undefined) ?? null,
+      sinceMs: typeof f.sinceDays === 'number' ? Date.now() - f.sinceDays * 86_400_000 : null,
+      unreviewedOnly: f.unreviewedOnly === true,
+    });
+  });
+
+  ipcMain.handle(Channels.FollowUpsSetReviewed, (_evt, ids, reviewed) => {
+    if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) throw new Error('ids must be an array of strings');
+    if (typeof reviewed !== 'boolean') throw new Error('reviewed must be a boolean');
+    const rows = (ids as string[]).map((id) => ctx.state.getRecordingJoined(id));
+    const found = rows.filter((r): r is JoinedRecordingRow => Boolean(r?.summary_text));
+    ctx.state.setFollowUpsReviewed(
+      found.map((r) => r.id),
+      found.map((r) => (reviewed ? summaryHash(r.summary_text!) : null)),
+    );
+    broadcastInboxChanged();
   });
 
   // --- action/decision register --------------------------------------------
@@ -1894,6 +1952,8 @@ export function toInboxDTO(r: JoinedRecordingRow, outputs: OutputsConfig, client
     calendarClientName: calendarAccount ? (clients.find((c) => c.id === calendarAccount.clientId)?.name ?? null) : null,
     autoFiled: r.auto_filed === 1,
     qualityWarning: r.quality_warning,
+    // "3 actions · 1 decision" from the summary; see shared/followUps.ts.
+    followUps: followUpsOf(r),
     calendarClientReason: calendarAccount?.reason ?? null,
     // Gates the "Full re-run" action: a local file to re-transcribe from,
     // or (Plaud rows only — retention never deletes their audio_path, but
@@ -1905,6 +1965,13 @@ export function toInboxDTO(r: JoinedRecordingRow, outputs: OutputsConfig, client
     // Inbox row's checkboxes.
     outputTargets: effectiveOutputTargets(r, outputs),
   };
+}
+
+function followUpsOf(r: JoinedRecordingRow): { label: string; reviewed: boolean } | null {
+  if (r.status !== 'complete' || !r.summary_text) return null;
+  const { actions, decisions } = extractFollowUps(r.summary_text);
+  const label = followUpCountLabel(actions.length, decisions.length);
+  return label ? { label, reviewed: isFollowUpsReviewed(r) } : null;
 }
 
 function statusToStep(s: RecordingStatus): PipelineStep | null {

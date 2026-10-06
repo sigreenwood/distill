@@ -172,7 +172,7 @@ cites whole meetings, not passages; no carry-over between briefs.
 Checkpoint: the commit containing this update, titled
 `feat(register): add a confirmed action/decision register`.
 
-- Tray → **Client register…** opens a resizable window: pick a client,
+- Tray → **Client register…** (renamed **Follow-ups…** on 2026-10-06, with a From meetings tab) opens a resizable window: pick a client,
   see its actions (filterable open/done/all) and decisions, newest first.
 - Two entry points add a confirmed item, both calling the same
   `register.add` IPC handler — nothing is ever added automatically:
@@ -1464,6 +1464,41 @@ A 54-minute call on 6 Oct was recorded on the wrong microphone.
 
 Verification: 369 tests (`trayState.test.ts`), both typechecks, build.
 Not exercised: the icons in the real menu bar.
+
+## Follow-ups to review and saved briefs — 2026-10-06 (0.0.36)
+
+- **Flagging meetings:** `shared/followUps.ts` reads actions and
+  decisions out of each finished summary with layout rules, not a model.
+  It handles the current prompts (`## Actions` checkboxes with
+  `Owner — action — due`, Teradata/Customer groups, the club table,
+  `## Decisions…` and inline `**Decisions and votes:**`) and the older
+  library shapes (`✅ Name to …`, `- **Action**:` with nested
+  Owner/Timeframe, `**Person:**` groups). Against the 222 library
+  summaries it found actions in 182 and decisions in 51. The other 40
+  have no action section or say "None agreed".
+- **Inbox and History:** each row shows "3 actions · 1 decision". It is
+  amber with a ● until reviewed, and links to the meeting reader.
+- **Follow-ups window:** Tray → **Follow-ups…** (was Client register…).
+  It has two tabs:
+  - **From meetings** lists flagged meetings by period and client, with
+    "Not yet reviewed" or "All". Each line has **Add to register**,
+    which keeps a due date as words in the text. Each meeting has
+    **Mark reviewed** (with undo), and there is **Mark all N reviewed**.
+  - **Register** is the existing register, now also available for all
+    clients.
+- **Review state:** `recordings.follow_ups_reviewed_hash` (migration 23)
+  stores a hash of the summary that was reviewed. A rewritten summary is
+  therefore flagged again with no write hooks, and the items themselves
+  are never stored (`main/followUpsList.ts`).
+- **Saved briefs:** every generated brief is saved to `client_briefs`
+  (migration 23). The brief window lists **Saved briefs** per client
+  (date, meetings, date range, points), with Open and Delete. The
+  exported Markdown notes the saved date.
+
+Verification: 383 tests (`followUps.test.ts`, `followUpsList.test.ts`,
+saved-brief cases in `clientBrief.test.ts`), both typechecks.
+Migration 23's SQL was applied to a copy of the live database and rolled
+back. Not exercised: the windows in the running app.
 
 ## Next step
 

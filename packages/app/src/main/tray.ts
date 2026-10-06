@@ -208,7 +208,7 @@ export function createTray(ctx: TrayContext): TrayHandle {
         click: () => ctx.onOpenClientBrief(),
       },
       {
-        label: 'Client register…',
+        label: 'Follow-ups…',
         click: () => ctx.onOpenClientRegister(),
       },
       {

@@ -72,6 +72,23 @@ export function MetaLine({ r }: { r: InboxItemDTO }) {
       <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
         {formatWhen(r.start_time, r.synced_at)} · {formatDuration(r.duration_seconds)}
         {tag ? ` · ${tag}` : ''}
+        {r.followUps && (
+          <>
+            {' · '}
+            <a
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                void window.distill.meeting.open(r.id, 'summary');
+              }}
+              title={r.followUps.reviewed ? 'Reviewed in Follow-ups' : 'Not yet reviewed — see Follow-ups in the menu bar'}
+              style={{ color: r.followUps.reviewed ? undefined : 'var(--warning, #b58900)' }}
+            >
+              {r.followUps.reviewed ? '' : '● '}
+              {r.followUps.label}
+            </a>
+          </>
+        )}
       </div>
       {r.qualityWarning && (
         <div style={{ fontSize: 11, marginBottom: 8, color: 'var(--warning, #b58900)' }} title={r.qualityWarning}>

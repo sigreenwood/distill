@@ -87,6 +87,8 @@ export interface RecordingRow {
   auto_filed: number;
   /** Little speech captured; see shared/recordingQuality.ts (migration 22). */
   quality_warning: string | null;
+  /** Hash of the summary whose follow-ups the user marked reviewed (migration 23). */
+  follow_ups_reviewed_hash: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -139,6 +141,14 @@ export interface JoinedRegisterItemRow extends RegisterItemRow {
   client_name: string;
   source_title: string;
   source_date: number;
+}
+
+export interface ClientBriefRow {
+  id: string;
+  client_id: string;
+  created_at: number;
+  model: string;
+  brief_json: string;
 }
 
 export interface SummaryVersionRow {
@@ -601,6 +611,27 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE recordings ADD COLUMN quality_warning TEXT;
     `,
   },
+  {
+    version: 23,
+    sql: `
+      -- Follow-ups (shared/followUps.ts): actions and decisions are read
+      -- from the summary itself on demand; only the review is stored. It
+      -- holds a hash of the summary it was made against, so a rewritten
+      -- summary comes back for review without any write hooks.
+      ALTER TABLE recordings ADD COLUMN follow_ups_reviewed_hash TEXT;
+
+      -- Client briefs, saved as generated so they can be read again
+      -- later. brief_json is the ClientBrief the window showed.
+      CREATE TABLE client_briefs (
+        id          TEXT PRIMARY KEY,
+        client_id   TEXT NOT NULL REFERENCES clients(id),
+        created_at  INTEGER NOT NULL,
+        model       TEXT NOT NULL,
+        brief_json  TEXT NOT NULL
+      );
+      CREATE INDEX idx_client_briefs_client ON client_briefs(client_id, created_at);
+    `,
+  },
 ];
 
 export function openDatabase(_path?: string): Database.Database {
@@ -851,6 +882,7 @@ export class State {
       | 'calendar_match_json'
       | 'auto_filed'
       | 'quality_warning'
+      | 'follow_ups_reviewed_hash'
     >,
   ): void {
     const now = Date.now();
@@ -1562,6 +1594,45 @@ export class State {
 
   deleteRegisterItem(id: string): boolean {
     return this.db.prepare('DELETE FROM register_items WHERE id = ?').run(id).changes > 0;
+  }
+
+  // --- follow-ups and saved briefs --------------------------------------------
+
+  /** Finished meetings with a summary, newest first — what the Follow-ups window reads actions and decisions from. */
+  listSummarisedJoined(): JoinedRecordingRow[] {
+    return this.db.prepare(`${this.joinSelect}
+      WHERE r.status = 'complete' AND r.summary_text IS NOT NULL
+      ORDER BY COALESCE(r.start_time, r.synced_at) DESC`).all() as JoinedRecordingRow[];
+  }
+
+  /** `hash` is of the summary reviewed; null clears the review. */
+  setFollowUpsReviewed(ids: string[], hashes: (string | null)[]): void {
+    const stmt = this.db.prepare('UPDATE recordings SET follow_ups_reviewed_hash = ? WHERE id = ?');
+    this.db.transaction(() => ids.forEach((id, i) => stmt.run(hashes[i], id)))();
+  }
+
+  addClientBrief(row: ClientBriefRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO client_briefs (id, client_id, created_at, model, brief_json)
+         VALUES (@id, @client_id, @created_at, @model, @brief_json)`,
+      )
+      .run(row);
+  }
+
+  /** Newest first. */
+  listClientBriefs(clientId: string): ClientBriefRow[] {
+    return this.db
+      .prepare('SELECT * FROM client_briefs WHERE client_id = ? ORDER BY created_at DESC')
+      .all(clientId) as ClientBriefRow[];
+  }
+
+  getClientBrief(id: string): ClientBriefRow | undefined {
+    return this.db.prepare('SELECT * FROM client_briefs WHERE id = ?').get(id) as ClientBriefRow | undefined;
+  }
+
+  deleteClientBrief(id: string): boolean {
+    return this.db.prepare('DELETE FROM client_briefs WHERE id = ?').run(id).changes > 0;
   }
 
   // --- summary versions ------------------------------------------------------

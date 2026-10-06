@@ -52,6 +52,47 @@ export interface ClientBrief {
   /** Points the model returned without a valid source — not shown. */
   dropped: number;
   model: string;
+  /** Set once saved (every generated brief is). */
+  id?: string;
+  savedAt?: number;
+}
+
+/** A saved brief as listed, before it is opened. */
+export interface SavedBriefSummary {
+  id: string;
+  savedAt: number;
+  model: string;
+  meetings: number;
+  /** Date range of the meetings it drew on. */
+  from: number | null;
+  to: number | null;
+  points: number;
+}
+
+export function savedBriefSummary(brief: ClientBrief, id: string, savedAt: number): SavedBriefSummary {
+  const dates = brief.sources.map((s) => s.date);
+  return {
+    id,
+    savedAt,
+    model: brief.model,
+    meetings: brief.sources.length,
+    from: dates.length ? Math.min(...dates) : null,
+    to: dates.length ? Math.max(...dates) : null,
+    points:
+      brief.decisions.length + brief.commitments.length + brief.openQuestions.length + brief.suggestedQuestions.length,
+  };
+}
+
+/** Null when the stored JSON is not a brief this version can show. */
+export function parseSavedBrief(json: string): ClientBrief | null {
+  try {
+    const v = JSON.parse(json) as ClientBrief;
+    const lists = [v.decisions, v.commitments, v.openQuestions, v.suggestedQuestions, v.sources];
+    if (typeof v.clientName !== 'string' || typeof v.model !== 'string' || !lists.every(Array.isArray)) return null;
+    return { ...v, dropped: typeof v.dropped === 'number' ? v.dropped : 0 };
+  } catch {
+    return null;
+  }
 }
 
 export interface BriefSelectionCheck {
@@ -109,7 +150,7 @@ export function briefToMarkdown(brief: ClientBrief): string {
   return [
     `# ${brief.clientName} — preparation brief`,
     '',
-    `Drawn from ${brief.sources.length} meeting summar${brief.sources.length === 1 ? 'y' : 'ies'} by ${brief.model}, on this Mac. Check points against the sources before relying on them.`,
+    `Drawn from ${brief.sources.length} meeting summar${brief.sources.length === 1 ? 'y' : 'ies'} by ${brief.model}, on this Mac${brief.savedAt ? `, ${isoDate(brief.savedAt)}` : ''}. Check points against the sources before relying on them.`,
     '',
     ...section('Decisions', brief.decisions, (i) => `- ${i.text}${cite(i)}`),
     ...section('Commitments made (status not tracked)', brief.commitments, (i) => {

@@ -23,7 +23,8 @@ export type RecordingStatus =
   | 'cancelled'
   | 'skipped';
 
-import type { BriefCandidate, ClientBrief } from '../../shared/brief';
+import type { BriefCandidate, ClientBrief, SavedBriefSummary } from '../../shared/brief';
+import type { MeetingFollowUps } from '../../shared/followUps';
 import type { RegisterItem } from '../../shared/register';
 import type { SummaryVersionDTO } from '../../shared/summaryVersion';
 import type { MeetingTypeSuggestion } from '../../shared/meetingTypeSuggestion.js';
@@ -88,6 +89,8 @@ export interface InboxItemDTO {
   autoFiled: boolean;
   /** Little speech captured (wrong microphone?); see shared/recordingQuality.ts. */
   qualityWarning: string | null;
+  /** Actions and decisions in the summary ("3 actions · 1 decision"), null when none; see shared/followUps.ts. */
+  followUps: { label: string; reviewed: boolean } | null;
   calendarClientReason: string | null;
   /** Whether a "Full re-run" can re-transcribe this recording — a local audio file, or (Plaud only) a cloud copy to re-fetch. */
   audioAvailable: boolean;
@@ -305,8 +308,18 @@ export interface DistillApi {
   brief: {
     /** The client's meetings in the period, newest first. */
     listMeetings(clientId: string, sinceDays: number | null): Promise<BriefCandidate[]>;
+    /** Generates and saves the brief; the result carries its saved id. */
     generate(payload: { clientId: string; recordingIds: string[] }): Promise<ClientBrief>;
     cancel(): Promise<void>;
+    /** One client's saved briefs, newest first. */
+    listSaved(clientId: string): Promise<SavedBriefSummary[]>;
+    getSaved(id: string): Promise<ClientBrief>;
+    deleteSaved(id: string): Promise<void>;
+  };
+  followUps: {
+    /** Meetings whose summaries recorded actions or decisions, newest first. */
+    list(filter: { clientId?: string | null; sinceDays?: number | null; unreviewedOnly?: boolean }): Promise<MeetingFollowUps[]>;
+    setReviewed(recordingIds: string[], reviewed: boolean): Promise<void>;
   };
   register: {
     /** One client's items, newest first; omit clientId to list every client. */

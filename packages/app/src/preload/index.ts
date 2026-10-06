@@ -25,6 +25,15 @@ const api = {
     generate: (payload: { clientId: string; recordingIds: string[] }) =>
       ipcRenderer.invoke(Channels.BriefGenerate, payload),
     cancel: () => ipcRenderer.invoke(Channels.BriefCancel),
+    listSaved: (clientId: string) => ipcRenderer.invoke(Channels.BriefListSaved, clientId),
+    getSaved: (id: string) => ipcRenderer.invoke(Channels.BriefGetSaved, id),
+    deleteSaved: (id: string) => ipcRenderer.invoke(Channels.BriefDeleteSaved, id),
+  },
+  followUps: {
+    list: (filter: { clientId?: string | null; sinceDays?: number | null; unreviewedOnly?: boolean }) =>
+      ipcRenderer.invoke(Channels.FollowUpsList, filter),
+    setReviewed: (recordingIds: string[], reviewed: boolean) =>
+      ipcRenderer.invoke(Channels.FollowUpsSetReviewed, recordingIds, reviewed),
   },
   register: {
     list: (clientId?: string) => ipcRenderer.invoke(Channels.RegisterList, clientId),

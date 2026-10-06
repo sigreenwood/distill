@@ -6,6 +6,8 @@ import {
   briefToMarkdown,
   checkBriefSelection,
   defaultBriefSelection,
+  parseSavedBrief,
+  savedBriefSummary,
   type BriefCandidate,
   type ClientBrief,
 } from '../src/shared/brief.js';
@@ -126,5 +128,31 @@ describe('briefToMarkdown', () => {
     expect(md).toContain('## Suggested questions (inferred, not stated)');
     expect(md).not.toContain('## Questions raised');
     expect(md).toContain('- M1: Kick-off (2026-09-01)');
+  });
+});
+
+describe('saved briefs', () => {
+  const brief: ClientBrief = {
+    clientName: 'Acme',
+    decisions: [{ text: 'D', sources: ['M1'] }],
+    commitments: [{ text: 'C', sources: ['M2'], owner: null }],
+    openQuestions: [],
+    suggestedQuestions: [{ text: 'Q', sources: ['M1'] }],
+    sources: [
+      { ref: 'M1', id: 'a', title: 'One', date: 100 },
+      { ref: 'M2', id: 'b', title: 'Two', date: 300 },
+    ],
+    dropped: 0,
+    model: 'gemma',
+  };
+
+  it('round-trips through JSON and summarises for the list', () => {
+    expect(parseSavedBrief(JSON.stringify(brief))).toEqual(brief);
+    expect(savedBriefSummary(brief, 'id1', 999)).toEqual({ id: 'id1', savedAt: 999, model: 'gemma', meetings: 2, from: 100, to: 300, points: 3 });
+  });
+
+  it('rejects stored JSON that is not a brief', () => {
+    expect(parseSavedBrief('not json')).toBeNull();
+    expect(parseSavedBrief(JSON.stringify({ clientName: 'Acme' }))).toBeNull();
   });
 });

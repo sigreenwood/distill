@@ -11,6 +11,7 @@ import {
   type BriefCandidate,
   type BriefItem,
   type ClientBrief,
+  type SavedBriefSummary,
 } from '../../shared/brief.js';
 
 const PERIODS: { label: string; days: number | null }[] = [
@@ -25,11 +26,15 @@ function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+function formatSaved(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 /**
  * On-demand brief for an upcoming client meeting, drawn from the summaries
- * of meetings the user selects. Nothing runs until Generate is pressed,
- * and nothing is saved: the result lives in this window (and the
- * clipboard, if copied).
+ * of meetings the user selects. Nothing runs until Generate is pressed.
+ * Every generated brief is saved (client_briefs) and listed under Saved
+ * briefs, so it can be read again later; Delete removes it.
  */
 function Brief() {
   const [clients, setClients] = useState<ClientDTO[]>([]);
@@ -41,6 +46,17 @@ function Brief() {
   const [error, setError] = useState<string | null>(null);
   const [brief, setBrief] = useState<ClientBrief | null>(null);
   const [copied, setCopied] = useState(false);
+  const [saved, setSaved] = useState<SavedBriefSummary[]>([]);
+
+  const loadSaved = useCallback(() => {
+    if (!clientId) return;
+    void window.distill.brief
+      .listSaved(clientId)
+      .then(setSaved)
+      .catch(() => setSaved([]));
+  }, [clientId]);
+
+  useEffect(loadSaved, [loadSaved]);
 
   useEffect(() => {
     void window.distill.clients.list().then((list) => {
@@ -100,6 +116,7 @@ function Brief() {
     setCopied(false);
     try {
       setBrief(await window.distill.brief.generate({ clientId, recordingIds: chosen.map((m) => m.id) }));
+      loadSaved();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       // Electron prefixes IPC errors; keep only the message itself.
@@ -107,7 +124,28 @@ function Brief() {
     } finally {
       setBusy(false);
     }
-  }, [clientId, chosen]);
+  }, [clientId, chosen, loadSaved]);
+
+  const openSaved = async (id: string) => {
+    setError(null);
+    setCopied(false);
+    try {
+      setBrief(await window.distill.brief.getSaved(id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const deleteSaved = async (s: SavedBriefSummary) => {
+    if (!window.confirm(`Delete the brief saved ${formatSaved(s.savedAt)}? This can't be undone.`)) return;
+    try {
+      await window.distill.brief.deleteSaved(s.id);
+      if (brief?.id === s.id) setBrief(null);
+      loadSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const copy = async () => {
     if (!brief) return;
@@ -141,6 +179,9 @@ function Brief() {
         </select>
       </header>
       <main style={{ flexGrow: 1, overflowY: 'auto', padding: '10px 14px' }}>
+        {!brief && !busy && saved.length > 0 && (
+          <SavedBriefs saved={saved} onOpen={(id) => void openSaved(id)} onDelete={(s) => void deleteSaved(s)} />
+        )}
         {!brief && (
           <MeetingPicker candidates={candidates} selected={selected} onToggle={toggle} disabled={busy} />
         )}
@@ -154,10 +195,11 @@ function Brief() {
           <>
             <span className="muted" style={{ fontSize: 11, flex: 1 }}>
               Drawn from {brief.sources.length} summar{brief.sources.length === 1 ? 'y' : 'ies'} by {brief.model}, on
-              this Mac. Check points against their sources before relying on them.
+              this Mac{brief.savedAt ? ` · saved ${formatSaved(brief.savedAt)}` : ''}. Check points against their sources
+              before relying on them.
             </span>
             <button onClick={() => void copy()}>{copied ? 'Copied' : 'Copy as Markdown'}</button>
-            <button onClick={() => setBrief(null)}>Change meetings</button>
+            <button onClick={() => setBrief(null)}>Back</button>
           </>
         ) : busy ? (
           <>
@@ -180,6 +222,33 @@ function Brief() {
         )}
       </footer>
     </div>
+  );
+}
+
+function SavedBriefs(props: {
+  saved: SavedBriefSummary[];
+  onOpen: (id: string) => void;
+  onDelete: (s: SavedBriefSummary) => void;
+}) {
+  return (
+    <section style={{ marginBottom: 14 }}>
+      <h3 style={{ fontSize: 13, margin: '0 0 4px' }}>Saved briefs</h3>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0, maxHeight: 180, overflowY: 'auto' }}>
+        {props.saved.map((s) => (
+          <li key={s.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 12 }}>
+              <a href="#" onClick={(e) => { e.preventDefault(); props.onOpen(s.id); }}>{formatSaved(s.savedAt)}</a>
+              <span className="muted" style={{ fontSize: 10 }}>
+                {' · '}{s.meetings} meeting{s.meetings === 1 ? '' : 's'}
+                {s.from != null && s.to != null ? ` (${formatDate(s.from)} – ${formatDate(s.to)})` : ''}
+                {' · '}{s.points} point{s.points === 1 ? '' : 's'}
+              </span>
+            </span>
+            <button onClick={() => props.onDelete(s)} style={{ fontSize: 10 }}>Delete</button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

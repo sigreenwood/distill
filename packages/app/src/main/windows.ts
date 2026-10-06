@@ -281,7 +281,7 @@ export function openClientBrief(): void {
   });
 }
 
-/** Confirmed action/decision register — see shared/register.ts. */
+/** Follow-ups to review, and the confirmed action/decision register — see shared/followUps.ts and shared/register.ts. */
 export function openClientRegister(): void {
   if (!ctx) throw new Error('configureWindows must be called first');
   if (registerWin && !registerWin.isDestroyed()) {
@@ -297,7 +297,7 @@ export function openClientRegister(): void {
     minWidth: 480,
     minHeight: 380,
     fullscreenable: false,
-    title: 'distill — Client register',
+    title: 'distill — Follow-ups',
     webPreferences: {
       preload: ctx.preloadPath,
       contextIsolation: true,
