@@ -675,9 +675,8 @@ function Shell(props: ShellProps) {
           alignItems: 'center',
           gap: 8,
           flexShrink: 0,
-          // The header is the window's drag handle (it's frameless).
-          WebkitAppRegion: 'drag',
-        } as React.CSSProperties}
+        }}
+        className="drag-region"
       >
         <EssenceLogo activity={props.activity} completionKey={props.completionKey} size={22} decorative />
         <div style={{ fontWeight: 600 }}>Inbox</div>
@@ -711,15 +710,8 @@ function Shell(props: ShellProps) {
           activeOrQueued={activeOrQueued}
         />
       )}
-      {/*
-        The list scrolls; nothing else does. Two things stopped it before:
-        the body is a window drag region (styles.css), and macOS doesn't
-        deliver wheel or trackpad scrolling over drag regions; and a flex
-        child grows to its content unless min-height is 0.
-      */}
-      <main
-        style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-      >
+      {/* The list scrolls; only the header is a drag handle (styles.css .drag-region). */}
+      <main style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>
         <CalendarBar {...props.calendar} />
         <MeetingSearch />
         {props.children}

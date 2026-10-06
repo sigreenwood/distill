@@ -1331,6 +1331,68 @@ and marking/unmarking urgency with visible queue reordering. Screenshots
 checked at 480px width. Native Finder drops and a live processing batch
 were not exercised; no package was installed or release published.
 
+## Polling reliability and window resizing — 2026-10-06 (0.0.32)
+
+**Polling.** The user saw new recordings appear only after a restart,
+sometimes hours or days late. `app.log` (21 days, counts and timings
+only) showed that every startup which did not reach "Plaud connection
+ready" never polled until the next restart (10 such startups); every
+startup that connected polled at once. Causes and fixes:
+- **Setup gated everything.** With the venv incomplete (e.g. a new
+  requirement after an update), startup opened Setup and returned, so
+  no tray and no polling. 18–27 Sep: 8 launches, 9.7 days without a
+  poll. Now polling starts alongside Setup. Only the worker waits
+  (`pythonReady`; `onSetupComplete` then calls
+  `worker.recoverOnStartup()`).
+- **The Keychain prompt blocked startup.** `keytar.getPassword` blocks
+  while macOS asks "distill wants to use your confidential information",
+  which each new ad-hoc-signed build triggers again. 4 Oct 23:47: the
+  log stops after the Ollama check, then 13 hours without a poll until a
+  restart. Startup now waits 15 s, then carries on: the tray shows
+  "Plaud: waiting for Keychain access — approve the macOS prompt", a
+  notification asks, and polling starts the moment the prompt is
+  answered. The password migration also touches the Keychain, so it now
+  runs only after the read.
+- **No request timeout.** The next poll is scheduled only after the
+  current one settles, and Plaud requests had no timeout. One hung
+  request would stop polling for good, and "Sync now" was ignored while
+  a poll was "in flight". `withTimeout` now fails a poll after 2 minutes
+  (Plaud listing and the output-folder scan) and polling continues. A
+  test simulates a request that never answers.
+- **Wake:** `powerMonitor` `resume` triggers a poll 15 s after the Mac
+  wakes.
+
+Three gaps (30 Sep–1 Oct, 2–3 Oct, and before 5 Oct 12:52) end in a
+normal startup with nothing logged in between. They are consistent with
+the app not running and cannot be attributed further from the log.
+
+**Windows:**
+- **Resizable:** the tag sheet, Settings and Setup are now resizable,
+  with minimum sizes (the inbox was done in 0.0.31). History, Client
+  brief, Client register and the reader already were.
+- **Drag regions:** the page-wide `-webkit-app-region: drag` on `body`
+  is gone. Only the headers of the frameless windows (inbox, tag sheet)
+  carry `.drag-region`. This was the real cause of the inbox not
+  scrolling: macOS delivers no scroll events over drag regions.
+- **A correction:** 0.0.31's comment also blamed a missing
+  `min-height: 0`. A flex item with `overflow: auto` already has a zero
+  automatic minimum, so the comment was corrected.
+
+**Uncommitted work found and set aside.** At the start of this session
+the tree held uncommitted changes from an earlier session (per-
+organisation allowed meeting types: `clients.meeting_type_ids_json`,
+`ClientsSetMeetingTypes`, and two untracked tests
+`organisationPrompts*.test.ts`). They were stashed as
+`stash@{0}` "WIP found 2026-10-06: per-organisation allowed meeting
+types". They were kept out of this commit and the 0.0.32 package, and
+restored to the working tree afterwards. That feature is unfinished and
+untested here.
+
+**Verification:** 348 tests (excluding the two WIP tests), both
+typechecks and the build. **Not exercised:** a real Keychain prompt,
+Setup running alongside polling, waking from sleep, and resizing or
+scrolling the windows.
+
 ## Next step
 
 Later ideas, not implemented or fully specified: diagnostics and

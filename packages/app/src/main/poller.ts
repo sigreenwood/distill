@@ -46,6 +46,25 @@ export interface PollerOptions {
   initialPollInboxCount?: () => number;
   /** Recordings shorter than this many minutes are hidden on arrival (0 = keep all); see config minRecordingMinutes. */
   minRecordingMinutes?: () => number;
+  /** How long one poll may wait on Plaud before it counts as failed (default 2 minutes). */
+  requestTimeoutMs?: number;
+}
+
+export const DEFAULT_POLL_TIMEOUT_MS = 120_000;
+
+/**
+ * Reject if `promise` hasn't settled within `ms`. The next poll is only
+ * scheduled once this one finishes, and Plaud requests carry no timeout of
+ * their own: a request that never returns (common after sleep or a network
+ * change) used to stop polling until the app was restarted, with "Sync now"
+ * ignored because a poll was still "in flight".
+ */
+export function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} did not respond within ${Math.round(ms / 1000)} seconds`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -124,12 +143,13 @@ export class Poller {
         this.opts.onPoll(result, []);
         return result;
       }
-      const all = await this.opts.client.listRecordings();
+      const timeoutMs = this.opts.requestTimeoutMs ?? DEFAULT_POLL_TIMEOUT_MS;
+      const all = await withTimeout(this.opts.client.listRecordings(), timeoutMs, 'Plaud');
 
       let processedElsewhere = new Map<string, ProcessedElsewhereEntry>();
       if (this.opts.loadProcessedElsewhere) {
         try {
-          processedElsewhere = await this.opts.loadProcessedElsewhere();
+          processedElsewhere = await withTimeout(this.opts.loadProcessedElsewhere(), timeoutMs, 'The output folder scan');
           if (processedElsewhere.size > 0) {
             this.opts.logger.info(
               { count: processedElsewhere.size },

@@ -701,10 +701,12 @@ function wrap(children: React.ReactNode) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <header
+        className="drag-region"
         style={{
           padding: '10px 14px',
           borderBottom: '1px solid var(--border)',
           fontWeight: 600,
+          flexShrink: 0,
         }}
       >
         Process recording

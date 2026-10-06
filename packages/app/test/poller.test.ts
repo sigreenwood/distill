@@ -183,3 +183,41 @@ describe('Poller minimum recording length', () => {
     expect(rows.get('short')).toBe('inbox');
   });
 });
+
+describe('Poller when Plaud never answers', () => {
+  const logger = { info() {}, warn() {}, error() {}, debug() {} };
+
+  it('fails the poll after the timeout and lets the next poll run', async () => {
+    let calls = 0;
+    const results: string[] = [];
+    const poller = new Poller({
+      // First request hangs forever (as after sleep or a network change); the second answers.
+      client: { listRecordings: () => (++calls === 1 ? new Promise(() => {}) : Promise.resolve([])) } as never,
+      state: {
+        getAppState: () => 'true',
+        setAppState() {},
+        recordingExists: () => true,
+        insertRecording() {},
+      } as never,
+      logger: logger as never,
+      intervalMinutes: 5,
+      shouldPause: () => false,
+      onPoll: ((r: { kind: string }) => results.push(r.kind)) as never,
+      requestTimeoutMs: 50,
+    } as never);
+    const first = await poller.syncNow();
+    expect(first.kind).toBe('error');
+    expect((first as { message: string }).message).toContain('did not respond');
+    // Before the fix the hung request kept the poll "in flight" for ever.
+    const second = await poller.syncNow();
+    expect(second.kind).toBe('ok');
+    expect(calls).toBe(2);
+  });
+});
+
+describe('withTimeout', () => {
+  it('passes a prompt result through', async () => {
+    const { withTimeout } = await import('../src/main/poller.js');
+    await expect(withTimeout(Promise.resolve(7), 50, 'x')).resolves.toBe(7);
+  });
+});

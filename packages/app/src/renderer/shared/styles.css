@@ -58,8 +58,17 @@ body,
 
 body {
   -webkit-font-smoothing: antialiased;
-  -webkit-app-region: drag;
   user-select: none;
+}
+
+/*
+ * Drag handle for the frameless windows (inbox, tag sheet): their header
+ * only. The whole body used to be a drag region, and macOS delivers no
+ * wheel or trackpad scrolling over drag regions, so lists in those windows
+ * could not scroll.
+ */
+.drag-region {
+  -webkit-app-region: drag;
 }
 
 /* Buttons, inputs, interactive elements must not participate in window drag. */

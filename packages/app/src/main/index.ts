@@ -74,6 +74,13 @@ let logger: Logger | null = null;
 let stopAudioSweep: (() => void) | null = null;
 let stopModelCheck: (() => void) | null = null;
 let plaudStore: KeychainCredentialStore | null = null;
+// Polling for new recordings needs neither Python nor Ollama, so it starts
+// even while the Setup window repairs the venv; transcription waits for
+// setup (pythonReady). See continueBootstrap.
+let pythonReady = false;
+let bootstrapped = false;
+/** How long startup waits on the Keychain before carrying on without Plaud. */
+const KEYCHAIN_WAIT_MS = 15_000;
 
 // macOS delivers open-file (dock drop / "Open With") before whenReady on a
 // cold launch. Queue those and replay once the app has bootstrapped.
@@ -226,7 +233,11 @@ app.whenReady().then(async () => {
     },
     onStateChanged: () => trayHandle?.refresh(),
     onSetupComplete: () => {
-      void continueBootstrap();
+      pythonReady = true;
+      // Polling already started alongside the Setup window; only the
+      // worker was waiting for the venv.
+      if (bootstrapped) worker?.recoverOnStartup();
+      else void continueBootstrap();
     },
   });
 
@@ -243,11 +254,15 @@ app.whenReady().then(async () => {
     'python install status',
   );
   if (installStatus.kind === 'ready') {
+    pythonReady = true;
     await continueBootstrap();
   } else {
-    localLogger.info({ reason: installStatus.kind }, 'opening setup window');
+    // Setup repairs the venv in its window; meanwhile the tray and polling
+    // still start. Gating everything on setup left polling off for up to
+    // 9.7 days in Sep 2026 while setup was quit or failed repeatedly.
+    localLogger.info({ reason: installStatus.kind }, 'opening setup window; polling starts anyway');
     openSetup();
-    return;
+    await continueBootstrap();
   }
 
   /**
@@ -359,7 +374,8 @@ app.whenReady().then(async () => {
           },
         },
       );
-      worker.recoverOnStartup();
+      if (pythonReady) worker.recoverOnStartup();
+      else localLogger.info('transcription waits for Python setup to finish; polling starts now');
 
       // Wakes the worker even with no other trigger event (a tag save, a
       // retry, ...), so an idle/overnight processingSchedule window that
@@ -367,7 +383,9 @@ app.whenReady().then(async () => {
       // is a no-op when the worker's already running or nothing's
       // claimable, so this is cheap to run unconditionally rather than
       // starting/stopping it as Settings changes the schedule mode.
-      setInterval(() => worker?.nudge(), 60_000);
+      setInterval(() => {
+        if (pythonReady) worker?.nudge();
+      }, 60_000);
 
       poller = new Poller({
         state: localState,
@@ -430,7 +448,28 @@ app.whenReady().then(async () => {
     }
   }
 
+  /** Move a legacy config.json Plaud password into the Keychain (touches the Keychain, so only after prime()). */
+  async function migratePlaudPassword(): Promise<void> {
+    try {
+      const result = await migratePasswordToKeychain();
+      if (result === 'migrated') {
+        localLogger.info('migrated Plaud password from config.json to Keychain');
+      } else if (result === 'kept-as-fallback') {
+        localLogger.info(
+          'Plaud password still in config.json (no Keychain copy yet); will migrate on first sign-in',
+        );
+      }
+    } catch (e) {
+      localLogger.warn(
+        { err: String(e) },
+        'password migration failed (non-fatal; legacy file path still works)',
+      );
+    }
+  }
+
   async function continueBootstrap(): Promise<void> {
+    if (bootstrapped) return;
+    bootstrapped = true;
     const tray = createTray({
       state: localState,
       logger: localLogger,
@@ -490,24 +529,50 @@ app.whenReady().then(async () => {
     }
 
     plaudStore = new KeychainCredentialStore();
-    await plaudStore.prime();
-    try {
-      const result = await migratePasswordToKeychain();
-      if (result === 'migrated') {
-        localLogger.info('migrated Plaud password from config.json to Keychain');
-      } else if (result === 'kept-as-fallback') {
-        localLogger.info(
-          'Plaud password still in config.json (no Keychain copy yet); will migrate on first sign-in',
-        );
-      }
-    } catch (e) {
-      localLogger.warn(
-        { err: String(e) },
-        'password migration failed (non-fatal; legacy file path still works)',
-      );
+    // Reading the Plaud password from the Keychain blocks while macOS shows
+    // its "distill wants to use your confidential information" prompt —
+    // which a new build's signature triggers again. Unanswered (overnight,
+    // say), it held up startup and therefore polling for hours. Wait a
+    // little, then carry on and connect as soon as the prompt is answered.
+    const primed = plaudStore.prime().then(
+      () => true,
+      (e) => {
+        localLogger.warn({ err: String(e) }, 'Keychain read failed; Plaud may need signing in again');
+        return true;
+      },
+    );
+    const primedInTime = await Promise.race([
+      primed,
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), KEYCHAIN_WAIT_MS)),
+    ]);
+    if (!primedInTime) {
+      localLogger.warn('waiting for Keychain access to the Plaud password; polling starts once it is approved');
+      tray.setOllamaWarning('Plaud: waiting for Keychain access — approve the macOS prompt');
+      notify({
+        title: 'distill — Keychain access needed',
+        body: 'Approve the macOS Keychain prompt so distill can check Plaud for new recordings.',
+      });
+      void primed.then(async () => {
+        localLogger.info('Keychain access granted; connecting to Plaud');
+        tray.setOllamaWarning(null);
+        await migratePlaudPassword();
+        await connectPlaudAndStartPipeline();
+      });
+    }
+    if (primedInTime) {
+      await migratePlaudPassword();
+      await connectPlaudAndStartPipeline();
     }
 
-    await connectPlaudAndStartPipeline();
+    // Check Plaud as soon as the Mac wakes, rather than waiting out the
+    // rest of the interval; the delay lets the network come back first.
+    powerMonitor.on('resume', () => {
+      setTimeout(() => {
+        if (!poller) return;
+        localLogger.info('Mac woke; checking Plaud for new recordings');
+        void poller.syncNow();
+      }, 15_000);
+    });
 
     localLogger.info(
       {

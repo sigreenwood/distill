@@ -94,9 +94,12 @@ export function openTagSheet(recordingId: string): void {
     // under the attendees box. The body scrolls if a long list still
     // doesn't fit.
     height: 640,
+    minWidth: 380,
+    minHeight: 420,
     show: false,
     frame: false,
-    resizable: false,
+    // Frameless but resizable from its edges; the header is the drag handle.
+    resizable: true,
     // Not a child of the inbox — on macOS, child windows of frameless
     // parents inherit weird behaviour (off-screen placement, unexpected
     // close-on-parent-blur). Keep the tag sheet fully independent.
@@ -182,8 +185,10 @@ export function openSettings(opts?: { initialTab?: string }): void {
   settingsWin = new BrowserWindow({
     width: 720,
     height: 720,
+    minWidth: 600,
+    minHeight: 480,
     show: false,
-    resizable: false,
+    resizable: true,
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
@@ -321,8 +326,10 @@ export function openSetup(): BrowserWindow {
   setupWin = new BrowserWindow({
     width: 640,
     height: 520,
+    minWidth: 520,
+    minHeight: 400,
     show: false,
-    resizable: false,
+    resizable: true,
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
