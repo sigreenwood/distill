@@ -76,6 +76,9 @@ extraResources:
   # Reads Outlook calendar printouts (PDF) for meeting/account matching.
   - from: python/calendar_pdf.py
     to: python/calendar_pdf.py
+  # Reads slide decks and PDFs attached to a meeting (main/materials.ts).
+  - from: python/materials_extract.py
+    to: python/materials_extract.py
   # Silero VAD weights (~2.3MB, MIT). transcribe.py loads this from its
   # own directory to gate out non-speech before Whisper runs. Without it
   # transcription still works (VAD degrades to off with a warning), but

@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import type { ClientDTO, FrequentAttendee, MeetingTypeDTO } from '../shared/api.js';
 import type { MeetingTypeSuggestion } from '../../shared/meetingTypeSuggestion.js';
 import { attendeeKey, parseAttendeesText, type Attendee } from '../../shared/attendees.js';
+import { MaterialsPanel } from '../shared/MaterialsPanel.js';
 
 function mergeAttendees(existing: Attendee[], parsed: Attendee[]): Attendee[] {
   const merged = [...existing];
@@ -689,6 +690,7 @@ function Tag() {
           </div>
         )}
       </div>
+      <MaterialsPanel recordingId={recordingId} />
       <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, cursor: 'pointer' }}>
         <input type="checkbox" checked={urgent} onChange={(e) => setUrgent(e.target.checked)} />
         Urgent — process as soon as possible

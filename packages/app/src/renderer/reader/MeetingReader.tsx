@@ -6,6 +6,7 @@ import type { RegisterItemKind } from '../../shared/register.js';
 import type { SummaryVersionDTO } from '../../shared/summaryVersion.js';
 import type { MeetingTypeDTO } from '../shared/api.js';
 import { MeetingText } from './MeetingText.js';
+import { MaterialsPanel } from '../shared/MaterialsPanel.js';
 
 export function MeetingReader({ recordingId, initialScope = 'summary' }: { recordingId: string; initialScope?: SearchScope }) {
   const [meeting, setMeeting] = useState<MeetingDetail | null>(null);
@@ -17,6 +18,7 @@ export function MeetingReader({ recordingId, initialScope = 'summary' }: { recor
   const [matchCount, setMatchCount] = useState(0);
   const [activeMatch, setActiveMatch] = useState(0);
   const [showRegisterForm, setShowRegisterForm] = useState(false);
+  const [showMaterials, setShowMaterials] = useState(false);
   const [showCorrectForm, setShowCorrectForm] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -101,7 +103,13 @@ export function MeetingReader({ recordingId, initialScope = 'summary' }: { recor
             Versions…
           </button>
         )}
+        {meeting && (
+          <button aria-pressed={showMaterials} onClick={() => setShowMaterials(v => !v)}>
+            Materials…
+          </button>
+        )}
       </nav>
+      {showMaterials && meeting && <MaterialsPanel recordingId={meeting.id} finished={meeting.canCorrect} />}
       {showRegisterForm && meeting?.clientId && (
         <RegisterQuickAdd
           clientId={meeting.clientId}

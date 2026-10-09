@@ -1,11 +1,13 @@
 /**
  * The user message for a summary request: account context (if the client
- * has one), the attendee roster (if any), then the transcript. Shared by
+ * has one), notes from attached materials (if any), the attendee roster
+ * (if any), then the transcript. Shared by
  * the pipeline (doSummarise) and the reader's alternative summaries
  * (summaryVersions.ts) so both see exactly the same input. The meeting
  * type's prompt stays the system message, untouched — it is hash-tracked.
  */
 import { buildAttendeeRoster, parseStoredAttendees } from './attendees.js';
+import { buildMaterialsContext, type MaterialNotes } from './materials.js';
 
 /** An account context is a brief, not a dossier: it rides along with every summary for that client. */
 export const MAX_ACCOUNT_CONTEXT_CHARS = 3000;
@@ -25,9 +27,12 @@ export function buildSummaryUserContent(input: {
   transcript: string;
   attendeesJson: string | null;
   account?: { clientName: string; context: string | null } | null;
+  /** Notes made from each attached file in its own pass (main/materials.ts). */
+  materials?: MaterialNotes[];
 }): string {
   const parts = [
     input.account ? buildAccountContext(input.account.clientName, input.account.context) : '',
+    buildMaterialsContext(input.materials ?? []),
     buildAttendeeRoster(parseStoredAttendees(input.attendeesJson)),
     input.transcript,
   ];

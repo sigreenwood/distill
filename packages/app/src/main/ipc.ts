@@ -39,7 +39,11 @@ import { showAppleNote, deleteAppleNote } from './outputs.js';
 import { audioFileExists } from './pipelineSteps.js';
 import { app, clipboard, dialog, ipcMain, shell, BrowserWindow } from 'electron';
 import { Channels, KEEPALIVE_PRESETS, WHISPER_MODEL_PRESETS } from '../shared/ipcChannels.js';
-import { userVocabularyDir } from './paths.js';
+import { appSupportDir, userVocabularyDir } from './paths.js';
+import { attachMaterials, ensureMaterialNotes, removeMaterial, toMaterialDTO, validateMaterialPaths } from './materials.js';
+import { MATERIAL_EXTENSIONS } from '../shared/materials.js';
+import { assertLocalInference } from './localInference.js';
+import { bundledMaterialsScript } from './bundledResources.js';
 import { MAX_MIN_RECORDING_MINUTES, saveConfig, type AppConfig, type OutputsConfig } from './config.js';
 import type { ProcessingSchedule } from './processingSchedule.js';
 import { hashPrompt, parsePromptsMarkdownDetailed, readSeedPrompt } from './seed.js';
@@ -438,10 +442,13 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     summaryVersionRuns.set(evt.sender.id, controller);
     ctx.logger.info({ recordingId: row.id, model, meetingTypeId }, 'generating an alternative summary version');
     try {
+      // Files attached since the last summary get their notes first, each in its own pass.
+      const materials = await ensureMaterialNotes(row.id, materialsCtx(), controller.signal);
       const result = await generateSummaryVersion(
         {
           transcriptText: row.transcript_text,
           attendeesJson: row.attendees_json,
+          materials,
           account: (() => {
             const c = row.client_id ? ctx.state.getClient(row.client_id) : undefined;
             return c ? { clientName: c.name, context: c.context } : null;
@@ -496,6 +503,61 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     ctx.getWorker()?.nudge();
   });
 
+  // --- meeting materials -----------------------------------------------------
+  // Slides, PDFs and screenshots attached to a recording (main/materials.ts).
+  // Notes are made when the meeting is next summarised, not on attach.
+
+  function materialsCtx() {
+    const cfg = ctx.getConfig().ollama;
+    assertLocalInference(cfg, 'Reading meeting materials');
+    return {
+      state: ctx.state,
+      logger: ctx.logger,
+      ollama: new OllamaClient(cfg.host),
+      ollamaConfig: { model: cfg.model, keepAlive: cfg.keepAlive, temperature: cfg.temperature },
+      pythonBinary: resolvePythonBinary(app.getAppPath()),
+      extractScript: bundledMaterialsScript(),
+    };
+  }
+
+  ipcMain.handle(Channels.MaterialsList, (_evt, recordingId) => {
+    const row = requireMeeting(recordingId);
+    return ctx.state.listMaterials(row.id).map(toMaterialDTO);
+  });
+
+  ipcMain.handle(Channels.MaterialsAdd, async (evt, recordingId, paths) => {
+    const row = requireMeeting(recordingId);
+    let files: unknown = paths;
+    if (files == null) {
+      const win = BrowserWindow.fromWebContents(evt.sender);
+      const options = {
+        title: 'Attach slides, documents or screenshots',
+        buttonLabel: 'Attach',
+        properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[],
+        filters: [{ name: 'Slides, PDFs and images', extensions: MATERIAL_EXTENSIONS }],
+      };
+      const picked = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+      if (picked.canceled || picked.filePaths.length === 0) return { added: 0, duplicates: 0 };
+      files = picked.filePaths;
+    }
+    const result = await attachMaterials(ctx.state, row.id, validateMaterialPaths(files), path.join(appSupportDir(), 'materials'));
+    ctx.logger.info({ recordingId: row.id, ...result }, 'materials attached');
+    broadcastInboxChanged();
+    return result;
+  });
+
+  ipcMain.handle(Channels.MaterialsRemove, async (_evt, id) => {
+    if (typeof id !== 'string') throw new Error('id must be a string');
+    await removeMaterial(ctx.state, id);
+    broadcastInboxChanged();
+  });
+
+  ipcMain.handle(Channels.MaterialsRetry, (_evt, id) => {
+    if (typeof id !== 'string') throw new Error('id must be a string');
+    ctx.state.resetMaterialNotes(id);
+    broadcastInboxChanged();
+  });
+
   ipcMain.handle(Channels.InboxSearch, async (_evt, query, scope) => {
     validateSearch(query, scope);
     return searchMeetings(ctx.state.listSearchableJoined(), query, scope, ctx.getConfig().ollama);
@@ -511,7 +573,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       ctx.onStateChanged?.();
     }
     const clients = ctx.state.listClients();
-    return ctx.state.listActiveJoined().map((r) => toInboxDTO(r, cfg.outputs, clients));
+    const materials = ctx.state.countMaterialsByRecording();
+    return ctx.state.listActiveJoined().map((r) => toInboxDTO(r, cfg.outputs, clients, materials));
   });
 
   ipcMain.handle(Channels.InboxSkip, (_evt, recordingId) => {
@@ -579,7 +642,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     const cfg = ctx.getConfig();
     return {
       total: ctx.state.hiddenCount(),
-      items: ctx.state.listHiddenJoined().map((r) => toInboxDTO(r, cfg.outputs, ctx.state.listClients())),
+      items: ctx.state.listHiddenJoined().map((r) => toInboxDTO(r, cfg.outputs, ctx.state.listClients(), ctx.state.countMaterialsByRecording())),
     };
   });
 
@@ -591,7 +654,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     const cfg = ctx.getConfig();
     return {
       total: ctx.state.listAllCount(search),
-      items: ctx.state.listAllJoined(search, limit, offset).map((r) => toInboxDTO(r, cfg.outputs, ctx.state.listClients())),
+      items: ctx.state.listAllJoined(search, limit, offset).map((r) => toInboxDTO(r, cfg.outputs, ctx.state.listClients(), ctx.state.countMaterialsByRecording())),
     };
   });
 
@@ -1897,7 +1960,12 @@ function describeVenvStatus(status: VenvStatus): string {
 
 // --- DTO mappers -----------------------------------------------------------
 
-export function toInboxDTO(r: JoinedRecordingRow, outputs: OutputsConfig, clients: Pick<ClientRow, 'id' | 'name'>[] = []) {
+export function toInboxDTO(
+  r: JoinedRecordingRow,
+  outputs: OutputsConfig,
+  clients: Pick<ClientRow, 'id' | 'name'>[] = [],
+  materialCounts: Map<string, number> = new Map(),
+) {
   const currentStep = statusToStep(r.status);
   const calendar = parseStoredMatch(r.calendar_match_json);
   const calendarAccount = calendar ? accountForMatch(calendar, clients) : null;
@@ -1954,6 +2022,7 @@ export function toInboxDTO(r: JoinedRecordingRow, outputs: OutputsConfig, client
     qualityWarning: r.quality_warning,
     // "3 actions · 1 decision" from the summary; see shared/followUps.ts.
     followUps: followUpsOf(r),
+    materialsCount: materialCounts.get(r.id) ?? 0,
     calendarClientReason: calendarAccount?.reason ?? null,
     // Gates the "Full re-run" action: a local file to re-transcribe from,
     // or (Plaud rows only — retention never deletes their audio_path, but

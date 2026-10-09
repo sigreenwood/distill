@@ -26,5 +26,7 @@ export const bundledTranscribeScript = (): string =>
   path.join(bundledRoot(), 'python', 'transcribe.py');
 export const bundledCalendarScript = (): string =>
   path.join(bundledRoot(), 'python', 'calendar_pdf.py');
+export const bundledMaterialsScript = (): string =>
+  path.join(bundledRoot(), 'python', 'materials_extract.py');
 export const bundledRequirementsFile = (): string =>
   path.join(bundledRoot(), 'python', 'requirements.txt');

@@ -16,6 +16,7 @@ import type { OllamaConfig } from './config.js';
 import { assertLocalInference } from './localInference.js';
 import { estimateTokenBudget, computeAdaptiveContextWindow } from './tokenBudget.js';
 import { buildSummaryUserContent } from '../shared/summaryInput.js';
+import type { MaterialNotes } from '../shared/materials.js';
 import type { SummaryVersionRow } from './state.js';
 import type { SummaryVersionDTO } from '../shared/summaryVersion.js';
 
@@ -24,6 +25,8 @@ export interface GenerateVersionInput {
   attendeesJson: string | null;
   /** The recording's client and its account context, if any (shared/summaryInput.ts). */
   account?: { clientName: string; context: string | null } | null;
+  /** Notes from attached materials, already made (main/materials.ts). */
+  materials?: MaterialNotes[];
   meetingType: { name: string; prompt: string };
   model: string;
 }
@@ -44,6 +47,7 @@ export async function generateSummaryVersion(
     transcript: input.transcriptText,
     attendeesJson: input.attendeesJson,
     account: input.account,
+    materials: input.materials,
   });
   const budget = estimateTokenBudget(input.meetingType.prompt, userContent, config.contextWindow);
   const numCtx = config.adaptiveContextWindow

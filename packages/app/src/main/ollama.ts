@@ -19,7 +19,8 @@ export type PreflightResult =
 
 export interface OllamaChatRequest {
   model: string;
-  messages: { role: 'system' | 'user' | 'assistant'; content: string }[];
+  /** `images`: base64 PNG/JPEG for a vision model (meeting screenshots; see main/materials.ts). */
+  messages: { role: 'system' | 'user' | 'assistant'; content: string; images?: string[] }[];
   format?: 'json' | Record<string, unknown>;
   options?: { temperature?: number; num_ctx?: number };
   keep_alive?: string;

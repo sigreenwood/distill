@@ -25,6 +25,7 @@ export type RecordingStatus =
 
 import type { BriefCandidate, ClientBrief, SavedBriefSummary } from '../../shared/brief';
 import type { MeetingFollowUps } from '../../shared/followUps';
+import type { MaterialDTO } from '../../shared/materials';
 import type { RegisterItem } from '../../shared/register';
 import type { SummaryVersionDTO } from '../../shared/summaryVersion';
 import type { MeetingTypeSuggestion } from '../../shared/meetingTypeSuggestion.js';
@@ -91,6 +92,8 @@ export interface InboxItemDTO {
   qualityWarning: string | null;
   /** Actions and decisions in the summary ("3 actions · 1 decision"), null when none; see shared/followUps.ts. */
   followUps: { label: string; reviewed: boolean } | null;
+  /** Slides, documents and screenshots attached (shared/materials.ts). */
+  materialsCount: number;
   calendarClientReason: string | null;
   /** Whether a "Full re-run" can re-transcribe this recording — a local audio file, or (Plaud only) a cloud copy to re-fetch. */
   audioAvailable: boolean;
@@ -315,6 +318,14 @@ export interface DistillApi {
     listSaved(clientId: string): Promise<SavedBriefSummary[]>;
     getSaved(id: string): Promise<ClientBrief>;
     deleteSaved(id: string): Promise<void>;
+  };
+  materials: {
+    list(recordingId: string): Promise<MaterialDTO[]>;
+    /** Without paths, main shows a file picker. */
+    add(recordingId: string, paths?: string[]): Promise<{ added: number; duplicates: number }>;
+    remove(id: string): Promise<void>;
+    /** Clear a failed attempt so the next summary reads the file again. */
+    retry(id: string): Promise<void>;
   };
   followUps: {
     /** Meetings whose summaries recorded actions or decisions, newest first. */

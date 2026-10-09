@@ -7,7 +7,8 @@ import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { pipeline as streamPipeline } from 'node:stream/promises';
 import { audioDir, userVocabularyDir } from './paths.js';
-import { bundledPythonDir, bundledTranscribeScript } from './bundledResources.js';
+import { bundledMaterialsScript, bundledPythonDir, bundledTranscribeScript } from './bundledResources.js';
+import { ensureMaterialNotes, type MaterialsContext } from './materials.js';
 import { venvPython } from './pythonEnv.js';
 import { loadVocabulary, applyReplacements } from './vocabulary.js';
 import { cleanWhisperRepetitions } from './transcriptCleanup.js';
@@ -284,6 +285,18 @@ export function resolvePythonBinary(packageDir: string): string {
   );
 }
 
+export function materialsContext(ctx: Pick<PipelineContext, 'state' | 'logger' | 'ollama' | 'getConfig' | 'packageDir'>): MaterialsContext {
+  const cfg = ctx.getConfig().ollama;
+  return {
+    state: ctx.state,
+    logger: ctx.logger,
+    ollama: ctx.ollama,
+    ollamaConfig: { model: cfg.model, keepAlive: cfg.keepAlive, temperature: cfg.temperature },
+    pythonBinary: resolvePythonBinary(ctx.packageDir),
+    extractScript: bundledMaterialsScript(),
+  };
+}
+
 export async function doSummarise(id: string, signal: AbortSignal, ctx: PipelineContext): Promise<void> {
   throwIfAborted(signal, 'summarise');
   const row = ctx.state.getRecordingJoined(id);
@@ -310,13 +323,17 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
   if (allowedIds !== null && !allowedIds.includes(meetingTypeId)) {
     throw new Error(`The selected meeting prompt is not allowed for ${contextClient?.name ?? 'this organisation'}. Choose an allowed prompt or update Settings → Clients.`);
   }
+  const cfg = ctx.getConfig();
+  // Each attached file is read in a pass of its own first; only the notes
+  // join the summary request, so the transcript keeps the context.
+  const materials = await ensureMaterialNotes(id, materialsContext(ctx), signal);
   const userContent = buildSummaryUserContent({
     transcript: row.transcript_text,
     attendeesJson: current.attendees_json,
     account: contextClient ? { clientName: contextClient.name, context: contextClient.context } : null,
+    materials,
   });
 
-  const cfg = ctx.getConfig();
   const budget = estimateTokenBudget(meetingType.prompt, userContent, cfg.ollama.contextWindow);
   if (budget.exceedsBudget) {
     ctx.logger.warn(
@@ -343,6 +360,7 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
       id,
       model: cfg.ollama.model,
       transcriptChars: row.transcript_text.length,
+      materials: materials.length,
       estimatedInputTokens: budget.estimatedInputTokens,
       numCtx,
     },

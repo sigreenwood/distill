@@ -29,6 +29,13 @@ const api = {
     getSaved: (id: string) => ipcRenderer.invoke(Channels.BriefGetSaved, id),
     deleteSaved: (id: string) => ipcRenderer.invoke(Channels.BriefDeleteSaved, id),
   },
+  materials: {
+    list: (recordingId: string) => ipcRenderer.invoke(Channels.MaterialsList, recordingId),
+    /** No paths: main shows a file picker. */
+    add: (recordingId: string, paths?: string[]) => ipcRenderer.invoke(Channels.MaterialsAdd, recordingId, paths ?? null),
+    remove: (id: string) => ipcRenderer.invoke(Channels.MaterialsRemove, id),
+    retry: (id: string) => ipcRenderer.invoke(Channels.MaterialsRetry, id),
+  },
   followUps: {
     list: (filter: { clientId?: string | null; sinceDays?: number | null; unreviewedOnly?: boolean }) =>
       ipcRenderer.invoke(Channels.FollowUpsList, filter),

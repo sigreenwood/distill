@@ -151,6 +151,20 @@ export interface ClientBriefRow {
   brief_json: string;
 }
 
+export interface MaterialRow {
+  id: string;
+  recording_id: string;
+  filename: string;
+  kind: 'slides' | 'image';
+  stored_path: string;
+  sha1: string;
+  notes: string | null;
+  notes_model: string | null;
+  error: string | null;
+  added_at: number;
+  notes_at: number | null;
+}
+
 export interface SummaryVersionRow {
   id: string;
   recording_id: string;
@@ -630,6 +644,30 @@ const MIGRATIONS: Migration[] = [
         brief_json  TEXT NOT NULL
       );
       CREATE INDEX idx_client_briefs_client ON client_briefs(client_id, created_at);
+    `,
+  },
+  {
+    version: 24,
+    sql: `
+      -- Slides, documents and screenshots attached to a recording
+      -- (shared/materials.ts). The file is copied under materials/;
+      -- notes are made once, in a model pass per file, and reused by
+      -- every summary of the meeting after that.
+      CREATE TABLE recording_materials (
+        id            TEXT PRIMARY KEY,
+        recording_id  TEXT NOT NULL REFERENCES recordings(id),
+        filename      TEXT NOT NULL,
+        kind          TEXT NOT NULL CHECK (kind IN ('slides','image')),
+        stored_path   TEXT NOT NULL,
+        sha1          TEXT NOT NULL,
+        notes         TEXT,
+        notes_model   TEXT,
+        error         TEXT,
+        added_at      INTEGER NOT NULL,
+        notes_at      INTEGER,
+        UNIQUE (recording_id, sha1)
+      );
+      CREATE INDEX idx_recording_materials_recording ON recording_materials(recording_id);
     `,
   },
 ];
@@ -1633,6 +1671,62 @@ export class State {
 
   deleteClientBrief(id: string): boolean {
     return this.db.prepare('DELETE FROM client_briefs WHERE id = ?').run(id).changes > 0;
+  }
+
+  // --- meeting materials -----------------------------------------------------
+
+  /** False when the same file is already attached to this recording. */
+  addMaterial(row: Omit<MaterialRow, 'notes' | 'notes_model' | 'error' | 'notes_at'>): boolean {
+    return (
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO recording_materials (id, recording_id, filename, kind, stored_path, sha1, added_at)
+           VALUES (@id, @recording_id, @filename, @kind, @stored_path, @sha1, @added_at)`,
+        )
+        .run(row).changes > 0
+    );
+  }
+
+  /** Oldest first: the order the user attached them, which is the order they are read. */
+  listMaterials(recordingId: string): MaterialRow[] {
+    return this.db
+      .prepare('SELECT * FROM recording_materials WHERE recording_id = ? ORDER BY added_at, filename')
+      .all(recordingId) as MaterialRow[];
+  }
+
+  /** Materials per recording, for the inbox rows. */
+  countMaterialsByRecording(): Map<string, number> {
+    const rows = this.db
+      .prepare('SELECT recording_id, COUNT(*) AS n FROM recording_materials GROUP BY recording_id')
+      .all() as { recording_id: string; n: number }[];
+    return new Map(rows.map((r) => [r.recording_id, r.n]));
+  }
+
+  getMaterial(id: string): MaterialRow | undefined {
+    return this.db.prepare('SELECT * FROM recording_materials WHERE id = ?').get(id) as MaterialRow | undefined;
+  }
+
+  setMaterialNotes(id: string, result: { notes: string; model: string } | { error: string }): void {
+    this.db
+      .prepare(
+        `UPDATE recording_materials SET notes = @notes, notes_model = @model, error = @error, notes_at = @at WHERE id = @id`,
+      )
+      .run({
+        id,
+        notes: 'notes' in result ? result.notes : null,
+        model: 'notes' in result ? result.model : null,
+        error: 'error' in result ? result.error : null,
+        at: Date.now(),
+      });
+  }
+
+  /** Clears a failed attempt so the next summary tries the file again. */
+  resetMaterialNotes(id: string): void {
+    this.db.prepare('UPDATE recording_materials SET notes = NULL, notes_model = NULL, error = NULL, notes_at = NULL WHERE id = ?').run(id);
+  }
+
+  deleteMaterial(id: string): boolean {
+    return this.db.prepare('DELETE FROM recording_materials WHERE id = ?').run(id).changes > 0;
   }
 
   // --- summary versions ------------------------------------------------------

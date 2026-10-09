@@ -72,6 +72,7 @@ export function MetaLine({ r }: { r: InboxItemDTO }) {
       <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
         {formatWhen(r.start_time, r.synced_at)} · {formatDuration(r.duration_seconds)}
         {tag ? ` · ${tag}` : ''}
+        {r.materialsCount > 0 && ` · 📎 ${r.materialsCount}`}
         {r.followUps && (
           <>
             {' · '}

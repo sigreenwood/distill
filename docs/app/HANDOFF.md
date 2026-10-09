@@ -1500,6 +1500,48 @@ saved-brief cases in `clientBrief.test.ts`), both typechecks.
 Migration 23's SQL was applied to a copy of the live database and rolled
 back. Not exercised: the windows in the running app.
 
+## Meeting materials: slides, PDFs and screenshots — committed 2026-10-09
+
+- **Attaching:** a **Materials** panel appears in the tag sheet and in
+  the meeting reader (**Materials…**). It takes `.pptx`, `.pdf` and
+  images, by drop or **Attach…**. Files are copied to
+  `materials/<recordingId>/` and listed in `recording_materials`
+  (migration 24), with duplicates detected by SHA-1. Rows show 📎 N.
+- **A pass per file, outside the summary call** (`main/materials.ts`).
+  Notes are made once and stored:
+  - **Decks and PDFs:** `python/materials_extract.py` uses only the
+    standard library for `.pptx` (slide order from `presentation.xml`,
+    speaker notes, hidden slides marked) and pypdf for PDFs.
+  - **Small decks:** up to 4,000 characters, the deck's own text is
+    used as-is (`verbatim`).
+  - **Larger decks** get one notes pass per batch of slides (24k
+    characters each).
+  - **Images** are scaled to a 2,000 px edge with `sips` (which also
+    converts HEIC) and read by the configured model, which has vision.
+  - **Each pass** gets 16k of context at temperature 0. The prompts ask
+    for reference notes (names and terms, figures, outline) rather than
+    a summary, because the pass does not know what was discussed.
+- **Into the summary:** `ensureMaterialNotes` runs in `doSummarise` and
+  in Versions… → Generate, one file at a time. The notes join the user
+  message after the account context and before the transcript, capped
+  at 4,000 characters per file and 10,000 in total. They are marked as
+  background: reported as discussed only where the transcript shows it,
+  with up to five other points under "## From the materials (not
+  discussed)". A file that fails keeps its error, can be retried, and
+  never fails the summary.
+- **Finished meetings:** attach in the reader, then Versions… →
+  Generate, then "Use this version" to re-write the outputs.
+
+Measured on this Mac (qwen3.8:27b-mlx, 48 GB): a screenshot took 57 s
+with the model cold and 46 s with it loaded; a 17-slide deck (17k
+characters with speaker notes) took 70 s for one pass. The notes were
+2–3.3k characters each.
+
+Verification: 389 tests (`materials.test.ts` builds real `.pptx` files
+and runs the extractor), both typechecks. The real passes were run
+outside the app. Not exercised: the panel in the running app, or an
+end-to-end summary that includes materials.
+
 ## Next step
 
 Later ideas, not implemented or fully specified: diagnostics and
