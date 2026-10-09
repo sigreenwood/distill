@@ -1500,7 +1500,7 @@ saved-brief cases in `clientBrief.test.ts`), both typechecks.
 Migration 23's SQL was applied to a copy of the live database and rolled
 back. Not exercised: the windows in the running app.
 
-## Meeting materials: slides, PDFs and screenshots — committed 2026-10-09
+## Meeting materials: slides, PDFs and screenshots — 2026-10-09 (0.0.37)
 
 - **Attaching:** a **Materials** panel appears in the tag sheet and in
   the meeting reader (**Materials…**). It takes `.pptx`, `.pdf` and
