@@ -101,6 +101,26 @@ export interface InboxItemDTO {
   outputTargets: { markdown: boolean; html: boolean; appleNote: boolean };
 }
 
+export interface ClaudeSettingsDTO {
+  enabled: boolean;
+  /** '' = Claude Code's default model. */
+  model: string;
+  /** Also use Claude for recordings not filed to a client. */
+  forUnfiled: boolean;
+}
+
+export interface ClaudeStatusDTO {
+  installed: boolean;
+  binary: string | null;
+  version: string | null;
+  loggedIn: boolean;
+  authMethod: string | null;
+  subscription: string | null;
+  email: string | null;
+  /** Why it is not usable, for the user; null when it is. */
+  problem: string | null;
+}
+
 export interface ClientDTO {
   id: string;
   name: string;
@@ -109,6 +129,8 @@ export interface ClientDTO {
   /** Account context added to every summary for this client; '' when none. */
   context: string;
   meetingTypeIds: string[] | null;
+  /** This client's summaries may be written by Claude Code (sent to Anthropic). */
+  claudeSummaries: boolean;
 }
 
 export interface MeetingTypeDTO {
@@ -440,6 +462,8 @@ export interface DistillApi {
     add(payload: { name: string }): Promise<ClientDTO>;
     /** Save the client's account context ('' clears it). */
     setContext(id: string, context: string): Promise<ClientDTO>;
+    /** Allow (or stop allowing) Claude Code to write this client's summaries. Sends transcripts to Anthropic. */
+    setClaude(id: string, allowed: boolean): Promise<ClientDTO>;
     setMeetingTypes(id: string, ids: string[] | null): Promise<ClientDTO>;
   };
   meetingTypes: {
@@ -454,6 +478,15 @@ export interface DistillApi {
     /** Apply a suggestion by its key: add it, or update the existing type. */
     accept(key: string): Promise<MeetingTypeDTO>;
     dismiss(key: string): Promise<void>;
+  };
+  claude: {
+    getSettings(): Promise<{ settings: ClaudeSettingsDTO; status: ClaudeStatusDTO }>;
+    /** Throws if the user declines the consent prompt when turning it on. */
+    saveSettings(s: ClaudeSettingsDTO): Promise<ClaudeSettingsDTO>;
+    check(): Promise<ClaudeStatusDTO>;
+    openGuide(): Promise<void>;
+    /** One harmless round trip (no recording content) to prove the whole path works. */
+    test(): Promise<{ ok: true; model: string; seconds: number; costUsd: number | null } | { ok: false; error: string }>;
   };
   recorder: {
     toggle(): Promise<void>;

@@ -12,6 +12,7 @@ import type {
 } from '../shared/api.js';
 import { TabButton, headerStyle, readTabFromHash, shellStyle, tabBarStyle } from './ui.jsx';
 import { ClientsPane } from './clients.jsx';
+import { ClaudePane } from './claude.jsx';
 import {
   AboutPane,
   GeneralPane,
@@ -100,6 +101,7 @@ function Settings() {
           active={tab === 'performance'}
           onClick={() => setTab('performance')}
         />
+        <TabButton label="Claude" active={tab === 'claude'} onClick={() => setTab('claude')} />
         <TabButton label="About" active={tab === 'about'} onClick={() => setTab('about')} />
       </div>
       {/* Panes stay mounted and are shown/hidden so per-pane edits survive tab switches. */}
@@ -132,6 +134,9 @@ function Settings() {
           onSaved={(next) => setPerformance(next)}
           suggestion={modelSuggestion}
         />
+      </div>
+      <div style={{ display: tab === 'claude' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+        <ClaudePane />
       </div>
       <div style={{ display: tab === 'about' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
         <AboutPane system={system ?? undefined} />

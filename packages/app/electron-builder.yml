@@ -131,6 +131,9 @@ extraResources:
   # vocabulary files via an external LLM, then import via Settings.
   - from: ../../docs/app/VOCABULARY_GENERATION_PROMPT.md
     to: resources/VOCABULARY_GENERATION_PROMPT.md
+  # Setup guide for the optional Claude Code summaries (opened from Settings → Claude).
+  - from: ../../docs/app/CLAUDE-SUMMARIES.md
+    to: resources/CLAUDE-SUMMARIES.md
   # Same rationale: a generic, contributor-independent guide for
   # producing meeting-type prompts via an external LLM.
   - from: ../../docs/app/PROMPT_GENERATION_PROMPT.md

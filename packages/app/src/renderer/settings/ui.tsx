@@ -31,6 +31,7 @@ export type SettingsTab =
   | 'vocabulary'
   | 'general'
   | 'performance'
+  | 'claude'
   | 'about';
 
 export function readTabFromHash(): SettingsTab {
@@ -43,6 +44,7 @@ export function readTabFromHash(): SettingsTab {
     case 'vocabulary':
     case 'general':
     case 'performance':
+    case 'claude':
     case 'about':
       return hash;
     default:

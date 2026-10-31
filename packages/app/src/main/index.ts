@@ -502,6 +502,7 @@ app.whenReady().then(async () => {
           appSupportDir: appSupportDirPath,
           isPackaged: app.isPackaged,
           getSystemIdleSeconds: () => powerMonitor.getSystemIdleTime(),
+          notifyUser: (title, body) => notify({ title, body }),
         },
         {
           onStateChanged: () => {

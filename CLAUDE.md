@@ -9,11 +9,12 @@ on-device: poll Plaud cloud (or drag a file in) → transcribe with MLX
 Whisper → summarise with a local model via Ollama → write Markdown, HTML
 and Apple Notes.
 
-macOS on Apple Silicon only. No cloud LLM, no API keys. The only network
+macOS on Apple Silicon only. No cloud LLM by default, no API keys. The only network
 calls are Plaud (your own recordings), the Ollama registry (model
-existence checks), Hugging Face (one-time Whisper weights), and GitHub
+existence checks), Hugging Face (one-time Whisper weights), GitHub
 Releases (one GET to look for a newer distill; sends only the version in the
-User-Agent, switch off in Settings → General).
+User-Agent, switch off in Settings → General), and — only if the user has
+turned it on for a client — Anthropic, through the Claude Code CLI.
 
 ## Do not review `salvage/`
 
@@ -52,9 +53,18 @@ Main-process changes need a full dev restart; only the renderer hot-reloads.
 
 Do not reopen these in review; they are decisions, not oversights.
 
-- **Local-only inference.** Ollama for summaries, MLX Whisper for
-  transcription. No cloud LLM, ever — the point is that client meeting
-  content never leaves the machine.
+- **Local-only inference, with one opt-in exception.** Ollama for
+  summaries, MLX Whisper for transcription; the point is that client
+  meeting content never leaves the machine. The exception is summaries
+  written by Claude Code (`docs/app/CLAUDE-SUMMARIES.md`, DECISIONS §8),
+  which the user added deliberately and which is bounded so the default
+  is unchanged: off until switched on in Settings → Claude, then only for
+  clients allowed one by one; a client that is merely *suggested* never
+  qualifies; a failure falls back to local and a local failure never
+  escalates to the cloud; the model on the recording says which wrote it.
+  Transcription, filing, search, briefs, corrections and material notes
+  stay local always. Do not widen the exception (more steps, a default
+  on, an automatic fallback to the cloud) without the user asking.
 - **Inbox-first.** Nothing processes until the user explicitly asks.
 - **Suggestion-only.** Model updates, prompt changes, config
   recommendations and app updates are surfaced for approval and never

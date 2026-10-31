@@ -1,3 +1,4 @@
+import { ClientClaudeSwitch } from './claude.jsx';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ClientDTO, MeetingTypeDTO } from '../shared/api.js';
 import { MAX_ACCOUNT_CONTEXT_CHARS } from '../../shared/summaryInput.js';
@@ -145,6 +146,15 @@ export function ClientsPane() {
                 priorities, so they are understood and spelled right. Never reported as said in the meeting. Keep it
                 short; prompts handle the structure.
               </div>
+              <ClientClaudeSwitch
+                key={`claude-${selected.id}`}
+                clientName={selected.name}
+                allowed={selected.claudeSummaries}
+                onChange={async (allowed) => {
+                  const saved = await window.distill.clients.setClaude(selected.id, allowed);
+                  setClients((prev) => prev.map((c) => (c.id === saved.id ? saved : c)));
+                }}
+              />
               <OrganisationPrompts key={selected.id} client={selected} onDirtyChange={setPromptDirty} onSaved={saved => {
                 setClients(prev => prev.map(c => c.id === saved.id ? saved : c));
               }} />

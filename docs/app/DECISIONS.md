@@ -615,3 +615,52 @@ push, then `npm run release` (tags `vX.Y.Z`, uploads the `.pkg` and its
 `.sha256`). Write user-facing notes in `docs/app/releases/X.Y.Z.md` first —
 that file is what users read before updating; without it the notes fall back
 to commit subjects.
+
+## 8. Optional summaries by Claude Code (Oct 2026)
+
+The user asked for Claude (via Claude Code) as an alternative summariser. That
+reverses the settled "no cloud LLM, ever" constraint, so it is built as a narrow
+opt-in exception and CLAUDE.md now says so. The default is exactly as before.
+
+**Why Claude Code, not the API.** It uses the sign-in most people already have
+(a subscription), so there is no key to store, which keeps "no API keys" true.
+It is driven as `claude -p`, text in, text out. Setup steps:
+`docs/app/CLAUDE-SUMMARIES.md`.
+
+**Isolation is not free, and was measured.** A plain `claude -p` loads the
+user's own `~/.claude/CLAUDE.md`, settings, hooks and tools into the request: a
+note from it was quoted back and the call used ~11,000 extra tokens (~9× the
+cost). `--tools ""`, `--no-session-persistence`, `--setting-sources ""`,
+`--disable-slash-commands` and `--strict-mcp-config`, from an empty directory,
+removed all of it (probe empty, ~190 tokens). `--bare` would too but is
+API-key-only and ignores the subscription login; `CLAUDE_CODE_SIMPLE=1` breaks
+that login. A live test (`DISTILL_LIVE_CLAUDE_TEST=1`) pins the property.
+
+**The gate (`summaryProvider.ts`).** Nothing is sent unless the feature is on
+*and* the recording's client was allowed individually. Opt-in per client, not
+opt-out: switching the feature on alone sends nothing. Recordings with no client
+stay local unless the user asked otherwise.
+- A **suggested** client (a "Queue all" row is summarised before it is filed)
+  can only deny. The suggestion comes from a local model and can be wrong; a
+  wrong guess must not send a confidential client's transcript to the cloud.
+- Consent is asked in the **main process** (native dialog), when enabling the
+  feature and when allowing each client, so no front-end bug can skip it.
+- Fallback goes **cloud → local only**. A Claude failure (not installed, not
+  signed in, rate limit, timeout) writes the summary locally and notifies once
+  per five minutes. A local failure never goes to Claude. Both directions are
+  covered by tests that were checked by breaking the code and watching them fail.
+- The row records the model as `claude-code: <model>`; the log has one line per
+  transcript sent, with the reason, and one per transcript kept.
+
+**Scope.** Only the pipeline's summary step. Filing suggestions, search, briefs,
+corrections, attached-file notes and the reader's alternative summaries stay
+local. Transcription is never cloud.
+
+**Consequences accepted.** Temperature cannot be set, so the "same transcript,
+same summary" property (CLAUDE.md, `temperature: 0`) does not hold for these
+summaries. Token budget and truncation warnings do not apply (a Claude summary
+stores no context window). Claude Code runs a small model for housekeeping, so
+two Anthropic models see the start of a request.
+
+**Not done.** Anthropic API-key support (no key storage, by design); Claude for
+the reader's alternative summaries; per-meeting-type or per-recording overrides.

@@ -28,6 +28,8 @@ import type { OllamaClient } from './ollama.js';
 import { parseStoredAttendees, buildAttendeeRoster } from '../shared/attendees.js';
 import { buildSummaryUserContent } from '../shared/summaryInput.js';
 import { existingTracks, transcribeInputArgs } from './callTracks.js';
+import { ClaudeCodeError, findClaudeBinary, summariseWithClaudeCode, type ClaudeResult } from './claudeCode.js';
+import { chooseSummaryProvider, gateClientFor } from './summaryProvider.js';
 
 /** The audio source the download step needs: just a temp-URL provider. */
 export interface AudioSource {
@@ -54,6 +56,14 @@ export interface PipelineContext {
    * working; the worker treats a missing getter as "never idle".
    */
   getSystemIdleSeconds?: () => number;
+  /**
+   * Show the user a notification. Injected, like getSystemIdleSeconds, so this
+   * file stays free of an Electron import. Optional: without it a message is
+   * only logged.
+   */
+  notifyUser?: (title: string, body: string) => void;
+  /** Where Claude Code is. Injectable for tests; defaults to a real search. */
+  findClaude?: () => string | null;
 }
 
 /**
@@ -306,6 +316,69 @@ export function materialsContext(ctx: Pick<PipelineContext, 'state' | 'logger' |
   };
 }
 
+/** Tells the user a summary fell back to local, but not once per recording in a batch. */
+let lastClaudeFallbackNotice = 0;
+
+/**
+ * A Claude Code summary for this recording, or null to carry on locally.
+ *
+ * Null when the recording is not allowed to go (the common case: see
+ * summaryProvider.ts) or when Claude failed. The fallback only ever goes
+ * cloud -> local: if Ollama fails, nothing here sends the transcript anywhere.
+ */
+async function tryClaudeSummary(input: {
+  id: string;
+  cfg: AppConfig;
+  row: { client_id: string | null; suggested_client_id: string | null };
+  systemPrompt: string;
+  userContent: string;
+  signal: AbortSignal;
+  ctx: PipelineContext;
+}): Promise<ClaudeResult | null> {
+  const { id, cfg, ctx } = input;
+  const choice = chooseSummaryProvider({
+    settings: cfg.claudeSummaries,
+    client: gateClientFor(input.row, (cid) => ctx.state.getClient(cid)),
+  });
+  if (choice.provider !== 'claude-code') {
+    if (cfg.claudeSummaries.enabled) ctx.logger.info({ id, reason: choice.reason }, 'summarising locally');
+    return null;
+  }
+  try {
+    const binary = (ctx.findClaude ?? findClaudeBinary)();
+    if (!binary) throw new ClaudeCodeError('not-installed', 'Claude Code was not found.');
+    ctx.logger.info(
+      { id, reason: choice.reason, model: cfg.claudeSummaries.model || '(default)', chars: input.userContent.length },
+      'summarising with Claude Code (transcript sent to Anthropic)',
+    );
+    const result = await summariseWithClaudeCode({
+      binary,
+      systemPrompt: input.systemPrompt,
+      userContent: input.userContent,
+      model: cfg.claudeSummaries.model,
+      signal: input.signal,
+    });
+    ctx.logger.info(
+      { id, model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, costUsd: result.costUsd },
+      'Claude Code summary received',
+    );
+    return result;
+  } catch (e) {
+    if (isCancelled(e)) throw new CancelledError('summarise');
+    const reason = e instanceof ClaudeCodeError ? e.userMessage : String(e);
+    ctx.logger.warn({ id, err: String(e) }, 'Claude Code summary failed; summarising locally instead');
+    if (Date.now() - lastClaudeFallbackNotice > 5 * 60_000) {
+      lastClaudeFallbackNotice = Date.now();
+      try {
+        ctx.notifyUser?.('distill — Claude Code unavailable', `${reason} Summarised on this Mac instead.`);
+      } catch {
+        // A notification must never be what fails a summary.
+      }
+    }
+    return null;
+  }
+}
+
 export async function doSummarise(id: string, signal: AbortSignal, ctx: PipelineContext): Promise<void> {
   throwIfAborted(signal, 'summarise');
   const row = ctx.state.getRecordingJoined(id);
@@ -343,8 +416,18 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
     materials,
   });
 
+  const viaClaude = await tryClaudeSummary({
+    id,
+    cfg,
+    row: current,
+    systemPrompt: meetingType.prompt,
+    userContent,
+    signal,
+    ctx,
+  });
+  // Only meaningful for the local model; a Claude summary has no such window.
   const budget = estimateTokenBudget(meetingType.prompt, userContent, cfg.ollama.contextWindow);
-  if (budget.exceedsBudget) {
+  if (budget.exceedsBudget && !viaClaude) {
     ctx.logger.warn(
       {
         id,
@@ -375,37 +458,51 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
     },
     'starting summarisation',
   );
-  let response;
-  try {
-    response = await ctx.ollama.chat(
-      {
-        model: cfg.ollama.model,
-        messages: [
-          { role: 'system', content: meetingType.prompt },
-          { role: 'user', content: userContent },
-        ],
-        think: false,
-        keep_alive: cfg.ollama.keepAlive,
-        options: {
-          num_ctx: numCtx,
-          temperature: cfg.ollama.temperature,
+  let summary: string;
+  let modelUsed: string;
+  // Claude's context is far larger than the local window, so the local
+  // truncation numbers do not apply to a summary it wrote.
+  let truncated = budget.exceedsBudget;
+  let contextWindowAtSubmit: number | null = budget.contextWindow;
+  if (viaClaude) {
+    summary = viaClaude.text;
+    modelUsed = `claude-code: ${viaClaude.model}`;
+    truncated = false;
+    contextWindowAtSubmit = null;
+  } else {
+    let response;
+    try {
+      response = await ctx.ollama.chat(
+        {
+          model: cfg.ollama.model,
+          messages: [
+            { role: 'system', content: meetingType.prompt },
+            { role: 'user', content: userContent },
+          ],
+          think: false,
+          keep_alive: cfg.ollama.keepAlive,
+          options: {
+            num_ctx: numCtx,
+            temperature: cfg.ollama.temperature,
+          },
         },
-      },
-      signal,
-    );
-  } catch (e) {
-    if (isCancelled(e)) throw new CancelledError('summarise');
-    throw e;
+        signal,
+      );
+    } catch (e) {
+      if (isCancelled(e)) throw new CancelledError('summarise');
+      throw e;
+    }
+    summary = response.message.content.trim();
+    if (summary.length === 0) throw new Error('Ollama returned an empty summary');
+    modelUsed = response.model;
   }
-  const summary = response.message.content.trim();
-  if (summary.length === 0) throw new Error('Ollama returned an empty summary');
   ctx.state.setStatus(id, 'summarising', {
     summary_text: summary,
     prompt_snapshot: meetingType.prompt,
-    model_snapshot: response.model,
-    truncation_warning: budget.exceedsBudget ? 1 : 0,
+    model_snapshot: modelUsed,
+    truncation_warning: truncated ? 1 : 0,
     estimated_input_tokens: budget.estimatedInputTokens,
-    context_window_at_submit: budget.contextWindow,
+    context_window_at_submit: contextWindowAtSubmit,
   });
   // Every summary the pipeline produces is logged as an active version —
   // see main/summaryVersions.ts. This only touches summary_versions'
@@ -415,13 +512,13 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
     id: crypto.randomUUID(),
     recording_id: id,
     summary_text: summary,
-    model: response.model,
+    model: modelUsed,
     prompt_snapshot: meetingType.prompt,
     meeting_type_name: meetingType.name,
     active: true,
   });
   ctx.logger.info(
-    { id, chars: summary.length, truncationWarning: budget.exceedsBudget },
+    { id, chars: summary.length, truncationWarning: truncated, via: viaClaude ? 'claude-code' : 'ollama' },
     'summarisation complete',
   );
 }
