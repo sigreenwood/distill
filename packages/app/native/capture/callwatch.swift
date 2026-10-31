@@ -12,6 +12,8 @@ import Foundation
 import CoreAudio
 
 setvbuf(stdout, nil, _IOLBF, 0)
+// The app reading our stdout may die first; that must not kill us before we finalise.
+signal(SIGPIPE, SIG_IGN)
 
 let prefixes = CommandLine.arguments.dropFirst().isEmpty
     ? ["us.zoom.", "com.microsoft.teams"]
@@ -58,6 +60,7 @@ func emit(_ obj: [String: Any]) {
     if let d = try? JSONSerialization.data(withJSONObject: obj), let s = String(data: d, encoding: .utf8) { print(s) }
 }
 
+let launcher = getppid()
 var current: String?
 // Debounce: a call is "over" only after the mic has been closed for 3 polls,
 // so a brief device switch doesn't read as hang-up-and-redial.
@@ -65,6 +68,7 @@ var misses = 0
 let timer = DispatchSource.makeTimerSource(queue: .main)
 timer.schedule(deadline: .now(), repeating: 2)
 timer.setEventHandler {
+    if getppid() != launcher { exit(0) }  // the app died; don't linger
     let now = activeCallApp()
     if let now {
         misses = 0

@@ -48,8 +48,8 @@ app.dock?.hide();
 let recorder: Recorder | null = null;
 let callWatch: CallWatch | null = null;
 
-async function toggleCallRecording(state: State, log: Logger): Promise<void> {
-  recorder ??= createRecorder({
+function getRecorder(state: State, log: Logger): Recorder {
+  return (recorder ??= createRecorder({
     logger: log,
     helperPath: path.join(bundledRoot(), app.isPackaged ? 'bin' : 'native/capture/build', 'distill-capture'),
     scratchRoot: path.join(appSupportDir(), 'capture'),
@@ -79,10 +79,43 @@ async function toggleCallRecording(state: State, log: Logger): Promise<void> {
       trayHandle?.setRecording(startedAt);
       broadcastRecording(startedAt);
     },
-  });
+  }));
+}
+
+/** Start or stop the Zoom/Teams watcher to match the setting. Idempotent. */
+function applyCallDetection(enabled: boolean, state: State, log: Logger): void {
+  callWatch?.stop();
+  callWatch = null;
+  if (!enabled) return;
+  callWatch = startCallWatch(
+    path.join(bundledRoot(), app.isPackaged ? 'bin' : 'native/capture/build', 'distill-callwatch'),
+    log,
+    (ev) => {
+      const recording = recorder?.startedAt() != null;
+      const name = callAppName(ev.app);
+      const subject = name === 'A' ? 'A call' : `A ${name} call`;
+      if (ev.active && !recording) {
+        notify({
+          title: `${subject} has started`,
+          body: 'Click to record it. Nothing is recorded unless you do.',
+          onClick: () => void toggleCallRecording(state, log),
+        });
+      } else if (!ev.active && recording) {
+        notify({
+          title: `${subject} has ended`,
+          body: 'Click to stop recording and add it to the inbox.',
+          onClick: () => void toggleCallRecording(state, log),
+        });
+      }
+    },
+  );
+}
+
+async function toggleCallRecording(state: State, log: Logger): Promise<void> {
+  const rec = getRecorder(state, log);
   try {
-    if (recorder.startedAt() === null) await recorder.start();
-    else await recorder.stop();
+    if (rec.startedAt() === null) await rec.start();
+    else await rec.stop();
   } catch (e) {
     const msg = e instanceof RecorderError ? e.userMessage : `Recording failed: ${String(e)}`;
     log.error({ err: String(e) }, 'call recording toggle failed');
@@ -233,6 +266,7 @@ app.whenReady().then(async () => {
     getConfig: () => cfg,
     toggleRecording: () => toggleCallRecording(localState, localLogger),
     getRecordingStartedAt: () => recorder?.startedAt() ?? null,
+    onDetectCallsChanged: (enabled) => applyCallDetection(enabled, localState, localLogger),
     applyConfigUpdate,
     // Lazy getter — the worker is constructed after Plaud connects, below.
     // Any IPC that fires before then will get null, which the pipeline
@@ -315,30 +349,16 @@ app.whenReady().then(async () => {
     });
     trayHandle = tray;
 
-    if (cfg.detectCalls) {
-      callWatch = startCallWatch(
-        path.join(bundledRoot(), app.isPackaged ? 'bin' : 'native/capture/build', 'distill-callwatch'),
-        localLogger,
-        (ev) => {
-          const recording = recorder?.startedAt() != null;
-          const name = callAppName(ev.app);
-          const subject = name === 'A' ? 'A call' : `A ${name} call`;
-          if (ev.active && !recording) {
-            notify({
-              title: `${subject} has started`,
-              body: 'Click to record it. Nothing is recorded unless you do.',
-              onClick: () => void toggleCallRecording(localState, localLogger),
-            });
-          } else if (!ev.active && recording) {
-            notify({
-              title: `${subject} has ended`,
-              body: 'Click to stop recording and add it to the inbox.',
-              onClick: () => void toggleCallRecording(localState, localLogger),
-            });
-          }
-        },
-      );
-    }
+    applyCallDetection(cfg.detectCalls, localState, localLogger);
+    // Give a helper orphaned by a crash a moment to notice and finalise its files first.
+    setTimeout(() => {
+      void getRecorder(localState, localLogger)
+        .recoverInterrupted()
+        .then((n) => {
+          if (n > 0) notify({ title: 'Call recovered', body: `Added ${n} call recording${n === 1 ? '' : 's'} from an earlier session to your inbox.` });
+        })
+        .catch((e) => localLogger.error({ err: String(e) }, 'call recovery failed'));
+    }, 5000);
 
     const ollama = new OllamaClient(cfg.ollama.host);
     try {
@@ -573,7 +593,10 @@ app.on('before-quit', (e) => {
   // Don't lose a call in progress: stop, mix and import it, then quit again.
   if (recorder?.startedAt() != null) {
     e.preventDefault();
-    void recorder.stop().catch(() => {}).finally(() => app.quit());
+    // Bounded: a stuck ffmpeg must not make the app unquittable. If we give
+    // up, the raw tracks stay in capture/ and are imported on next launch.
+    const giveUp = new Promise<void>((resolve) => setTimeout(resolve, 90_000));
+    void Promise.race([recorder.stop().catch(() => {}), giveUp]).finally(() => app.quit());
     return;
   }
   closeAll();

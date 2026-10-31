@@ -481,6 +481,14 @@ conservative, because wrongly dropping the user's own words is worse than a
 duplicated line. **Re-check these thresholds against real calls** — the
 evidence so far is one TTS conversation through one Mac's speakers.
 
+**Not losing a call.** Captures live in `capture/<start-ms>/` until imported.
+Startup re-imports any left behind (crash, force-quit, a quit that gave up
+after 90 s) and discards under-2-second false starts. Both helpers exit if the
+app that launched them dies, finalising their files first. A silent microphone
+(denied permission records exact zeros) and a silent system track each raise a
+notification during the call. Quitting mid-call stops, mixes and imports first,
+but never waits more than 90 s.
+
 **Known limits.** Headphones give the cleanest result. Remote participants are
 not separated from each other (would need diarisation, which means torch).
 `installTap` on the mic is deprecated in macOS 27 but works.

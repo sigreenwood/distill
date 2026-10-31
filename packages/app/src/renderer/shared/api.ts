@@ -116,6 +116,8 @@ export interface GeneralDTO {
   audioRetentionDays: number | null;
   /** Minutes a completed recording stays in the Inbox's "Recent" section before it's auto-hidden. */
   autoDismissCompleteMinutes: number;
+  /** Offer to record (via notification) when Zoom or Teams starts a call. */
+  detectCalls: boolean;
   /** Read from the OS, not from config — it can be changed in System Settings. */
   launchAtLogin: boolean;
   /**

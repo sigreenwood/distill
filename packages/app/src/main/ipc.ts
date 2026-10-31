@@ -66,6 +66,8 @@ export interface IpcContext {
   /** Start or stop recording a call. Errors are surfaced by the callee. */
   toggleRecording?: () => Promise<void>;
   getRecordingStartedAt?: () => number | null;
+  /** The "offer to record when a call starts" setting changed; start or stop the watcher. */
+  onDetectCallsChanged?: (enabled: boolean) => void;
 }
 
 export function registerIpcHandlers(ctx: IpcContext): void {
@@ -788,11 +790,14 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(Channels.SettingsSaveGeneral, (_evt, payload) => {
     const general = assertGeneralDTO(payload);
+    const previousDetectCalls = ctx.getConfig().detectCalls;
     const updated = ctx.applyConfigUpdate({
       audioRetentionDays: general.audioRetentionDays,
       autoDismissCompleteMinutes: general.autoDismissCompleteMinutes,
+      detectCalls: general.detectCalls,
     });
     saveConfig(updated);
+    if (updated.detectCalls !== previousDetectCalls) ctx.onDetectCallsChanged?.(updated.detectCalls);
     // Only touch the login item when it can mean something, and only when
     // it actually differs — setLoginItemSettings prompts for approval on
     // recent macOS, so no-op saves should stay silent.
@@ -824,6 +829,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       {
         audioRetentionDays: updated.audioRetentionDays,
         autoDismissCompleteMinutes: updated.autoDismissCompleteMinutes,
+        detectCalls: updated.detectCalls,
         launchAtLogin,
       },
       'general settings saved',
@@ -1235,6 +1241,7 @@ function toGeneralDTO(cfg: AppConfig) {
   return {
     audioRetentionDays: cfg.audioRetentionDays,
     autoDismissCompleteMinutes: cfg.autoDismissCompleteMinutes,
+    detectCalls: cfg.detectCalls,
     launchAtLogin: launchAtLoginAvailable() ? app.getLoginItemSettings().openAtLogin : false,
     launchAtLoginAvailable: launchAtLoginAvailable(),
   };
@@ -1641,6 +1648,7 @@ function slugify(s: string): string {
 function assertGeneralDTO(v: unknown): {
   audioRetentionDays: number | null;
   autoDismissCompleteMinutes: number;
+  detectCalls: boolean;
   launchAtLogin: boolean;
 } {
   if (!v || typeof v !== 'object') throw new Error('Invalid general payload');
@@ -1651,13 +1659,18 @@ function assertGeneralDTO(v: unknown): {
   }
   const launchAtLogin = o.launchAtLogin;
 
+  if (typeof o.detectCalls !== 'boolean') {
+    throw new Error('detectCalls must be a boolean');
+  }
+  const detectCalls = o.detectCalls;
+
   const dismiss = o.autoDismissCompleteMinutes;
   if (typeof dismiss !== 'number' || !Number.isInteger(dismiss) || dismiss < 0) {
     throw new Error('autoDismissCompleteMinutes must be a non-negative integer (0 disables auto-hide)');
   }
 
   const raw = o.audioRetentionDays;
-  if (raw === null) return { audioRetentionDays: null, autoDismissCompleteMinutes: dismiss, launchAtLogin };
+  if (raw === null) return { audioRetentionDays: null, autoDismissCompleteMinutes: dismiss, detectCalls, launchAtLogin };
   if (typeof raw !== 'number' || !Number.isFinite(raw)) {
     throw new Error('audioRetentionDays must be null or a non-negative integer');
   }
@@ -1667,7 +1680,7 @@ function assertGeneralDTO(v: unknown): {
   if (raw < 0) {
     throw new Error('audioRetentionDays must be ≥ 0 (use null to disable the sweep)');
   }
-  return { audioRetentionDays: raw, autoDismissCompleteMinutes: dismiss, launchAtLogin };
+  return { audioRetentionDays: raw, autoDismissCompleteMinutes: dismiss, detectCalls, launchAtLogin };
 }
 
 function assertPerformanceDTO(v: unknown): {

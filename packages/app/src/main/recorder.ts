@@ -124,14 +124,23 @@ export interface RecorderDeps {
   onWarning: (message: string) => void;
   /** Recording started or stopped. */
   onChange: (startedAt: number | null) => void;
+  /** Seconds of silence before warning, per track. Tests shorten these. */
+  noSignalSeconds?: { system: number; mic: number };
 }
 
-interface Active {
-  proc: ChildProcess;
+/** Under ~2 s of 16 kHz mono 16-bit audio (plus header) is a false start, not a meeting. */
+const MIN_RECOVERABLE_BYTES = 44 + 2 * 32_000;
+
+/** The files of one capture session — enough to mix and import it. */
+interface Capture {
   dir: string;
   systemWav: string;
   micWav: string;
   startedAt: number;
+}
+
+interface Active extends Capture {
+  proc: ChildProcess;
   stopping: boolean;
   finished: Promise<void>;
 }
@@ -141,6 +150,11 @@ export interface Recorder {
   /** Stops, mixes and imports. Resolves once the recording is in the inbox. */
   stop(): Promise<void>;
   startedAt(): number | null;
+  /**
+   * Import captures an earlier session left behind (crash, force-quit, or a
+   * quit that gave up waiting). Returns how many were recovered.
+   */
+  recoverInterrupted(): Promise<number>;
 }
 
 export function createRecorder(deps: RecorderDeps): Recorder {
@@ -159,11 +173,11 @@ export function createRecorder(deps: RecorderDeps): Recorder {
       );
     });
 
-  const mix = (a: Active, out: string): Promise<void> =>
+  const mix = (a: Capture, out: string): Promise<void> =>
     ffmpeg(buildMixArgs(a.systemWav, a.micWav, out));
 
   /** Separate tracks are what let the transcriber label speakers. Optional: failure only costs the labels. */
-  const compressTracks = async (a: Active): Promise<CallTracks | null> => {
+  const compressTracks = async (a: Capture): Promise<CallTracks | null> => {
     const tracks = { mic: path.join(a.dir, 'mic.mp3'), others: path.join(a.dir, 'others.mp3') };
     try {
       await ffmpeg(buildTrackArgs(a.micWav, tracks.mic));
@@ -176,7 +190,7 @@ export function createRecorder(deps: RecorderDeps): Recorder {
   };
 
   /** Mix + import, then clear scratch. On any failure the raw tracks are kept. */
-  const finish = async (a: Active): Promise<void> => {
+  const finish = async (a: Capture): Promise<void> => {
     const mp3 = path.join(a.dir, callFilename(new Date(a.startedAt)));
     try {
       await mix(a, mp3);
@@ -219,7 +233,10 @@ export function createRecorder(deps: RecorderDeps): Recorder {
 
       try {
         const proc = spawn(deps.helperPath, [systemWav, micWav], { stdio: ['ignore', 'pipe', 'pipe'] });
-        const watch = new NoSignalWatch();
+        const secs = deps.noSignalSeconds ?? { system: 45, mic: 30 };
+        const systemWatch = new NoSignalWatch(secs.system);
+        // A denied microphone permission records exact digital silence, far below any room's noise floor.
+        const micWatch = new NoSignalWatch(secs.mic, 0.0001);
         let helperError: string | null = null;
         let onReady: (() => void) | null = null;
         let onFail: ((m: string) => void) | null = null;
@@ -237,10 +254,17 @@ export function createRecorder(deps: RecorderDeps): Recorder {
               helperError = ev.message;
               onFail?.(ev.message);
             } else if (ev.event === 'warning') deps.onWarning(ev.message);
-            else if (ev.event === 'level' && watch.feed(ev.system)) {
-              deps.onWarning(
-                'No call audio is being captured. Check that the call is playing, and that distill is allowed under System Settings → Privacy & Security → Screen & System Audio Recording.',
-              );
+            else if (ev.event === 'level') {
+              if (systemWatch.feed(ev.system)) {
+                deps.onWarning(
+                  'No call audio is being captured. Check that the call is playing, and that distill is allowed under System Settings → Privacy & Security → Screen & System Audio Recording.',
+                );
+              }
+              if (micWatch.feed(ev.mic)) {
+                deps.onWarning(
+                  'Your microphone is silent, so your side of the call will be missing. Check that you are not muted and that distill is allowed under System Settings → Privacy & Security → Microphone.',
+                );
+              }
             }
           }
         });
@@ -279,6 +303,48 @@ export function createRecorder(deps: RecorderDeps): Recorder {
       } finally {
         starting = false;
       }
+    },
+
+    async recoverInterrupted() {
+      if (active || starting) return 0;
+      let names: string[];
+      try {
+        names = fs.readdirSync(deps.scratchRoot).filter((n) => /^\d+$/.test(n)).sort();
+      } catch {
+        return 0; // no scratch directory: nothing was ever interrupted
+      }
+      let recovered = 0;
+      for (const name of names) {
+        // The user may have started a new recording while we were working through these.
+        if (active || starting) break;
+        const dir = path.join(deps.scratchRoot, name);
+        const cap: Capture = {
+          dir,
+          systemWav: path.join(dir, 'system.wav'),
+          micWav: path.join(dir, 'mic.wav'),
+          startedAt: Number(name),
+        };
+        const size = (p: string): number => {
+          try {
+            return fs.statSync(p).size;
+          } catch {
+            return 0;
+          }
+        };
+        if (size(cap.systemWav) < MIN_RECOVERABLE_BYTES && size(cap.micWav) < MIN_RECOVERABLE_BYTES) {
+          fs.rmSync(dir, { recursive: true, force: true });
+          continue;
+        }
+        try {
+          logger.info({ dir }, 'recovering interrupted call recording');
+          await finish(cap);
+          recovered++;
+        } catch (e) {
+          logger.error({ err: String(e), dir }, 'could not recover interrupted call recording');
+          deps.onWarning(e instanceof RecorderError ? e.userMessage : String(e));
+        }
+      }
+      return recovered;
     },
 
     async stop() {

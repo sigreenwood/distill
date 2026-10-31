@@ -17,6 +17,8 @@ import AVFoundation
 import CoreAudio
 
 setvbuf(stdout, nil, _IOLBF, 0)
+// The app reading our stdout may die first; that must not kill us before we finalise.
+signal(SIGPIPE, SIG_IGN)
 
 func emit(_ obj: [String: Any]) {
     if let d = try? JSONSerialization.data(withJSONObject: obj),
@@ -155,6 +157,10 @@ func shutdown() {
     exit(0)
 }
 
+// If the app that launched us dies, stop (finalising the files) rather than
+// record on, unattended, with nobody to stop us.
+let launcher = getppid()
+
 signal(SIGINT, SIG_IGN); signal(SIGTERM, SIG_IGN)
 let sigQueue = DispatchQueue(label: "distill.capture.sig")
 let sources = [SIGINT, SIGTERM].map { sig -> DispatchSourceSignal in
@@ -168,6 +174,7 @@ _ = sources
 let timer = DispatchSource.makeTimerSource(queue: sigQueue)
 timer.schedule(deadline: .now() + 1, repeating: 1)
 timer.setEventHandler {
+    if getppid() != launcher { shutdown() }
     emit(["event": "level", "system": systemSink.takePeak(), "mic": micSink.takePeak()])
 }
 timer.resume()

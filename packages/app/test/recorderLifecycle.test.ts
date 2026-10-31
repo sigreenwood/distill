@@ -103,4 +103,74 @@ describe.skipIf(!hasFfmpeg)('recorder lifecycle', () => {
     const kept = path.join(tmp, 'scratch', fs.readdirSync(path.join(tmp, 'scratch'))[0]);
     expect(fs.existsSync(path.join(kept, 'system.wav'))).toBe(true);
   }, 30_000);
+
+  it('warns when the microphone is silent but the call is audible', async () => {
+    const levels = Array.from({ length: 4 }, () => `echo '{"event":"level","system":0.2,"mic":0}'`).join('\n');
+    const helper = fakeHelper(
+      tmp,
+      WRITE_TRACKS + `echo '{"event":"ready","mic":true}'\n${levels}\ntrap 'exit 0' INT\nwhile true; do sleep 0.1; done`,
+    );
+    const warnings: string[] = [];
+    const rec = createRecorder({
+      logger: silentLogger,
+      helperPath: helper,
+      scratchRoot: path.join(tmp, 'scratch'),
+      importFile: async () => {},
+      onWarning: (m) => warnings.push(m),
+      onChange: () => {},
+      noSignalSeconds: { system: 3, mic: 3 },
+    });
+    await rec.start();
+    await new Promise((r) => setTimeout(r, 500));
+    await rec.stop();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/microphone is silent/);
+  }, 30_000);
+
+  describe('recoverInterrupted', () => {
+    const scratch = () => path.join(tmp, 'scratch');
+    const seed = (name: string, seconds: number) => {
+      const dir = path.join(scratch(), name);
+      fs.mkdirSync(dir, { recursive: true });
+      for (const f of ['system.wav', 'mic.wav']) {
+        spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', `sine=frequency=330:duration=${seconds}`, '-ar', '16000', '-ac', '1', path.join(dir, f)]);
+      }
+      return dir;
+    };
+    const recorderFor = (imported: string[]) =>
+      createRecorder({
+        logger: silentLogger,
+        helperPath: '/nonexistent',
+        scratchRoot: scratch(),
+        importFile: async (mp3) => {
+          imported.push(path.basename(mp3));
+        },
+        onWarning: () => {},
+        onChange: () => {},
+      });
+
+    it('imports a real leftover capture, dated from its directory name, and removes it', async () => {
+      const started = new Date(2026, 9, 31, 14, 7).getTime();
+      const dir = seed(String(started), 3);
+      const imported: string[] = [];
+      expect(await recorderFor(imported).recoverInterrupted()).toBe(1);
+      expect(imported).toEqual(['Call 2026-10-31 14-07.mp3']);
+      expect(fs.existsSync(dir)).toBe(false);
+    }, 30_000);
+
+    it('discards false starts and ignores directories that are not captures', async () => {
+      const tiny = seed('1000', 0.5);
+      const other = path.join(scratch(), 'notes');
+      fs.mkdirSync(other, { recursive: true });
+      const imported: string[] = [];
+      expect(await recorderFor(imported).recoverInterrupted()).toBe(0);
+      expect(imported).toEqual([]);
+      expect(fs.existsSync(tiny)).toBe(false);
+      expect(fs.existsSync(other)).toBe(true);
+    }, 30_000);
+
+    it('returns 0 when there is no scratch directory at all', async () => {
+      expect(await recorderFor([]).recoverInterrupted()).toBe(0);
+    });
+  });
 });

@@ -1246,6 +1246,7 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
   const [daysText, setDaysText] = useState(String(initialDays));
   const [dismissText, setDismissText] = useState(String(props.initial.autoDismissCompleteMinutes));
   const [launchAtLogin, setLaunchAtLogin] = useState(props.initial.launchAtLogin);
+  const [detectCalls, setDetectCalls] = useState(props.initial.detectCalls);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -1253,6 +1254,7 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
   const computed = useMemo<GeneralDTO | null>(() => {
     const base = {
       launchAtLogin,
+      detectCalls,
       launchAtLoginAvailable: props.initial.launchAtLoginAvailable,
     };
     const dismissTrimmed = dismissText.trim();
@@ -1273,20 +1275,22 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
       return null;
     }
     return { ...base, audioRetentionDays: parsed, autoDismissCompleteMinutes: dismissParsed };
-  }, [enabled, daysText, dismissText, launchAtLogin, props.initial.launchAtLoginAvailable]);
+  }, [enabled, daysText, dismissText, launchAtLogin, detectCalls, props.initial.launchAtLoginAvailable]);
 
   const isDirty = useMemo(() => {
     if (!computed) return false;
     return (
       computed.audioRetentionDays !== props.initial.audioRetentionDays ||
       computed.autoDismissCompleteMinutes !== props.initial.autoDismissCompleteMinutes ||
-      computed.launchAtLogin !== props.initial.launchAtLogin
+      computed.launchAtLogin !== props.initial.launchAtLogin ||
+      computed.detectCalls !== props.initial.detectCalls
     );
   }, [
     computed,
     props.initial.audioRetentionDays,
     props.initial.autoDismissCompleteMinutes,
     props.initial.launchAtLogin,
+    props.initial.detectCalls,
   ]);
 
   const onSave = useCallback(async () => {
@@ -1360,6 +1364,35 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
                 rather than at distill. Works in an installed copy.
               </>
             )}
+          </div>
+        </section>
+        <section
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Call recording</div>
+          <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>
+            Record a Teams or Zoom call from the menu bar (Record call) or the Inbox. distill captures
+            the call's audio and your microphone, then it waits in the Inbox like any other recording.
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={detectCalls}
+              onChange={(e) => {
+                setDetectCalls(e.target.checked);
+                setSavedAt(null);
+              }}
+            />
+            Offer to record when a Zoom or Teams call starts
+          </label>
+          <div className="muted" style={{ fontSize: 10, marginTop: 6, lineHeight: 1.4 }}>
+            A notification only — nothing is recorded unless you click it. Calls in a web browser are not
+            detected; use Record call for those.
           </div>
         </section>
         <section
