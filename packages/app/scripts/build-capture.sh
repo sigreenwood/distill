@@ -5,4 +5,5 @@ set -eu
 cd "$(dirname "$0")/../native/capture"
 mkdir -p build
 swiftc -O -swift-version 5 -target arm64-apple-macos14.2 main.swift -o build/distill-capture
+swiftc -O -swift-version 5 -target arm64-apple-macos14.2 callwatch.swift -o build/distill-callwatch
 echo "built $(pwd)/build/distill-capture"

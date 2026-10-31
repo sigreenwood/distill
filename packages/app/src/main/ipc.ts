@@ -63,6 +63,9 @@ export interface IpcContext {
   onPlaudCredentialsChanged?: () => void;
   onStateChanged?: () => void;
   onSetupComplete?: () => void;
+  /** Start or stop recording a call. Errors are surfaced by the callee. */
+  toggleRecording?: () => Promise<void>;
+  getRecordingStartedAt?: () => number | null;
 }
 
 export function registerIpcHandlers(ctx: IpcContext): void {
@@ -375,6 +378,11 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       throw new Error('Import failed. See logs for details.');
     }
   });
+
+  ipcMain.handle(Channels.RecorderToggle, async () => {
+    await ctx.toggleRecording?.();
+  });
+  ipcMain.handle(Channels.RecorderStartedAt, () => ctx.getRecordingStartedAt?.() ?? null);
 
   ipcMain.handle(Channels.LocalImportPickFiles, async () => {
     const result = await dialog.showOpenDialog({
@@ -1065,6 +1073,12 @@ export function broadcastInboxChanged(): void {
 export function broadcastFocusRecording(recordingId: string): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(Channels.PushFocusRecording, recordingId);
+  }
+}
+
+export function broadcastRecording(startedAt: number | null): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(Channels.PushRecording, startedAt);
   }
 }
 

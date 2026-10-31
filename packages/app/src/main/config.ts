@@ -67,6 +67,12 @@ export interface AppConfig {
   audioRetentionDays: number | null;
   autoDismissCompleteMinutes: number;
   /**
+   * Offer to record when Zoom or Teams opens the microphone. Only ever a
+   * notification: recording starts when the user clicks it. Edit config.json
+   * to turn off; there is no Settings control yet.
+   */
+  detectCalls: boolean;
+  /**
    * How many of the most recent recordings land in the inbox on the very
    * first poll of a fresh install; the rest of the back catalogue is
    * skipped. 0 = skip everything (the original behaviour).
@@ -224,6 +230,7 @@ export function normaliseConfig(cfg: any): AppConfig {
     audioRetentionDays: normaliseAudioRetentionDays(cfg.audioRetentionDays),
     autoDismissCompleteMinutes:
       typeof cfg.autoDismissCompleteMinutes === 'number' ? cfg.autoDismissCompleteMinutes : 10,
+    detectCalls: cfg.detectCalls !== false,
     initialPollInboxCount: normaliseInitialPollInboxCount(cfg.initialPollInboxCount),
     logLevel: cfg.logLevel ?? 'info',
   };

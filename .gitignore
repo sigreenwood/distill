@@ -7,4 +7,4 @@ dist/
 # but never committed. See private/README.md for what goes here and how
 # to re-import on fresh installs.
 private/
-native/capture/build/
+packages/app/native/capture/build/

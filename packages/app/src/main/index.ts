@@ -31,10 +31,12 @@ import {
 import {
   registerIpcHandlers,
   broadcastInboxChanged,
+  broadcastRecording,
   broadcastFocusRecording,
 } from './ipc.js';
 import { getInstallationStatus } from './pythonEnv.js';
 import { importLocalFile, LocalImportError } from './localImport.js';
+import { startCallWatch, callAppName, type CallWatch } from './callWatch.js';
 import { createRecorder, RecorderError, type Recorder } from './recorder.js';
 import { migrateScopeRenames, migrateVocabularyToUserDir } from './vocabulary.js';
 import { startSweepSchedule, sweepStateFor, nodeFs } from './audioRetention.js';
@@ -43,6 +45,7 @@ import { startModelUpdateCheck } from './modelUpdateCheck.js';
 app.dock?.hide();
 
 let recorder: Recorder | null = null;
+let callWatch: CallWatch | null = null;
 
 async function toggleCallRecording(state: State, log: Logger): Promise<void> {
   recorder ??= createRecorder({
@@ -63,7 +66,10 @@ async function toggleCallRecording(state: State, log: Logger): Promise<void> {
       });
     },
     onWarning: (body) => notify({ title: 'distill — call recording', body }),
-    onChange: (startedAt) => trayHandle?.setRecording(startedAt),
+    onChange: (startedAt) => {
+      trayHandle?.setRecording(startedAt);
+      broadcastRecording(startedAt);
+    },
   });
   try {
     if (recorder.startedAt() === null) await recorder.start();
@@ -216,6 +222,8 @@ app.whenReady().then(async () => {
     logger: localLogger,
     resourcesDir,
     getConfig: () => cfg,
+    toggleRecording: () => toggleCallRecording(localState, localLogger),
+    getRecordingStartedAt: () => recorder?.startedAt() ?? null,
     applyConfigUpdate,
     // Lazy getter — the worker is constructed after Plaud connects, below.
     // Any IPC that fires before then will get null, which the pipeline
@@ -297,6 +305,31 @@ app.whenReady().then(async () => {
       },
     });
     trayHandle = tray;
+
+    if (cfg.detectCalls) {
+      callWatch = startCallWatch(
+        path.join(bundledRoot(), app.isPackaged ? 'bin' : 'native/capture/build', 'distill-callwatch'),
+        localLogger,
+        (ev) => {
+          const recording = recorder?.startedAt() != null;
+          const name = callAppName(ev.app);
+          const subject = name === 'A' ? 'A call' : `A ${name} call`;
+          if (ev.active && !recording) {
+            notify({
+              title: `${subject} has started`,
+              body: 'Click to record it. Nothing is recorded unless you do.',
+              onClick: () => void toggleCallRecording(localState, localLogger),
+            });
+          } else if (!ev.active && recording) {
+            notify({
+              title: `${subject} has ended`,
+              body: 'Click to stop recording and add it to the inbox.',
+              onClick: () => void toggleCallRecording(localState, localLogger),
+            });
+          }
+        },
+      );
+    }
 
     const ollama = new OllamaClient(cfg.ollama.host);
     try {
@@ -539,6 +572,7 @@ app.on('before-quit', (e) => {
   poller?.stop();
   stopAudioSweep?.();
   stopModelCheck?.();
+  callWatch?.stop();
   trayHandle?.destroy();
   state?.close();
 });

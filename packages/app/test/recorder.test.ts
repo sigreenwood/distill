@@ -43,3 +43,19 @@ describe('buildMixArgs / callFilename', () => {
     expect(callFilename(new Date(2026, 9, 31, 9, 5))).toBe('Call 2026-10-31 09-05.mp3');
   });
 });
+
+import { parseCallEvent, callAppName } from '../src/main/callWatch.js';
+
+describe('call watcher', () => {
+  it('parses call events and rejects the rest', () => {
+    expect(parseCallEvent('{"event":"call","active":true,"app":"us.zoom.xos"}')).toEqual({ active: true, app: 'us.zoom.xos' });
+    expect(parseCallEvent('{"event":"call","active":"yes","app":"x"}')).toBeNull();
+    expect(parseCallEvent('{"event":"other"}')).toBeNull();
+    expect(parseCallEvent('garbage')).toBeNull();
+  });
+
+  it('names the apps', () => {
+    expect(callAppName('us.zoom.xos')).toBe('Zoom');
+    expect(callAppName('com.microsoft.teams2')).toBe('Teams');
+  });
+});

@@ -73,6 +73,8 @@ extraResources:
   # `npm run build:capture`, which prepackage runs.
   - from: native/capture/build/distill-capture
     to: bin/distill-capture
+  - from: native/capture/build/distill-callwatch
+    to: bin/distill-callwatch
   - from: python/transcribe.py
     to: python/transcribe.py
   - from: python/requirements.txt

@@ -36,6 +36,14 @@ function Inbox() {
   const [refreshing, setRefreshing] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [importQueue, setImportQueue] = useState<ImportQueueEntry[]>([]);
+  const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
+  useEffect(() => {
+    void window.distill.recorder.startedAt().then(setRecordingStartedAt);
+    return window.distill.onRecording(setRecordingStartedAt);
+  }, []);
+  const onToggleRecording = useCallback(async () => {
+    await window.distill.recorder.toggle();
+  }, []);
   const importQueueRef = useRef<ImportQueueEntry[]>([]);
   const importLoopRunningRef = useRef(false);
   const [tipJar, setTipJar] = useState<TipJarStatusDTO | null>(null);
@@ -300,6 +308,8 @@ function Inbox() {
     importQueue,
     dismissQueueEntry,
     onPickAndImport,
+    recordingStartedAt,
+    onToggleRecording,
     onDragOver,
     onDragLeave,
     onDrop,
@@ -604,6 +614,8 @@ interface ShellProps {
   importQueue: ImportQueueEntry[];
   dismissQueueEntry: (sourcePath: string) => void;
   onPickAndImport: () => Promise<void>;
+  recordingStartedAt: number | null;
+  onToggleRecording: () => Promise<void>;
   onDragOver: (e: React.DragEvent) => void;
   onDragLeave: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
@@ -642,6 +654,16 @@ function Shell(props: ShellProps) {
         <div className="muted" style={{ marginLeft: 'auto', fontSize: 11 }}>
           {props.total > 0 ? `${props.total} total` : ''}
         </div>
+        <HeaderButton
+          title={
+            props.recordingStartedAt === null
+              ? 'Record a call (Teams, Zoom…): system audio plus your microphone'
+              : 'Stop recording and add it to the inbox'
+          }
+          onClick={() => void props.onToggleRecording()}
+        >
+          {props.recordingStartedAt === null ? '● Record' : '■ Stop'}
+        </HeaderButton>
         <HeaderButton
           title="Import audio, video, or an existing transcript (.md / .txt) to re-summarise"
           onClick={() => void props.onPickAndImport()}

@@ -284,6 +284,11 @@ export interface DistillApi {
     add(payload: { name: string; prompt: string }): Promise<MeetingTypeDTO>;
     delete(id: string): Promise<{ deletedId: string }>;
   };
+  recorder: {
+    toggle(): Promise<void>;
+    startedAt(): Promise<number | null>;
+  };
+  onRecording(handler: (startedAt: number | null) => void): () => void;
   localImport: {
     importPath(path: string): Promise<{ recordingId: string }>;
     pickFiles(): Promise<string[]>;
