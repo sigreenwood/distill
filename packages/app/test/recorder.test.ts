@@ -7,7 +7,12 @@ describe('parseCaptureEvent', () => {
     expect(parseCaptureEvent('{"event":"level","system":0.2,"mic":0}')).toEqual({ event: 'level', system: 0.2, mic: 0 });
     expect(parseCaptureEvent('{"event":"error","message":"nope"}')).toEqual({ event: 'error', message: 'nope' });
     expect(parseCaptureEvent('{"event":"stopped"}')).toEqual({ event: 'stopped' });
-    expect(parseCaptureEvent('{"event":"mic","device":"AirPods","rate":16000}')).toEqual({ event: 'mic', device: 'AirPods' });
+    expect(parseCaptureEvent('{"event":"mic","device":"AirPods","reason":"call-app","rate":16000}')).toEqual({
+      event: 'mic',
+      device: 'AirPods',
+      reason: 'call-app',
+    });
+    expect(parseCaptureEvent('{"event":"mic","device":"Built-in"}')).toEqual({ event: 'mic', device: 'Built-in', reason: 'default' });
   });
 
   it('ignores anything else', () => {

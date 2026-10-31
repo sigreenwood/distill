@@ -502,8 +502,20 @@ aligned (measured: a 3 s freeze left both files at wall-clock length with a
 silent gap). Echo suppression is per segment, so a call that starts on
 speakers and moves to headphones is handled on each side of the switch.
 Simulated with sample-rate changes on the one input and output this Mac has —
-a real Bluetooth headset swap is not yet tested. The app records the system
-default microphone, not whichever one Zoom or Teams has been told to use.
+a real Bluetooth headset swap is not yet tested. 
+**Which microphone.** People pick a headset inside Zoom/Teams without touching
+the system default, and recording the default would capture the wrong room.
+So while a call app (bundle id `us.zoom.*` / `com.microsoft.teams*`) has the
+mic open, the helper records the input device that process reports
+(`kAudioProcessPropertyDevices`, input scope); otherwise it follows the system
+default. The call app's device is kept once chosen — muting can release the
+mic, and bouncing onto the default then would be wrong — until that device
+disappears or the app moves to another. Re-checked every 2 s (nothing
+announces it). Verified with a stand-in app bundle (`us.zoom.faketest`) holding
+the real mic while the system default pointed at a different device: the
+helper recorded the app's mic, and did not move when the app let go. Not yet
+seen with real Zoom/Teams, whose audio may live in a helper process, and
+Core Audio reports an aggregate device as its physical sub-device.
 
 **Known limits.** Headphones give the cleanest result. Remote participants are
 not separated from each other (would need diarisation, which means torch).

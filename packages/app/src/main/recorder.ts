@@ -18,7 +18,7 @@ export class RecorderError extends Error {
 export type CaptureEvent =
   | { event: 'ready'; mic: boolean }
   | { event: 'level'; system: number; mic: number }
-  | { event: 'mic'; device: string }
+  | { event: 'mic'; device: string; reason: 'call-app' | 'default' }
   | { event: 'warning'; message: string }
   | { event: 'error'; message: string }
   | { event: 'stopped' };
@@ -43,7 +43,9 @@ export function parseCaptureEvent(line: string): CaptureEvent | null {
         mic: typeof r.mic === 'number' ? r.mic : 0,
       };
     case 'mic':
-      return typeof r.device === 'string' ? { event: 'mic', device: r.device } : null;
+      return typeof r.device === 'string'
+        ? { event: 'mic', device: r.device, reason: r.reason === 'call-app' ? 'call-app' : 'default' }
+        : null;
     case 'warning':
     case 'error':
       return typeof r.message === 'string' ? { event: r.event, message: r.message } : null;
@@ -253,7 +255,7 @@ export function createRecorder(deps: RecorderDeps): Recorder {
             buf = buf.slice(nl + 1);
             if (!ev) continue;
             if (ev.event === 'ready') onReady?.();
-            else if (ev.event === 'mic') logger.info({ device: ev.device }, 'microphone in use');
+            else if (ev.event === 'mic') logger.info({ device: ev.device, reason: ev.reason }, 'microphone in use');
             else if (ev.event === 'error') {
               helperError = ev.message;
               onFail?.(ev.message);

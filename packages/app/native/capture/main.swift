@@ -162,7 +162,57 @@ func hal<T>(_ obj: AudioObjectID, _ sel: AudioObjectPropertySelector, scope: Aud
     return AudioObjectGetPropertyData(obj, &a, 0, nil, &size, &value) == noErr
 }
 
-/// Records the system's default input device, and moves with it.
+// MARK: which microphone
+
+// Keep in step with callwatch.swift. DISTILL_CALL_PREFIXES overrides (tests).
+let callPrefixes = (ProcessInfo.processInfo.environment["DISTILL_CALL_PREFIXES"] ?? "us.zoom.,com.microsoft.teams")
+    .split(separator: ",").map(String.init).filter { !$0.isEmpty }
+
+func halIDs(_ obj: AudioObjectID, _ sel: AudioObjectPropertySelector, scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> [AudioObjectID] {
+    var a = AudioObjectPropertyAddress(mSelector: sel, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(obj, &a, 0, nil, &size) == noErr, size > 0 else { return [] }
+    var out = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+    guard AudioObjectGetPropertyData(obj, &a, 0, nil, &size, &out) == noErr else { return [] }
+    return out
+}
+
+/// The input device a running call app is recording from, if any.
+func callAppInputDevice() -> AudioObjectID? {
+    for p in halIDs(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyProcessObjectList) {
+        var running: UInt32 = 0
+        guard hal(p, kAudioProcessPropertyIsRunningInput, &running), running != 0 else { continue }
+        var name: Unmanaged<CFString>?
+        guard hal(p, kAudioProcessPropertyBundleID, &name), let bundle = name?.takeRetainedValue() as String?,
+              callPrefixes.contains(where: { bundle.hasPrefix($0) }) else { continue }
+        if let device = halIDs(p, kAudioProcessPropertyDevices, scope: kAudioObjectPropertyScopeInput).first { return device }
+    }
+    return nil
+}
+
+func systemDefaultInput() -> AudioObjectID? {
+    var dev = AudioObjectID(kAudioObjectUnknown)
+    return hal(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice, &dev) && dev != kAudioObjectUnknown ? dev : nil
+}
+
+func deviceIsAlive(_ d: AudioObjectID) -> Bool {
+    guard halIDs(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDevices).contains(d) else { return false }
+    var alive: UInt32 = 1
+    return !hal(d, kAudioDevicePropertyDeviceIsAlive, &alive) || alive != 0
+}
+
+/// The microphone we should be recording right now, and why. `locked` is the
+/// device a call app was last seen using: kept while it exists even if the app
+/// lets go of it (muting can release the mic), so a mute does not bounce the
+/// recording onto whatever the system default happens to be.
+func chooseMic(locked: AudioObjectID?) -> (device: AudioObjectID, reason: String)? {
+    if let d = callAppInputDevice() { return (d, "call-app") }
+    if let d = locked, deviceIsAlive(d) { return (d, "call-app") }
+    if let d = systemDefaultInput() { return (d, "default") }
+    return nil
+}
+
+/// Records the chosen microphone, and moves when the choice changes.
 final class MicCapture {
     private let queue = DispatchQueue(label: "distill.capture.mic", qos: .userInteractive)
     private let ioQueue = DispatchQueue(label: "distill.capture.mic.io", qos: .userInteractive)
@@ -172,6 +222,7 @@ final class MicCapture {
     private var pending: DispatchWorkItem?
     private var listening: [(AudioObjectID, AudioObjectPropertySelector)] = []
     private var stopped = false
+    private var locked: AudioObjectID?  // a call app's device, see chooseMic
 
     private func listener(_ obj: AudioObjectID, _ sel: AudioObjectPropertySelector) {
         var a = AudioObjectPropertyAddress(mSelector: sel, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
@@ -200,10 +251,9 @@ final class MicCapture {
 
     private func open() -> Bool {
         close()
-        var dev = AudioObjectID(kAudioObjectUnknown)
-        guard hal(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice, &dev), dev != kAudioObjectUnknown else {
-            armRetry(); return false
-        }
+        guard let choice = chooseMic(locked: locked) else { armRetry(); return false }
+        let dev = choice.device
+        locked = choice.reason == "call-app" ? dev : nil
         var asbd = AudioStreamBasicDescription()
         guard hal(dev, kAudioDevicePropertyStreamFormat, scope: kAudioObjectPropertyScopeInput, &asbd),
               asbd.mSampleRate > 0, let format = AVAudioFormat(streamDescription: &asbd) else {
@@ -221,7 +271,8 @@ final class MicCapture {
         retry?.cancel(); retry = nil
         var name: Unmanaged<CFString>?
         _ = hal(dev, kAudioObjectPropertyName, &name)
-        emit(["event": "mic", "device": (name?.takeRetainedValue() as String?) ?? "?", "rate": asbd.mSampleRate, "channels": Int(asbd.mChannelsPerFrame)])
+        emit(["event": "mic", "device": (name?.takeRetainedValue() as String?) ?? "?", "reason": choice.reason, "rate": asbd.mSampleRate, "channels": Int(asbd.mChannelsPerFrame)])
+        watchChoice()
         return true
     }
 
@@ -237,6 +288,22 @@ final class MicCapture {
         queue.asyncAfter(deadline: .now() + 0.5, execute: item)
     }
 
+    private var chooser: DispatchSourceTimer?
+
+    /// Nothing announces "a call app started using a different microphone",
+    /// so look every couple of seconds. Cheap: a few property reads.
+    private func watchChoice() {
+        guard chooser == nil, !stopped else { return }
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        t.schedule(deadline: .now() + 2, repeating: 2)
+        t.setEventHandler { [weak self] in
+            guard let self, !self.stopped else { return }
+            if let want = chooseMic(locked: self.locked), want.device != self.device { self.scheduleRestart() }
+        }
+        t.resume()
+        chooser = t
+    }
+
     /// No usable input right now (unplugged, still waking). Keep trying.
     private func armRetry() {
         guard retry == nil, !stopped else { return }
@@ -248,7 +315,7 @@ final class MicCapture {
     }
 
     func stop() {
-        queue.sync { stopped = true; pending?.cancel(); retry?.cancel(); close() }
+        queue.sync { stopped = true; pending?.cancel(); retry?.cancel(); chooser?.cancel(); close() }
     }
 }
 
