@@ -69,6 +69,12 @@ files:
 # JS bundle. These are read at runtime via process.resourcesPath
 # (electron-builder convention).
 extraResources:
+  # Swift helper for call recording (system audio + mic). Built by
+  # `npm run build:capture`, which prepackage runs.
+  - from: native/capture/build/distill-capture
+    to: bin/distill-capture
+  - from: native/capture/build/distill-callwatch
+    to: bin/distill-callwatch
   - from: python/transcribe.py
     to: python/transcribe.py
   - from: python/requirements.txt
@@ -79,6 +85,10 @@ extraResources:
   # Reads slide decks and PDFs attached to a meeting (main/materials.ts).
   - from: python/materials_extract.py
     to: python/materials_extract.py
+  # Merges the mic and system-audio transcripts of a recorded call into
+  # You:/Others: turns. transcribe.py imports it from its own directory.
+  - from: python/speakers.py
+    to: python/speakers.py
   # Silero VAD weights (~2.3MB, MIT). transcribe.py loads this from its
   # own directory to gate out non-speech before Whisper runs. Without it
   # transcription still works (VAD degrades to off with a warning), but
@@ -155,6 +165,12 @@ fileAssociations:
     role: Editor
 
 mac:
+  # Usage strings for the two prompts call recording can trigger. macOS
+  # attributes the capture helper's access to this app, so these show up
+  # as distill's. System audio is its own permission from the microphone.
+  extendInfo:
+    NSAudioCaptureUsageDescription: distill records the audio of your calls (Teams, Zoom) so it can transcribe and summarise them on this Mac.
+    NSMicrophoneUsageDescription: distill records your microphone during a call so your side of the conversation is transcribed too.
   # Target one format - pkg-only (single distribution target). Single arch
   # (arm64) since mlx-whisper is Apple-Silicon-only anyway; an Intel build
   # would fail at the first transcribe regardless of how clean the install

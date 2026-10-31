@@ -1416,6 +1416,8 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
   const [schedule, setSchedule] = useState<ProcessingSchedule>(props.initial.processingSchedule);
   const [autoFile, setAutoFile] = useState(props.initial.autoFileHighConfidence);
   const [minText, setMinText] = useState(String(props.initial.minRecordingMinutes));
+  const [detectCalls, setDetectCalls] = useState(props.initial.detectCalls);
+  const [checkForUpdates, setCheckForUpdates] = useState(props.initial.checkForUpdates);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -1427,6 +1429,9 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
     if (Number.isNaN(minMinutes)) return null;
     const base = {
       launchAtLogin,
+      detectCalls,
+      checkForUpdates,
+      appVersion: props.initial.appVersion,
       launchAtLoginAvailable: props.initial.launchAtLoginAvailable,
       processingSchedule: schedule,
       autoFileHighConfidence: autoFile,
@@ -1450,7 +1455,7 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
       return null;
     }
     return { ...base, audioRetentionDays: parsed, autoDismissCompleteMinutes: dismissParsed };
-  }, [enabled, daysText, dismissText, launchAtLogin, schedule, autoFile, minMinutes, props.initial.launchAtLoginAvailable]);
+  }, [enabled, daysText, dismissText, launchAtLogin, schedule, autoFile, minMinutes, detectCalls, checkForUpdates, props.initial.appVersion, props.initial.launchAtLoginAvailable]);
 
   const isDirty = useMemo(() => {
     if (!computed) return false;
@@ -1463,7 +1468,9 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
       computed.processingSchedule.overnightStart !== props.initial.processingSchedule.overnightStart ||
       computed.processingSchedule.overnightEnd !== props.initial.processingSchedule.overnightEnd ||
       computed.autoFileHighConfidence !== props.initial.autoFileHighConfidence ||
-      computed.minRecordingMinutes !== props.initial.minRecordingMinutes
+      computed.minRecordingMinutes !== props.initial.minRecordingMinutes ||
+      computed.detectCalls !== props.initial.detectCalls ||
+      computed.checkForUpdates !== props.initial.checkForUpdates
     );
   }, [
     computed,
@@ -1471,6 +1478,8 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
     props.initial.autoDismissCompleteMinutes,
     props.initial.launchAtLogin,
     props.initial.processingSchedule,
+    props.initial.detectCalls,
+    props.initial.checkForUpdates,
   ]);
 
   const onSave = useCallback(async () => {
@@ -1544,6 +1553,64 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
                 rather than at distill. Works in an installed copy.
               </>
             )}
+          </div>
+        </section>
+        <section
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Updates</div>
+          <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>
+            This is distill {props.initial.appVersion}. It can look for newer releases on GitHub and offer
+            them; nothing is downloaded or installed unless you say so, and the check sends only the
+            version number.
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={checkForUpdates}
+              onChange={(e) => {
+                setCheckForUpdates(e.target.checked);
+                setSavedAt(null);
+              }}
+            />
+            Check GitHub for new versions
+          </label>
+          <div className="muted" style={{ fontSize: 10, marginTop: 6, lineHeight: 1.4 }}>
+            You can also check any time from the menu bar (Check for updates).
+          </div>
+        </section>
+        <section
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Call recording</div>
+          <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>
+            Record a Teams or Zoom call from the menu bar (Record call) or the Inbox. distill captures
+            the call's audio and your microphone, then it waits in the Inbox like any other recording.
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={detectCalls}
+              onChange={(e) => {
+                setDetectCalls(e.target.checked);
+                setSavedAt(null);
+              }}
+            />
+            Offer to record when a Zoom or Teams call starts
+          </label>
+          <div className="muted" style={{ fontSize: 10, marginTop: 6, lineHeight: 1.4 }}>
+            A notification only — nothing is recorded unless you click it. Calls in a web browser are not
+            detected; use Record call for those.
           </div>
         </section>
         <section
