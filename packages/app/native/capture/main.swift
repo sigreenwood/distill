@@ -31,7 +31,7 @@ func fail(_ msg: String) -> Never {
 /// Converts whatever format a source delivers to 16 kHz mono and appends it
 /// to a WAV file. Tracks peak level since the last report.
 final class Sink {
-    private let file: AVAudioFile
+    private var file: AVAudioFile?
     private let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
     private var converter: AVAudioConverter?
     private var converterInput: AVAudioFormat?
@@ -68,8 +68,11 @@ final class Sink {
         if let p = out.floatChannelData?[0] {
             for i in 0..<Int(out.frameLength) { peak = max(peak, abs(p[i])) }
         }
-        try? file.write(from: out)
+        try? file?.write(from: out)
     }
+
+    /// AVAudioFile finalises the WAV header only when it is released; exit() would skip that.
+    func close() { lock.lock(); file = nil; lock.unlock() }
 
     func takePeak() -> Float { lock.lock(); defer { lock.unlock() }; let p = peak; peak = 0; return p }
 }
@@ -146,6 +149,8 @@ func shutdown() {
     AudioDeviceDestroyIOProcID(aggID, procID)
     AudioHardwareDestroyAggregateDevice(aggID)
     AudioHardwareDestroyProcessTap(tapID)
+    systemSink.close()
+    micSink.close()
     emit(["event": "stopped"])
     exit(0)
 }

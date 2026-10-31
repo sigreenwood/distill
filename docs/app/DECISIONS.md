@@ -441,3 +441,46 @@ lockstep.
   different filename, they can rename the file after writing.
 - Auto-rerunning summaries when prompts change (re-summarising for
   better titles is way too expensive for marginal benefit).
+
+## 5. Call recording and speaker labels (Oct 2026)
+
+Plaud may go away, so distill records Teams/Zoom calls itself. The recording
+joins the pipeline as an ordinary `source: 'local'` inbox row — same
+inbox-first rule, nothing processes until the user asks.
+
+**Capture.** `packages/app/native/capture/` holds two small Swift binaries.
+`distill-capture` records system audio through a Core Audio process tap
+(macOS 14.2+; no virtual driver, no Screen Recording permission) and the
+microphone, as two separate 16 kHz WAVs. `distill-callwatch` reports when
+Zoom/Teams opens the mic; it only ever raises a notification, recording starts
+on a click (`detectCalls: false` in config.json turns it off). Browser-based
+calls are not detected — the mic belongs to the browser.
+
+**Two tracks, kept.** The mix (`local-x.mp3`) is what plays back. The sources
+stay beside it as `local-x.mic.mp3` / `local-x.others.mp3`, found by naming
+convention (no schema change). Anything that deletes `audio_path` must call
+`removeTracks` — retention and cancel do.
+
+**Speaker labels.** `transcribe.py --audio <others> --mic-audio <you>` transcribes
+each track, maps timestamps from the VAD-compacted audio back to the original
+timeline, and interleaves them as `You:` / `Others:` turns (`python/speakers.py`).
+Who spoke comes from which track the words came from, not from voice analysis.
+Everyone remote is one `Others`; they are not told apart, and the summariser is
+told so (`speakerLegend`, in the user message because system prompts are
+hash-tracked). If the mic holds no speech — muted, unavailable, or only the
+speakers' sound — the transcript is plain, exactly as for any other recording.
+
+**Echo.** Without headphones the mic hears the call. A mic segment is dropped
+only if the other side was speaking over ≥40% of it AND it repeats their words
+(shared-word fraction ≥0.5) or follows their loudness contour (correlation
+≥0.85). Measured, not guessed: on audio recorded through real speakers and mic
+the text similarity of genuine echo was 1.00 every time and the contour
+correlation 0.76–0.94; 200 unrelated speech-like pairs topped out at 0.75.
+Words are the dependable signal; the contour is a backstop and is deliberately
+conservative, because wrongly dropping the user's own words is worse than a
+duplicated line. **Re-check these thresholds against real calls** — the
+evidence so far is one TTS conversation through one Mac's speakers.
+
+**Known limits.** Headphones give the cleanest result. Remote participants are
+not separated from each other (would need diarisation, which means torch).
+`installTap` on the mic is deprecated in macOS 27 but works.

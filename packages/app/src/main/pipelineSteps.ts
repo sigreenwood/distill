@@ -17,6 +17,7 @@ import { effectiveOutputTargets } from './state.js';
 import type { RecordingRow, State } from './state.js';
 import type { OllamaClient } from './ollama.js';
 import { parseStoredAttendees, buildAttendeeRoster } from '../shared/attendees.js';
+import { existingTracks, transcribeInputArgs, speakerLegend } from './callTracks.js';
 
 /** The audio source the download step needs: just a temp-URL provider. */
 export interface AudioSource {
@@ -90,6 +91,13 @@ interface TranscribeOutput {
     speech_ratio: number;
     segments: number;
     removed_seconds: number;
+  };
+  /** Present for two-track call recordings; see python/speakers.py. */
+  speakers?: {
+    labelled: boolean;
+    you_segments: number;
+    others_segments: number;
+    echo_dropped: number;
   };
 }
 
@@ -181,9 +189,10 @@ export async function doTranscribe(id: string, signal: AbortSignal, ctx: Pipelin
     parakeetModel: cfg.parakeetModel,
     initialPrompt: vocab.whisperPrompt || null,
   });
-  const args = [script, '--audio', row.audio_path, ...engineArgs];
+  const callTracks = existingTracks(row.audio_path);
+  const args = [script, ...transcribeInputArgs(row.audio_path, callTracks), ...engineArgs];
   ctx.logger.info(
-    { id, pyBinary, engine: cfg.transcriptionEngine, model: cfg.transcriptionEngine === 'parakeet' ? cfg.parakeetModel : cfg.whisperModel },
+    { id, pyBinary, speakerTracks: callTracks !== null, engine: cfg.transcriptionEngine, model: cfg.transcriptionEngine === 'parakeet' ? cfg.parakeetModel : cfg.whisperModel },
     'starting transcription',
   );
   const proc = spawn(pyBinary, args, { signal });
@@ -239,7 +248,7 @@ export async function doTranscribe(id: string, signal: AbortSignal, ctx: Pipelin
     vocabulary_rules_applied: applied,
   });
   ctx.logger.info(
-    { id, chars: corrected.length, language: parsed.language, vad: parsed.vad ?? null },
+    { id, chars: corrected.length, language: parsed.language, vad: parsed.vad ?? null, speakers: parsed.speakers ?? null },
     'transcription complete',
   );
 }
@@ -272,7 +281,8 @@ export async function doSummarise(id: string, signal: AbortSignal, ctx: Pipeline
   // hash-tracked for the "modified from default" badge and must stay
   // exactly what the meeting type says, independent of any one recording.
   const roster = buildAttendeeRoster(parseStoredAttendees(row.attendees_json));
-  const userContent = roster ? `${roster}\n\n${row.transcript_text}` : row.transcript_text;
+  const legend = speakerLegend(row.transcript_text);
+  const userContent = [roster, legend, row.transcript_text].filter(Boolean).join('\n\n');
 
   const cfg = ctx.getConfig();
   const budget = estimateTokenBudget(meetingType.prompt, userContent, cfg.ollama.contextWindow);

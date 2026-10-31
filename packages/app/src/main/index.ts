@@ -36,6 +36,7 @@ import {
 } from './ipc.js';
 import { getInstallationStatus } from './pythonEnv.js';
 import { importLocalFile, LocalImportError } from './localImport.js';
+import { adoptTracks } from './callTracks.js';
 import { startCallWatch, callAppName, type CallWatch } from './callWatch.js';
 import { createRecorder, RecorderError, type Recorder } from './recorder.js';
 import { migrateScopeRenames, migrateVocabularyToUserDir } from './vocabulary.js';
@@ -52,8 +53,16 @@ async function toggleCallRecording(state: State, log: Logger): Promise<void> {
     logger: log,
     helperPath: path.join(bundledRoot(), app.isPackaged ? 'bin' : 'native/capture/build', 'distill-capture'),
     scratchRoot: path.join(appSupportDir(), 'capture'),
-    importFile: async (mp3) => {
+    importFile: async (mp3, tracks) => {
       const result = await importLocalFile(mp3, { state, logger: log });
+      if (tracks) {
+        try {
+          adoptTracks(result.audioPath, tracks);
+        } catch (e) {
+          // The recording is safely imported; it just won't be speaker-labelled.
+          log.warn({ err: String(e), id: result.recordingId }, 'could not store call tracks');
+        }
+      }
       trayHandle?.refresh();
       broadcastInboxChanged();
       notify({

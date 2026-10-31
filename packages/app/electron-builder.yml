@@ -79,6 +79,10 @@ extraResources:
     to: python/transcribe.py
   - from: python/requirements.txt
     to: python/requirements.txt
+  # Merges the mic and system-audio transcripts of a recorded call into
+  # You:/Others: turns. transcribe.py imports it from its own directory.
+  - from: python/speakers.py
+    to: python/speakers.py
   # Silero VAD weights (~2.3MB, MIT). transcribe.py loads this from its
   # own directory to gate out non-speech before Whisper runs. Without it
   # transcription still works (VAD degrades to off with a warning), but

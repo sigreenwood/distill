@@ -4,6 +4,8 @@ transcribe.py — MLX Whisper / Parakeet MLX transcription for distill.
 
 Input (CLI args):
     --audio <path>            path to the audio file
+    --mic-audio <path>        optional second track (the user's microphone only); turns
+                               on speaker labelling — see speakers.py
     --engine <whisper|parakeet>  which ASR engine to use (default whisper)
     --whisper-model <id>      HuggingFace model id, e.g. mlx-community/whisper-large-v3-mlx
                                (required when --engine whisper)
@@ -22,12 +24,17 @@ Output (stdout):
         duration_seconds: audio duration (of the original file, pre-VAD)
         vad: {enabled, total_seconds, speech_seconds, speech_ratio,
               segments, removed_seconds} — present when VAD ran
+        speakers: {labelled, you_segments, others_segments, echo_dropped} — present
+              only with --mic-audio. labelled is false (and text is plain) when the
+              microphone track holds no speech.
 
 Progress (stderr):
     One JSON line per update: {"phase": "transcribe", "progress": 0.42}
 
-v1 does not diarise. The transcript is a single continuous text, split into
-paragraphs on longer pauses between segments.
+Single-track input is not diarised: one continuous text, split into paragraphs
+on longer pauses between segments. With --mic-audio the two tracks are
+transcribed separately and merged into You:/Others: turns (everyone on the far
+side of the call is one "Others" — they are not told apart from each other).
 
 VAD: before transcription, Silero VAD (bundled silero_vad.onnx, run via
 onnxruntime) drops non-speech stretches. This removes the silence/noise
@@ -85,6 +92,7 @@ DEFAULT_PARAKEET_MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
 @dataclass
 class Args:
     audio: Path
+    mic_audio: Path | None
     engine: str
     whisper_model: str | None
     parakeet_model: str
@@ -97,6 +105,14 @@ class Args:
 def parse_args(argv: list[str]) -> Args:
     p = argparse.ArgumentParser(description="Transcribe an audio file with MLX Whisper or Parakeet MLX.")
     p.add_argument("--audio", required=True, type=Path, help="Path to the audio file")
+    p.add_argument(
+        "--mic-audio",
+        type=Path,
+        default=None,
+        help="Second track holding only the user's microphone. When given, --audio is the"
+        " other participants' track, each is transcribed separately, and the output text is a"
+        " labelled conversation (You: / Others:) instead of plain paragraphs.",
+    )
     p.add_argument(
         "--engine",
         choices=["whisper", "parakeet"],
@@ -138,6 +154,7 @@ def parse_args(argv: list[str]) -> Args:
         p.error("--whisper-model is required when --engine whisper")
     return Args(
         audio=ns.audio,
+        mic_audio=ns.mic_audio,
         engine=ns.engine,
         whisper_model=ns.whisper_model,
         parakeet_model=ns.parakeet_model,
@@ -243,7 +260,9 @@ def probs_to_segments(
 def apply_vad(audio: "np.ndarray", model_path: Path, speech_threshold: float):
     """Gate `audio` (float32 mono 16k) to its speech segments.
 
-    Returns (gated_audio, stats_dict). Segments are joined with silence
+    Returns (gated_audio, stats_dict, pieces). `pieces` maps the compacted
+    timeline back to the original (see speakers.Piece); None when nothing was
+    gated. Segments are joined with silence
     capped at VAD_JOIN_SILENCE_SECONDS (never longer than the original
     gap), preserving Whisper's pause cues and downstream paragraphing.
     """
@@ -273,19 +292,26 @@ def apply_vad(audio: "np.ndarray", model_path: Path, speech_threshold: float):
         # Either genuinely no speech, or the VAD misfired. Fall back to the
         # full audio — Whisper deciding "no speech" beats us guessing.
         stats["enabled"] = False
-        return audio, stats
+        return audio, stats, None
 
     pieces: list[np.ndarray] = []
+    piece_map: list[tuple[float, float, float]] = []
     prev_end: float | None = None
+    compacted = 0  # samples emitted so far
     for s, e in segments:
         if prev_end is not None:
             gap = max(0.0, s - prev_end)
             join = min(gap, VAD_JOIN_SILENCE_SECONDS)
             if join > 0:
-                pieces.append(np.zeros(int(join * WHISPER_SAMPLE_RATE), dtype=audio.dtype))
-        pieces.append(audio[int(s * WHISPER_SAMPLE_RATE) : int(e * WHISPER_SAMPLE_RATE)])
+                silence = np.zeros(int(join * WHISPER_SAMPLE_RATE), dtype=audio.dtype)
+                pieces.append(silence)
+                compacted += len(silence)
+        chunk = audio[int(s * WHISPER_SAMPLE_RATE) : int(e * WHISPER_SAMPLE_RATE)]
+        piece_map.append((compacted / WHISPER_SAMPLE_RATE, s, len(chunk) / WHISPER_SAMPLE_RATE))
+        pieces.append(chunk)
+        compacted += len(chunk)
         prev_end = e
-    return np.concatenate(pieces), stats
+    return np.concatenate(pieces), stats, piece_map
 
 
 def flatten_segments_to_paragraphs(segments: list[dict]) -> str:
@@ -356,6 +382,43 @@ def decode_audio(path: Path) -> "np.ndarray":
     return mono
 
 
+def prepare_track(path: Path, args: Args):
+    """Decode a track and (unless disabled) gate it to its speech.
+
+    Returns (original_audio, asr_audio, vad_stats, pieces). `pieces` maps the
+    gated timeline back to the original (None when nothing was gated).
+    """
+    # Decode once so VAD and the ASR model share the same samples and the
+    # original file is never modified. Always via mlx_whisper's loader
+    # (mlx-whisper is a base dependency regardless of --engine) so decoding
+    # is identical either way.
+    original = decode_audio(path)
+    audio = original
+    vad_stats: dict | None = None
+    pieces = None
+    if args.vad:
+        model_path = Path(__file__).parent / "silero_vad.onnx"
+        try:
+            audio, vad_stats, pieces = apply_vad(audio, model_path, args.vad_threshold)
+        except ImportError:
+            emit_warning(
+                "onnxruntime not installed — transcribing without VAD. "
+                "Run: pip install onnxruntime (in the distill venv) to enable it."
+            )
+        except FileNotFoundError:
+            emit_warning(f"silero_vad.onnx not found at {model_path} — transcribing without VAD.")
+        except Exception as e:  # VAD must never take transcription down with it
+            emit_warning(f"VAD failed ({e}) — transcribing without VAD.")
+    return original, audio, vad_stats, pieces
+
+
+def run_asr(audio: "np.ndarray", args: Args):
+    """Returns (text, segments, model_used, language)."""
+    if args.engine == "parakeet":
+        return transcribe_parakeet(audio, args)
+    return transcribe_whisper(audio, args)
+
+
 def transcribe(args: Args) -> dict:
     if not args.audio.exists():
         raise FileNotFoundError(f"Audio file not found: {args.audio}")
@@ -367,35 +430,14 @@ def transcribe(args: Args) -> dict:
             " bias this transcription. Ignoring."
         )
 
-    # Decode once so VAD and the ASR model share the same samples and the
-    # original file is never modified. Always via mlx_whisper's loader
-    # (mlx-whisper is a base dependency regardless of --engine) so decoding
-    # is identical either way.
-    audio = decode_audio(args.audio)
-    original_duration = len(audio) / WHISPER_SAMPLE_RATE
+    if args.mic_audio is not None:
+        return transcribe_call(args)
 
-    vad_stats: dict | None = None
-    if args.vad:
-        model_path = Path(__file__).parent / "silero_vad.onnx"
-        try:
-            audio, vad_stats = apply_vad(audio, model_path, args.vad_threshold)
-        except ImportError:
-            emit_warning(
-                "onnxruntime not installed — transcribing without VAD. "
-                "Run: pip install onnxruntime (in the distill venv) to enable it."
-            )
-        except FileNotFoundError:
-            emit_warning(f"silero_vad.onnx not found at {model_path} — transcribing without VAD.")
-        except Exception as e:  # VAD must never take transcription down with it
-            emit_warning(f"VAD failed ({e}) — transcribing without VAD.")
+    original, audio, vad_stats, _ = prepare_track(args.audio, args)
+    original_duration = len(original) / WHISPER_SAMPLE_RATE
 
     emit_progress("transcribe", 0.0)
-
-    if args.engine == "parakeet":
-        text, model_used, language = transcribe_parakeet(audio, args)
-    else:
-        text, model_used, language = transcribe_whisper(audio, args)
-
+    text, _segments, model_used, language = run_asr(audio, args)
     emit_progress("transcribe", 1.0)
 
     out: dict = {
@@ -411,8 +453,108 @@ def transcribe(args: Args) -> dict:
     return out
 
 
-def transcribe_whisper(audio: "np.ndarray", args: Args) -> tuple[str, str, str]:
-    """Returns (text, model_id_used, language)."""
+# Peak amplitude below which a track is treated as silence. A muted or absent
+# microphone records near-digital-zero; Whisper "transcribes" such audio into
+# phantom text ("Thank you."), so it must never reach the model.
+SILENT_PEAK = 0.002
+
+
+def has_speech(original: "np.ndarray", vad_stats: dict | None) -> bool:
+    import numpy as np
+
+    if len(original) == 0 or float(np.abs(original).max()) < SILENT_PEAK:
+        return False
+    if vad_stats is not None and vad_stats.get("segments", 1) == 0:
+        return False
+    return True
+
+
+def transcribe_call(args: Args) -> dict:
+    """Two-track path: --audio is everyone else, --mic-audio is the user."""
+    import speakers
+
+    assert args.mic_audio is not None
+    if not args.mic_audio.exists():
+        raise FileNotFoundError(f"Microphone track not found: {args.mic_audio}")
+
+    others_orig, others_audio, others_vad, others_map = prepare_track(args.audio, args)
+    try:
+        you_orig, you_audio, you_vad, you_map = prepare_track(args.mic_audio, args)
+    except Exception as e:
+        # An unavailable microphone leaves a stub file that can't be decoded.
+        # That is "the user said nothing we can hear", not a failed transcription.
+        import numpy as np
+
+        emit_warning(f"microphone track could not be read ({str(e)[:120]}) — treating it as silent.")
+        you_orig = you_audio = np.zeros(0, dtype=np.float32)
+        you_vad, you_map = None, None
+    duration = max(len(others_orig), len(you_orig)) / WHISPER_SAMPLE_RATE
+    others_speech = has_speech(others_orig, others_vad)
+    you_speech = has_speech(you_orig, you_vad)
+
+    if not you_speech:
+        # The user said nothing audible (listening in, or mic unavailable).
+        # Labelling every line "Others" would be noise; return the plain
+        # transcript exactly as a single-track recording would.
+        emit_warning("microphone track holds no speech — transcript is not speaker-labelled.")
+        emit_progress("transcribe", 0.0)
+        text, _segs, model_used, language = run_asr(others_audio, args)
+        emit_progress("transcribe", 1.0)
+        out = {"text": text, "language": language, "model": model_used, "duration_seconds": round(duration, 2)}
+        if others_vad is not None:
+            out["vad"] = others_vad
+        out["speakers"] = {"labelled": False, "you_segments": 0, "others_segments": 0, "echo_dropped": 0}
+        return out
+
+    if not others_speech:
+        emit_warning(
+            "system-audio track holds no speech — check System Audio Recording permission."
+            " Only your side of the call was captured."
+        )
+
+    emit_progress("transcribe", 0.0)
+    others_segs: list[dict] = []
+    model_used, language = "", "unknown"
+    if others_speech:
+        _t, raw, model_used, language = run_asr(others_audio, args)
+        others_segs = speakers.remap_segments(raw, others_map)
+    emit_progress("transcribe", 0.5)
+    _t, raw, you_model, you_lang = run_asr(you_audio, args)
+    you_segs = speakers.remap_segments(raw, you_map)
+    model_used = model_used or you_model
+    if language == "unknown":
+        language = you_lang
+    emit_progress("transcribe", 1.0)
+
+    you_kept, echo = speakers.suppress_echo(you_segs, others_segs, you_orig, others_orig)
+    labelled = bool(you_kept)
+    if labelled:
+        text = speakers.render_turns(speakers.build_turns(you_kept, others_segs))
+    else:
+        # Everything on the mic was the speakers bleeding in: the user only
+        # listened. Same reasoning as a silent mic — plain text, not a wall of
+        # "Others:" lines.
+        text = flatten_segments_to_paragraphs(others_segs)
+
+    out = {
+        "text": text,
+        "language": language,
+        "model": model_used,
+        "duration_seconds": round(duration, 2),
+        "speakers": {
+            "labelled": labelled,
+            "you_segments": len(you_kept),
+            "others_segments": len(others_segs),
+            "echo_dropped": len(echo),
+        },
+    }
+    if others_vad is not None:
+        out["vad"] = others_vad
+    return out
+
+
+def transcribe_whisper(audio: "np.ndarray", args: Args) -> tuple[str, list[dict], str, str]:
+    """Returns (text, timed_segments, model_id_used, language)."""
     # Import here (not at module top) so that `--help` and argument parsing
     # stay fast and don't require mlx_whisper to be installed just to print
     # help, and so --engine parakeet never needs it importable at all.
@@ -457,7 +599,11 @@ def transcribe_whisper(audio: "np.ndarray", args: Args) -> tuple[str, str, str]:
     )
     segments = result.get("segments", [])
     text = flatten_segments_to_paragraphs(segments)
-    return text, args.whisper_model, result.get("language", "unknown")
+    timed = [
+        {"start": float(sg.get("start", 0.0)), "end": float(sg.get("end", 0.0)), "text": sg.get("text", "")}
+        for sg in segments
+    ]
+    return text, timed, args.whisper_model, result.get("language", "unknown")
 
 
 # Mirrors parakeet-mlx CLI's own --chunk-duration/--overlap-duration
@@ -471,8 +617,8 @@ PARAKEET_CHUNK_DURATION_SECONDS = 120.0
 PARAKEET_OVERLAP_DURATION_SECONDS = 15.0
 
 
-def transcribe_parakeet(audio: "np.ndarray", args: Args) -> tuple[str, str, str]:
-    """Returns (text, model_id_used, language). Parakeet doesn't report a
+def transcribe_parakeet(audio: "np.ndarray", args: Args) -> tuple[str, list[dict], str, str]:
+    """Returns (text, timed_segments, model_id_used, language). Parakeet doesn't report a
     detected language, so "unknown" is returned for parity with Whisper's
     output contract rather than guessing.
 
@@ -502,7 +648,8 @@ def transcribe_parakeet(audio: "np.ndarray", args: Args) -> tuple[str, str, str]
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
 
-    return result.text, args.parakeet_model, "unknown"
+    timed = [{"start": float(sn.start), "end": float(sn.end), "text": sn.text} for sn in result.sentences]
+    return result.text, timed, args.parakeet_model, "unknown"
 
 
 def main() -> int:

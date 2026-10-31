@@ -3,6 +3,7 @@ import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Logger } from './logger.js';
 import { isOnPath } from './localImport.js';
+import type { CallTracks } from './callTracks.js';
 
 /** Raised with a message that is safe to show the user as-is. */
 export class RecorderError extends Error {
@@ -79,6 +80,11 @@ export class NoSignalWatch {
   }
 }
 
+/** Compress one raw capture track to a speech-quality mono mp3. */
+export function buildTrackArgs(wav: string, outMp3: string): string[] {
+  return ['-y', '-hide_banner', '-loglevel', 'error', '-i', wav, '-ac', '1', '-b:a', '64k', outMp3];
+}
+
 /**
  * Mix the system and microphone tracks to one mono mp3. amix halves each
  * input, so volume=2 puts the mix back at the level of the loudest source.
@@ -108,8 +114,12 @@ export interface RecorderDeps {
   helperPath: string;
   /** Where in-progress captures live. Must not be swept by audio retention. */
   scratchRoot: string;
-  /** Hand the finished mp3 to the normal import path. */
-  importFile: (mp3Path: string) => Promise<void>;
+  /**
+   * Hand the finished mp3 to the normal import path. `tracks` are the
+   * separate mic/others mp3s (null if they couldn't be made) and must be
+   * moved next to the imported audio before this resolves.
+   */
+  importFile: (mp3Path: string, tracks: CallTracks | null) => Promise<void>;
   /** Non-fatal things the user should hear about (permission, mic missing). */
   onWarning: (message: string) => void;
   /** Recording started or stopped. */
@@ -138,9 +148,9 @@ export function createRecorder(deps: RecorderDeps): Recorder {
   let active: Active | null = null;
   let starting = false;
 
-  const mix = (a: Active, out: string): Promise<void> =>
+  const ffmpeg = (args: string[]): Promise<void> =>
     new Promise((resolve, reject) => {
-      const p = spawn('ffmpeg', buildMixArgs(a.systemWav, a.micWav, out));
+      const p = spawn('ffmpeg', args);
       let stderr = '';
       p.stderr.on('data', (c) => (stderr += String(c)));
       p.on('error', reject);
@@ -149,15 +159,32 @@ export function createRecorder(deps: RecorderDeps): Recorder {
       );
     });
 
+  const mix = (a: Active, out: string): Promise<void> =>
+    ffmpeg(buildMixArgs(a.systemWav, a.micWav, out));
+
+  /** Separate tracks are what let the transcriber label speakers. Optional: failure only costs the labels. */
+  const compressTracks = async (a: Active): Promise<CallTracks | null> => {
+    const tracks = { mic: path.join(a.dir, 'mic.mp3'), others: path.join(a.dir, 'others.mp3') };
+    try {
+      await ffmpeg(buildTrackArgs(a.micWav, tracks.mic));
+      await ffmpeg(buildTrackArgs(a.systemWav, tracks.others));
+      return tracks;
+    } catch (e) {
+      logger.warn({ err: String(e) }, 'could not keep separate call tracks; transcript will not be speaker-labelled');
+      return null;
+    }
+  };
+
   /** Mix + import, then clear scratch. On any failure the raw tracks are kept. */
   const finish = async (a: Active): Promise<void> => {
     const mp3 = path.join(a.dir, callFilename(new Date(a.startedAt)));
     try {
       await mix(a, mp3);
+      const tracks = await compressTracks(a);
       // The importer stamps start_time from mtime; make that the call's start.
       const t = new Date(a.startedAt);
       fs.utimesSync(mp3, t, t);
-      await deps.importFile(mp3);
+      await deps.importFile(mp3, tracks);
       fs.rmSync(a.dir, { recursive: true, force: true });
     } catch (e) {
       logger.error({ err: String(e), dir: a.dir }, 'call recording could not be imported; raw tracks kept');

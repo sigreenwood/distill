@@ -59,3 +59,14 @@ describe('call watcher', () => {
     expect(callAppName('com.microsoft.teams2')).toBe('Teams');
   });
 });
+
+import { buildTrackArgs } from '../src/main/recorder.js';
+
+describe('buildTrackArgs', () => {
+  it('compresses one wav to a mono mp3', () => {
+    const a = buildTrackArgs('in.wav', 'out.mp3');
+    expect(a).toContain('in.wav');
+    expect(a[a.length - 1]).toBe('out.mp3');
+    expect(a[a.indexOf('-ac') + 1]).toBe('1');
+  });
+});
