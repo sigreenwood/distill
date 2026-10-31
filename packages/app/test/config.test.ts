@@ -50,3 +50,28 @@ describe('normaliseProcessingSchedule', () => {
     });
   });
 });
+
+describe('normaliseConfig — claudeSummaries (cloud summaries are opt-in)', () => {
+  it('is off, with nothing allowed, for a fresh config', () => {
+    expect(normaliseConfig({}).claudeSummaries).toEqual({ enabled: false, model: '', forUnfiled: false });
+  });
+
+  it('turns on only for an explicit true — truthy junk stays local', () => {
+    for (const junk of ['true', 'yes', 1, {}, [], null]) {
+      expect(normaliseConfig({ claudeSummaries: { enabled: junk, forUnfiled: junk } }).claudeSummaries).toEqual({
+        enabled: false, model: '', forUnfiled: false,
+      });
+    }
+    expect(normaliseConfig({ claudeSummaries: { enabled: true } }).claudeSummaries.enabled).toBe(true);
+  });
+
+  it('keeps forUnfiled separate from enabled', () => {
+    const c = normaliseConfig({ claudeSummaries: { enabled: true, forUnfiled: true } }).claudeSummaries;
+    expect(c).toMatchObject({ enabled: true, forUnfiled: true });
+  });
+
+  it('drops a model name that is not a plain identifier', () => {
+    expect(normaliseConfig({ claudeSummaries: { model: 'sonnet' } }).claudeSummaries.model).toBe('sonnet');
+    expect(normaliseConfig({ claudeSummaries: { model: '--tools default' } }).claudeSummaries.model).toBe('');
+  });
+});

@@ -107,6 +107,8 @@ export interface ClientRow {
   /** Account context added to every summary for this client (shared/summaryInput.ts). Migration 18. */
   context: string | null;
   meeting_type_ids_json: string | null;
+  /** 1 = summaries for this client may be written by Claude Code (sent to Anthropic). Migration 25. */
+  claude_summaries: number;
 }
 
 export interface MeetingTypeRow {
@@ -670,6 +672,15 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_recording_materials_recording ON recording_materials(recording_id);
     `,
   },
+  {
+    version: 25,
+    sql: `
+      -- Per-client permission to summarise with Claude Code, which sends the
+      -- transcript to Anthropic (summaryProvider.ts). Off for everyone: a
+      -- client is allowed individually, never by default.
+      ALTER TABLE clients ADD COLUMN claude_summaries INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 export function openDatabase(_path?: string): Database.Database {
@@ -730,7 +741,7 @@ export class State {
     return this.db.prepare('SELECT * FROM clients WHERE id = ?').get(id) as ClientRow | undefined;
   }
 
-  upsertClient(row: Omit<ClientRow, 'created_at' | 'context' | 'meeting_type_ids_json'>): void {
+  upsertClient(row: Omit<ClientRow, 'created_at' | 'context' | 'meeting_type_ids_json' | 'claude_summaries'>): void {
     const now = Date.now();
     const ids = defaultMeetingTypeIds(row.name);
     this.db
@@ -1872,6 +1883,10 @@ export class State {
   setClientMeetingTypes(id: string, ids: string[] | null): boolean {
     return this.db.prepare('UPDATE clients SET meeting_type_ids_json = ? WHERE id = ?')
       .run(ids === null ? null : JSON.stringify(ids), id).changes > 0;
+  }
+
+  setClientClaudeSummaries(id: string, allowed: boolean): boolean {
+    return this.db.prepare('UPDATE clients SET claude_summaries = ? WHERE id = ?').run(allowed ? 1 : 0, id).changes > 0;
   }
 
   setClientContext(id: string, context: string | null): boolean {

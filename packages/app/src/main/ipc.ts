@@ -1,3 +1,10 @@
+import {
+  ClaudeCodeError,
+  findClaudeBinary,
+  getClaudeStatus,
+  summariseWithClaudeCode,
+} from './claudeCode.js';
+import { normaliseClaudeModel } from './summaryProvider.js';
 import { searchMeetings, validateSearch } from './meetingSearch.js';
 import { offeredMeetingTypes, meetingTypesForOrganisation, parseMeetingTypeIds } from '../shared/meetingTypeLine.js';
 import { loadMeetingDetail } from './meetingContent.js';
@@ -1052,6 +1059,106 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     return toClientDTO(ctx.state.getClient(id)!);
   });
 
+  // --- Claude Code summaries (opt-in; docs/app/CLAUDE-SUMMARIES.md) ------------
+
+  ipcMain.handle(Channels.ClaudeGetSettings, async () => ({
+    settings: ctx.getConfig().claudeSummaries,
+    status: await getClaudeStatus(),
+  }));
+
+  ipcMain.handle(Channels.ClaudeCheck, () => getClaudeStatus());
+
+  ipcMain.handle(Channels.ClaudeOpenGuide, async () => {
+    // Packaged: bundled beside the app. Dev: straight from the repo's docs.
+    const candidates = [
+      path.join(ctx.resourcesDir, 'CLAUDE-SUMMARIES.md'),
+      path.resolve(ctx.resourcesDir, '..', '..', '..', 'docs', 'app', 'CLAUDE-SUMMARIES.md'),
+    ];
+    const found = candidates.find((p) => fs.existsSync(p));
+    if (!found) throw new Error('The guide was not found. It is docs/app/CLAUDE-SUMMARIES.md in the distill repository.');
+    const failed = await shell.openPath(found);
+    if (failed) throw new Error(`Could not open the guide: ${failed}`);
+  });
+
+  ipcMain.handle(Channels.ClaudeSaveSettings, async (_evt, payload) => {
+    const o = (payload ?? {}) as Record<string, unknown>;
+    if (typeof o.enabled !== 'boolean' || typeof o.forUnfiled !== 'boolean') {
+      throw new Error('enabled and forUnfiled must be booleans');
+    }
+    const previous = ctx.getConfig().claudeSummaries;
+    // Consent is asked here, in the main process, so it cannot be skipped by
+    // the page: turning this on is the moment transcripts become able to leave.
+    if (o.enabled && !previous.enabled) {
+      const { response } = await dialog.showMessageBox({
+        type: 'warning',
+        message: 'Let Claude Code write summaries?',
+        detail:
+          'Until now, every transcript has stayed on this Mac. With this on, the transcript of a recording is sent to Anthropic (through your Claude Code sign-in) to write its summary.\n\n' +
+          'Nothing is sent yet: each client must also be allowed individually under Clients, and recordings not filed to a client stay local unless you allow them here. Turning this off takes effect straight away.',
+        buttons: ['Allow Claude Code', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+      });
+      if (response !== 0) throw new Error('Not enabled: Claude Code summaries stay off.');
+    }
+    const next = {
+      enabled: o.enabled,
+      model: normaliseClaudeModel(o.model),
+      forUnfiled: o.forUnfiled,
+    };
+    const updated = ctx.applyConfigUpdate({ claudeSummaries: next });
+    saveConfig(updated);
+    ctx.logger.info(
+      { enabled: next.enabled, model: next.model || '(default)', forUnfiled: next.forUnfiled },
+      'Claude Code summary settings saved',
+    );
+    return updated.claudeSummaries;
+  });
+
+  // A fixed, harmless sentence — nothing from any recording — to prove the whole path works.
+  ipcMain.handle(Channels.ClaudeTest, async () => {
+    const binary = findClaudeBinary();
+    if (!binary) return { ok: false as const, error: 'Claude Code was not found.' };
+    const started = Date.now();
+    try {
+      const r = await summariseWithClaudeCode({
+        binary,
+        systemPrompt: 'Reply with the single word OK and nothing else.',
+        userContent: 'This is a connection test from distill.',
+        model: ctx.getConfig().claudeSummaries.model,
+        timeoutMs: 90_000,
+      });
+      return { ok: true as const, model: r.model, seconds: Math.round((Date.now() - started) / 100) / 10, costUsd: r.costUsd };
+    } catch (e) {
+      return { ok: false as const, error: e instanceof ClaudeCodeError ? e.userMessage : String(e) };
+    }
+  });
+
+  ipcMain.handle(Channels.ClientsSetClaude, async (_evt, id, allowed) => {
+    if (typeof id !== 'string' || typeof allowed !== 'boolean') throw new Error('id must be a string and allowed a boolean');
+    const client = ctx.state.getClient(id);
+    if (!client) throw new Error('That client no longer exists.');
+    // Asked here, naming the client, only when granting: this is the decision that lets one
+    // organisation's meetings leave the machine, so it is confirmed in the main process.
+    if (allowed && client.claude_summaries !== 1) {
+      const { response } = await dialog.showMessageBox({
+        type: 'warning',
+        message: `Let Claude Code summarise ${client.name}'s meetings?`,
+        detail:
+          `The transcripts of ${client.name}'s recordings (and this client's account context) will be sent to Anthropic to write their summaries. ` +
+          'Check that this is allowed by your agreement with them. You can turn it off again at any time; summaries already written stay as they are.',
+        buttons: ['Allow', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+      });
+      if (response !== 0) return toClientDTO(client);
+    }
+    if (!ctx.state.setClientClaudeSummaries(id, allowed)) throw new Error('That client no longer exists.');
+    // Logged either way: this is the setting that decides whether a client's transcripts leave the machine.
+    ctx.logger.info({ clientId: id, allowed }, 'client Claude-summaries permission changed');
+    return toClientDTO(ctx.state.getClient(id)!);
+  });
+
   ipcMain.handle(Channels.ClientsSetContext, (_evt, id, context) => {
     if (typeof id !== 'string' || typeof context !== 'string') throw new Error('id and context must be strings');
     if (context.length > MAX_ACCOUNT_CONTEXT_CHARS) {
@@ -2088,6 +2195,7 @@ function toClientDTO(r: ClientRow) {
     sort_order: r.sort_order,
     context: r.context ?? '',
     meetingTypeIds: parseMeetingTypeIds(r.meeting_type_ids_json),
+    claudeSummaries: r.claude_summaries === 1,
   };
 }
 

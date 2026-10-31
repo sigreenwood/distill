@@ -4,6 +4,7 @@ import path from 'node:path';
 import { appSupportDir, configFile, expandHome } from './paths.js';
 import { recommendModelForRam, recommendContextWindow } from './modelAdvisor.js';
 import type { ProcessingSchedule, ProcessingScheduleMode } from './processingSchedule.js';
+import { normaliseClaudeModel, type ClaudeSummarySettings } from './summaryProvider.js';
 
 export type PausableStep = 'polling' | 'download' | 'transcribe' | 'summarise';
 
@@ -62,6 +63,12 @@ export interface OllamaConfig {
 export interface AppConfig {
   version: number;
   ollama: OllamaConfig;
+  /**
+   * Summarise with Claude Code instead of Ollama. OFF by default, and even when
+   * on, only for clients individually allowed (summaryProvider.ts) — it sends
+   * the transcript to Anthropic. docs/app/CLAUDE-SUMMARIES.md.
+   */
+  claudeSummaries: ClaudeSummarySettings;
   pollIntervalMinutes: number;
   paused: PauseConfig;
   whisperModel: string;
@@ -252,6 +259,12 @@ export function normaliseConfig(cfg: any): AppConfig {
   };
   return {
     version: cfg.version ?? 1,
+    // Only an explicit `true` turns anything on: a malformed value means local.
+    claudeSummaries: {
+      enabled: cfg.claudeSummaries?.enabled === true,
+      model: normaliseClaudeModel(cfg.claudeSummaries?.model),
+      forUnfiled: cfg.claudeSummaries?.forUnfiled === true,
+    },
     ollama: {
       host: cfg.ollama?.host ?? 'http://localhost:11434',
       // Fresh installs get a model sized to this Mac's unified memory

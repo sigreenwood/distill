@@ -124,6 +124,7 @@ const api = {
     add: (payload: { name: string }) => ipcRenderer.invoke(Channels.ClientsAdd, payload),
     setMeetingTypes: (id: string, ids: string[] | null) => ipcRenderer.invoke(Channels.ClientsSetMeetingTypes, id, ids),
     setContext: (id: string, context: string) => ipcRenderer.invoke(Channels.ClientsSetContext, id, context),
+    setClaude: (id: string, allowed: boolean) => ipcRenderer.invoke(Channels.ClientsSetClaude, id, allowed),
   },
   meetingTypes: {
     list: () => ipcRenderer.invoke(Channels.MeetingTypesList),
@@ -205,6 +206,13 @@ const api = {
     const wrapped = (_evt: IpcRendererEvent, id: string) => handler(id);
     ipcRenderer.on(Channels.PushFocusRecording, wrapped);
     return () => ipcRenderer.off(Channels.PushFocusRecording, wrapped);
+  },
+  claude: {
+    getSettings: () => ipcRenderer.invoke(Channels.ClaudeGetSettings),
+    saveSettings: (s: unknown) => ipcRenderer.invoke(Channels.ClaudeSaveSettings, s),
+    check: () => ipcRenderer.invoke(Channels.ClaudeCheck),
+    openGuide: () => ipcRenderer.invoke(Channels.ClaudeOpenGuide),
+    test: () => ipcRenderer.invoke(Channels.ClaudeTest),
   },
   recorder: {
     toggle: () => ipcRenderer.invoke(Channels.RecorderToggle),
