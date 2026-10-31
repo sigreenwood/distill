@@ -489,6 +489,22 @@ app that launched them dies, finalising their files first. A silent microphone
 notification during the call. Quitting mid-call stops, mixes and imports first,
 but never waits more than 90 s.
 
+**Changing audio devices mid-call.** The system tap is a mixdown of every
+process's output and is independent of which speakers or headphones are
+active: a tone recorded across output sample-rate changes stayed at the right
+pitch and level. The microphone was the problem — `AVAudioEngine` also drives
+the output, and any audio-device change stopped it for good (measured: the mic
+file ended 8 s into a 32 s recording, silently). The mic is now captured
+straight from Core Audio, follows the system default input live (headphones
+connecting switches it), and reopens when the device's rate changes. Both
+tracks share one clock and any stall is written as silence, so they stay
+aligned (measured: a 3 s freeze left both files at wall-clock length with a
+silent gap). Echo suppression is per segment, so a call that starts on
+speakers and moves to headphones is handled on each side of the switch.
+Simulated with sample-rate changes on the one input and output this Mac has —
+a real Bluetooth headset swap is not yet tested. The app records the system
+default microphone, not whichever one Zoom or Teams has been told to use.
+
 **Known limits.** Headphones give the cleanest result. Remote participants are
 not separated from each other (would need diarisation, which means torch).
 `installTap` on the mic is deprecated in macOS 27 but works.
