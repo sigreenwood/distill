@@ -1247,6 +1247,7 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
   const [dismissText, setDismissText] = useState(String(props.initial.autoDismissCompleteMinutes));
   const [launchAtLogin, setLaunchAtLogin] = useState(props.initial.launchAtLogin);
   const [detectCalls, setDetectCalls] = useState(props.initial.detectCalls);
+  const [checkForUpdates, setCheckForUpdates] = useState(props.initial.checkForUpdates);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -1255,6 +1256,8 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
     const base = {
       launchAtLogin,
       detectCalls,
+      checkForUpdates,
+      appVersion: props.initial.appVersion,
       launchAtLoginAvailable: props.initial.launchAtLoginAvailable,
     };
     const dismissTrimmed = dismissText.trim();
@@ -1275,7 +1278,7 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
       return null;
     }
     return { ...base, audioRetentionDays: parsed, autoDismissCompleteMinutes: dismissParsed };
-  }, [enabled, daysText, dismissText, launchAtLogin, detectCalls, props.initial.launchAtLoginAvailable]);
+  }, [enabled, daysText, dismissText, launchAtLogin, detectCalls, checkForUpdates, props.initial.appVersion, props.initial.launchAtLoginAvailable]);
 
   const isDirty = useMemo(() => {
     if (!computed) return false;
@@ -1283,7 +1286,8 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
       computed.audioRetentionDays !== props.initial.audioRetentionDays ||
       computed.autoDismissCompleteMinutes !== props.initial.autoDismissCompleteMinutes ||
       computed.launchAtLogin !== props.initial.launchAtLogin ||
-      computed.detectCalls !== props.initial.detectCalls
+      computed.detectCalls !== props.initial.detectCalls ||
+      computed.checkForUpdates !== props.initial.checkForUpdates
     );
   }, [
     computed,
@@ -1291,6 +1295,7 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
     props.initial.autoDismissCompleteMinutes,
     props.initial.launchAtLogin,
     props.initial.detectCalls,
+    props.initial.checkForUpdates,
   ]);
 
   const onSave = useCallback(async () => {
@@ -1364,6 +1369,35 @@ export function GeneralPane(props: { initial: GeneralDTO; onSaved: (next: Genera
                 rather than at distill. Works in an installed copy.
               </>
             )}
+          </div>
+        </section>
+        <section
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Updates</div>
+          <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>
+            This is distill {props.initial.appVersion}. It can look for newer releases on GitHub and offer
+            them; nothing is downloaded or installed unless you say so, and the check sends only the
+            version number.
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={checkForUpdates}
+              onChange={(e) => {
+                setCheckForUpdates(e.target.checked);
+                setSavedAt(null);
+              }}
+            />
+            Check GitHub for new versions
+          </label>
+          <div className="muted" style={{ fontSize: 10, marginTop: 6, lineHeight: 1.4 }}>
+            You can also check any time from the menu bar (Check for updates).
           </div>
         </section>
         <section

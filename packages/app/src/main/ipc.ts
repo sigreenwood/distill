@@ -795,6 +795,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       audioRetentionDays: general.audioRetentionDays,
       autoDismissCompleteMinutes: general.autoDismissCompleteMinutes,
       detectCalls: general.detectCalls,
+      checkForUpdates: general.checkForUpdates,
     });
     saveConfig(updated);
     if (updated.detectCalls !== previousDetectCalls) ctx.onDetectCallsChanged?.(updated.detectCalls);
@@ -830,6 +831,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         audioRetentionDays: updated.audioRetentionDays,
         autoDismissCompleteMinutes: updated.autoDismissCompleteMinutes,
         detectCalls: updated.detectCalls,
+        checkForUpdates: updated.checkForUpdates,
         launchAtLogin,
       },
       'general settings saved',
@@ -1242,6 +1244,8 @@ function toGeneralDTO(cfg: AppConfig) {
     audioRetentionDays: cfg.audioRetentionDays,
     autoDismissCompleteMinutes: cfg.autoDismissCompleteMinutes,
     detectCalls: cfg.detectCalls,
+    checkForUpdates: cfg.checkForUpdates,
+    appVersion: app.getVersion(),
     launchAtLogin: launchAtLoginAvailable() ? app.getLoginItemSettings().openAtLogin : false,
     launchAtLoginAvailable: launchAtLoginAvailable(),
   };
@@ -1649,6 +1653,7 @@ function assertGeneralDTO(v: unknown): {
   audioRetentionDays: number | null;
   autoDismissCompleteMinutes: number;
   detectCalls: boolean;
+  checkForUpdates: boolean;
   launchAtLogin: boolean;
 } {
   if (!v || typeof v !== 'object') throw new Error('Invalid general payload');
@@ -1664,13 +1669,18 @@ function assertGeneralDTO(v: unknown): {
   }
   const detectCalls = o.detectCalls;
 
+  if (typeof o.checkForUpdates !== 'boolean') {
+    throw new Error('checkForUpdates must be a boolean');
+  }
+  const checkForUpdates = o.checkForUpdates;
+
   const dismiss = o.autoDismissCompleteMinutes;
   if (typeof dismiss !== 'number' || !Number.isInteger(dismiss) || dismiss < 0) {
     throw new Error('autoDismissCompleteMinutes must be a non-negative integer (0 disables auto-hide)');
   }
 
   const raw = o.audioRetentionDays;
-  if (raw === null) return { audioRetentionDays: null, autoDismissCompleteMinutes: dismiss, detectCalls, launchAtLogin };
+  if (raw === null) return { audioRetentionDays: null, autoDismissCompleteMinutes: dismiss, detectCalls, checkForUpdates, launchAtLogin };
   if (typeof raw !== 'number' || !Number.isFinite(raw)) {
     throw new Error('audioRetentionDays must be null or a non-negative integer');
   }
@@ -1680,7 +1690,7 @@ function assertGeneralDTO(v: unknown): {
   if (raw < 0) {
     throw new Error('audioRetentionDays must be ≥ 0 (use null to disable the sweep)');
   }
-  return { audioRetentionDays: raw, autoDismissCompleteMinutes: dismiss, detectCalls, launchAtLogin };
+  return { audioRetentionDays: raw, autoDismissCompleteMinutes: dismiss, detectCalls, checkForUpdates, launchAtLogin };
 }
 
 function assertPerformanceDTO(v: unknown): {

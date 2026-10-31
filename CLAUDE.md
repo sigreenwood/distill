@@ -7,7 +7,9 @@ and Apple Notes.
 
 macOS on Apple Silicon only. No cloud LLM, no API keys. The only network
 calls are Plaud (your own recordings), the Ollama registry (model
-existence checks), and Hugging Face (one-time Whisper weights).
+existence checks), Hugging Face (one-time Whisper weights), and GitHub
+Releases (one GET to look for a newer distill; sends only the version in the
+User-Agent, switch off in Settings → General).
 
 ## Do not review `salvage/`
 
@@ -50,8 +52,9 @@ Do not reopen these in review; they are decisions, not oversights.
   transcription. No cloud LLM, ever — the point is that client meeting
   content never leaves the machine.
 - **Inbox-first.** Nothing processes until the user explicitly asks.
-- **Suggestion-only.** Model updates, prompt changes and config
-  recommendations are surfaced for approval and never auto-applied. A
+- **Suggestion-only.** Model updates, prompt changes, config
+  recommendations and app updates are surfaced for approval and never
+  auto-applied. A
   past migration that silently rewrote a config value made that setting
   unfixable by hand; see `resolveContextWindow` in `config.ts`.
 - **Per-destination idempotency.** `*_written_at` columns mean a retry

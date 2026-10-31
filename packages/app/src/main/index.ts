@@ -26,6 +26,7 @@ import {
   openSettings,
   openHistory,
   openSetup,
+  showUpdateWindow,
   closeAll,
 } from './windows.js';
 import {
@@ -38,6 +39,16 @@ import { getInstallationStatus } from './pythonEnv.js';
 import { importLocalFile, LocalImportError } from './localImport.js';
 import { adoptTracks } from './callTracks.js';
 import { startCallWatch, callAppName, type CallWatch } from './callWatch.js';
+import {
+  checkForUpdate,
+  downloadUpdate,
+  shouldNotify,
+  loadMemory,
+  saveMemory,
+  UpdateError,
+  type UpdateInfo,
+} from './updateCheck.js';
+import { renderUpdatePage } from './updateNotes.js';
 import { createRecorder, RecorderError, type Recorder } from './recorder.js';
 import { migrateScopeRenames, migrateVocabularyToUserDir } from './vocabulary.js';
 import { startSweepSchedule, sweepStateFor, nodeFs } from './audioRetention.js';
@@ -47,6 +58,108 @@ app.dock?.hide();
 
 let recorder: Recorder | null = null;
 let callWatch: CallWatch | null = null;
+
+// --- updates ---------------------------------------------------------------
+// Suggestion-only (see updateCheck.ts): find, tell, and on a click download and
+// hand the .pkg to the macOS installer. Never installs by itself.
+
+let availableUpdate: UpdateInfo | null = null;
+let updateBusy = false;
+const updatesDir = (): string => path.join(appSupportDir(), 'updates');
+const updateMemoryFile = (): string => path.join(updatesDir(), 'state.json');
+
+async function runUpdateCheck(manual: boolean, state: State, log: Logger): Promise<void> {
+  if (updateBusy) return;
+  updateBusy = true;
+  try {
+    const info = await checkForUpdate(app.getVersion());
+    availableUpdate = info;
+    trayHandle?.setUpdateAvailable(info?.version ?? null);
+    if (!info) {
+      log.info({ current: app.getVersion() }, 'update check: up to date');
+      if (manual) {
+        void dialog.showMessageBox({
+          type: 'info',
+          message: 'distill is up to date',
+          detail: `You have ${app.getVersion()}, the latest release.`,
+        });
+      }
+      return;
+    }
+    log.info({ current: app.getVersion(), available: info.version }, 'update check: newer release found');
+    if (manual) {
+      updateBusy = false;
+      await offerUpdate(info, state, log);
+      return;
+    }
+    const mem = loadMemory(updateMemoryFile());
+    if (shouldNotify(mem, info.version)) {
+      saveMemory(updateMemoryFile(), { ...mem, notified: info.version });
+      notify({
+        title: `distill ${info.version} is available`,
+        body: 'Click to review it. Nothing is installed unless you say so.',
+        onClick: () => void offerUpdate(info, state, log),
+      });
+    }
+  } catch (e) {
+    const msg = e instanceof UpdateError ? e.userMessage : String(e);
+    log.warn({ err: String(e) }, 'update check failed');
+    if (manual) dialog.showErrorBox('distill — update check', msg);
+  } finally {
+    updateBusy = false;
+  }
+}
+
+async function offerUpdate(info: UpdateInfo, state: State, log: Logger): Promise<void> {
+  if (updateBusy) return;
+  // The changelog comes first, in full, and nothing is downloaded until the
+  // user has seen it and pressed Download and Install.
+  const choice = await showUpdateWindow(
+    renderUpdatePage(info, app.getVersion(), { processing: state.processingSummary().running > 0 }),
+    `distill ${info.version} — what's new`,
+  );
+  if (choice === 'page') {
+    void shell.openExternal(info.pageUrl);
+    return;
+  }
+  if (choice === 'skip') {
+    saveMemory(updateMemoryFile(), { ...loadMemory(updateMemoryFile()), skipped: info.version });
+    return;
+  }
+  if (choice !== 'install') return;
+
+  if (recorder?.startedAt() != null) {
+    dialog.showErrorBox('distill — update', 'A call is being recorded. Stop the recording first, then update.');
+    return;
+  }
+  updateBusy = true;
+  try {
+    notify({ title: `Downloading distill ${info.version}`, body: 'You will be asked before anything is installed.', silent: true });
+    const pkg = await downloadUpdate(info, updatesDir(), app.getVersion(), undefined);
+    log.info({ pkg }, 'update downloaded and verified');
+    const ready = await dialog.showMessageBox({
+      type: 'question',
+      message: `distill ${info.version} is ready to install`,
+      detail: 'distill will quit and the macOS installer will open. Open distill again from Applications when it finishes.',
+      buttons: ['Quit and Install', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (ready.response !== 0) return;
+    if (recorder?.startedAt() != null) {
+      dialog.showErrorBox('distill — update', 'A call started recording. Stop it first, then update.');
+      return;
+    }
+    const failed = await shell.openPath(pkg);
+    if (failed) throw new UpdateError(`The installer could not be opened (${failed}). The file is at ${pkg}.`);
+    app.quit();
+  } catch (e) {
+    log.error({ err: String(e) }, 'update install failed');
+    dialog.showErrorBox('distill — update', e instanceof UpdateError ? e.userMessage : String(e));
+  } finally {
+    updateBusy = false;
+  }
+}
 
 function getRecorder(state: State, log: Logger): Recorder {
   return (recorder ??= createRecorder({
@@ -339,6 +452,10 @@ app.whenReady().then(async () => {
       onToggleRecording: () => {
         void toggleCallRecording(localState, localLogger);
       },
+      onCheckForUpdates: () => {
+        if (availableUpdate) void offerUpdate(availableUpdate, localState, localLogger);
+        else void runUpdateCheck(true, localState, localLogger);
+      },
       onPauseChange: (nextPause) => {
         const updated = applyConfigUpdate({ paused: nextPause });
         saveConfig(updated);
@@ -350,6 +467,14 @@ app.whenReady().then(async () => {
     trayHandle = tray;
 
     applyCallDetection(cfg.detectCalls, localState, localLogger);
+    // Update checks: a dev build reports Electron's own version, so only packaged builds poll.
+    if (app.isPackaged) {
+      const tick = () => {
+        if (cfg.checkForUpdates) void runUpdateCheck(false, localState, localLogger);
+      };
+      setTimeout(tick, 45_000);
+      setInterval(tick, 6 * 60 * 60 * 1000);
+    }
     // Give a helper orphaned by a crash a moment to notice and finalise its files first.
     setTimeout(() => {
       void getRecorder(localState, localLogger)

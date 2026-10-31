@@ -118,6 +118,10 @@ export interface GeneralDTO {
   autoDismissCompleteMinutes: number;
   /** Offer to record (via notification) when Zoom or Teams starts a call. */
   detectCalls: boolean;
+  /** Look for newer releases on GitHub and offer them (never installs on its own). */
+  checkForUpdates: boolean;
+  /** The running version, for display only. */
+  appVersion: string;
   /** Read from the OS, not from config — it can be changed in System Settings. */
   launchAtLogin: boolean;
   /**

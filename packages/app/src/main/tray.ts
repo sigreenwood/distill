@@ -36,6 +36,8 @@ export interface TrayContext {
   onPauseChange: (next: PauseConfig) => void;
   /** Start or stop recording a call; the tray only knows whether one is running. */
   onToggleRecording: () => void;
+  /** Check for updates, or review the one already found. */
+  onCheckForUpdates: () => void;
 }
 
 export interface TrayHandle {
@@ -44,6 +46,8 @@ export interface TrayHandle {
   setOllamaWarning: (m: string | null) => void;
   /** Epoch ms the current call recording began, or null when not recording. */
   setRecording: (startedAt: number | null) => void;
+  /** Version of a newer release that is waiting, or null. */
+  setUpdateAvailable: (version: string | null) => void;
   destroy: () => void;
 }
 
@@ -75,6 +79,7 @@ export function createTray(ctx: TrayContext): TrayHandle {
   let ollamaWarning: string | null = null;
   let currentState: TrayState = 'idle';
   let recordingStartedAt: number | null = null;
+  let updateVersion: string | null = null;
   let recordingTimer: NodeJS.Timeout | null = null;
 
   let baseTitle = '';
@@ -153,6 +158,10 @@ export function createTray(ctx: TrayContext): TrayHandle {
         },
       },
       buildPauseSubmenu(cfg.paused, ctx.onPauseChange),
+      {
+        label: updateVersion === null ? 'Check for updates…' : `Update to v${updateVersion}…`,
+        click: () => ctx.onCheckForUpdates(),
+      },
       { type: 'separator' },
       {
         label: 'Settings…',
@@ -213,6 +222,10 @@ export function createTray(ctx: TrayContext): TrayHandle {
     },
     setOllamaWarning: (m) => {
       ollamaWarning = m;
+      rebuild();
+    },
+    setUpdateAvailable: (version) => {
+      updateVersion = version;
       rebuild();
     },
     setRecording: (startedAt) => {

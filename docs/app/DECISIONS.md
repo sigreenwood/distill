@@ -520,3 +520,45 @@ Core Audio reports an aggregate device as its physical sub-device.
 **Known limits.** Headphones give the cleanest result. Remote participants are
 not separated from each other (would need diarisation, which means torch).
 `installTap` on the mic is deprecated in macOS 27 but works.
+
+## 6. App updates from GitHub Releases (Oct 2026)
+
+Installed copies find new versions on this repo's GitHub Releases
+(`updateCheck.ts`). It is **update-with-approval, not silent auto-update**,
+for two reasons.
+
+*Unsigned.* Electron's built-in updater (Squirrel.Mac) and `electron-updater`
+both refuse to replace an unsigned macOS app, and distill is unsigned on
+purpose (`identity: null`). What works unsigned: the app downloads the `.pkg`
+itself (a file fetched by the app carries no quarantine flag, so Gatekeeper does
+not intervene), verifies it, and opens it in the stock macOS Installer, which
+asks for the user's password. Real silent updates need an Apple Developer ID.
+
+*Suggestion-only.* Same rule as model and prompt updates (see CLAUDE.md): find,
+tell, ask. The changelog is shown first, in full, in its own window (`updateNotes.ts`):
+nothing is downloaded until the user has read it and pressed "Download and
+Install", and a second prompt ("Quit and Install") follows the download.
+Release notes come off the network, so that window is built to be inert: raw
+HTML escaped, https links only, no images, a CSP of `default-src 'none'`,
+sandboxed with no preload. (Verified in a real Electron window with real mouse
+clicks; note `javascript: false` cannot be used — it makes `loadURL` fail.) A recording in progress blocks it. "Skip This Version" is remembered;
+each version is announced once.
+
+**Flow.** `GET /repos/sigreenwood/distill/releases/latest` 45 s after launch and
+every 6 h (packaged builds only; a dev build would report Electron's version),
+plus "Check for updates…" in the menu bar. The package must be an asset named
+`distill-X.Y.Z-arm64.pkg` whose URL is under this repo's `releases/download/`,
+and it must have a SHA-256 — from the API's `digest` field or a
+`<pkg>.sha256` asset. Size and hash are checked before the file gets its final
+name; a bad download is deleted. No checksum means no in-app install (the
+dialog links to the release page instead).
+
+**Limit.** The checksum comes from the same release as the package, so it
+catches corruption and truncation, not a compromised GitHub account. Authenticity
+needs signing.
+
+**Releasing.** Bump `version` in `packages/app/package.json`, `npm run package`,
+push, then `npm run release` (tags `vX.Y.Z`, uploads the `.pkg` and its
+`.sha256`). Write user-facing notes in `docs/app/releases/X.Y.Z.md` first —
+that file is what users read before updating; without it the notes fall back
+to commit subjects.
