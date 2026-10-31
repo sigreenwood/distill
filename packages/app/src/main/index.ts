@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { app, dialog, shell } from 'electron';
 import { appSupportDir, userVocabularyDir, expandHome, migrationNotes } from './paths.js';
-import { bundledResourcesDir } from './bundledResources.js';
+import { bundledResourcesDir, bundledRoot } from './bundledResources.js';
 import { createLogger, type Logger } from './logger.js';
 import {
   loadConfig,
@@ -35,11 +35,45 @@ import {
 } from './ipc.js';
 import { getInstallationStatus } from './pythonEnv.js';
 import { importLocalFile, LocalImportError } from './localImport.js';
+import { createRecorder, RecorderError, type Recorder } from './recorder.js';
 import { migrateScopeRenames, migrateVocabularyToUserDir } from './vocabulary.js';
 import { startSweepSchedule, sweepStateFor, nodeFs } from './audioRetention.js';
 import { startModelUpdateCheck } from './modelUpdateCheck.js';
 
 app.dock?.hide();
+
+let recorder: Recorder | null = null;
+
+async function toggleCallRecording(state: State, log: Logger): Promise<void> {
+  recorder ??= createRecorder({
+    logger: log,
+    helperPath: path.join(bundledRoot(), app.isPackaged ? 'bin' : 'native/capture/build', 'distill-capture'),
+    scratchRoot: path.join(appSupportDir(), 'capture'),
+    importFile: async (mp3) => {
+      const result = await importLocalFile(mp3, { state, logger: log });
+      trayHandle?.refresh();
+      broadcastInboxChanged();
+      notify({
+        title: 'Call recorded',
+        body: 'It is in your inbox, ready to process.',
+        onClick: () => {
+          openInbox(undefined, result.recordingId);
+          broadcastFocusRecording(result.recordingId);
+        },
+      });
+    },
+    onWarning: (body) => notify({ title: 'distill — call recording', body }),
+    onChange: (startedAt) => trayHandle?.setRecording(startedAt),
+  });
+  try {
+    if (recorder.startedAt() === null) await recorder.start();
+    else await recorder.stop();
+  } catch (e) {
+    const msg = e instanceof RecorderError ? e.userMessage : `Recording failed: ${String(e)}`;
+    log.error({ err: String(e) }, 'call recording toggle failed');
+    dialog.showErrorBox('distill — call recording', msg);
+  }
+}
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -251,6 +285,9 @@ app.whenReady().then(async () => {
       },
       onOpenSettings: () => openSettings(),
       onOpenHistory: () => openHistory(),
+      onToggleRecording: () => {
+        void toggleCallRecording(localState, localLogger);
+      },
       onPauseChange: (nextPause) => {
         const updated = applyConfigUpdate({ paused: nextPause });
         saveConfig(updated);
@@ -490,7 +527,13 @@ app.whenReady().then(async () => {
   }
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (e) => {
+  // Don't lose a call in progress: stop, mix and import it, then quit again.
+  if (recorder?.startedAt() != null) {
+    e.preventDefault();
+    void recorder.stop().catch(() => {}).finally(() => app.quit());
+    return;
+  }
   closeAll();
   worker?.stop();
   poller?.stop();
