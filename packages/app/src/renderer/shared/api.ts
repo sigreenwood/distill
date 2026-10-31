@@ -166,6 +166,12 @@ export interface GeneralDTO {
   audioRetentionDays: number | null;
   /** Minutes a completed recording stays in the Inbox's "Recent" section before it's auto-hidden. */
   autoDismissCompleteMinutes: number;
+  /** Offer to record (via notification) when Zoom or Teams starts a call. */
+  detectCalls: boolean;
+  /** Look for newer releases on GitHub and offer them (never installs on its own). */
+  checkForUpdates: boolean;
+  /** The running version, for display only. */
+  appVersion: string;
   /** Read from the OS, not from config — it can be changed in System Settings. */
   launchAtLogin: boolean;
   /**
@@ -449,6 +455,11 @@ export interface DistillApi {
     accept(key: string): Promise<MeetingTypeDTO>;
     dismiss(key: string): Promise<void>;
   };
+  recorder: {
+    toggle(): Promise<void>;
+    startedAt(): Promise<number | null>;
+  };
+  onRecording(handler: (startedAt: number | null) => void): () => void;
   localImport: {
     importPath(path: string): Promise<{ recordingId: string }>;
     pickFiles(): Promise<string[]>;

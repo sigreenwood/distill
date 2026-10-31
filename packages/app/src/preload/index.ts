@@ -206,6 +206,15 @@ const api = {
     ipcRenderer.on(Channels.PushFocusRecording, wrapped);
     return () => ipcRenderer.off(Channels.PushFocusRecording, wrapped);
   },
+  recorder: {
+    toggle: () => ipcRenderer.invoke(Channels.RecorderToggle),
+    startedAt: () => ipcRenderer.invoke(Channels.RecorderStartedAt),
+  },
+  onRecording: (handler: (startedAt: number | null) => void) => {
+    const wrapped = (_evt: IpcRendererEvent, t: number | null) => handler(t);
+    ipcRenderer.on(Channels.PushRecording, wrapped);
+    return () => ipcRenderer.off(Channels.PushRecording, wrapped);
+  },
   onLocalImportProgress: (handler: (p: unknown) => void) => {
     const wrapped = (_evt: IpcRendererEvent, p: unknown) => handler(p);
     ipcRenderer.on(Channels.PushLocalImportProgress, wrapped);

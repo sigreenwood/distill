@@ -46,6 +46,10 @@ export interface TrayContext {
   onOpenClientRegister: () => void;
   onSyncNow: () => Promise<void> | void;
   onPauseChange: (next: PauseConfig) => void;
+  /** Start or stop recording a call; the tray only knows whether one is running. */
+  onToggleRecording: () => void;
+  /** Check for updates, or review the one already found. */
+  onCheckForUpdates: () => void;
 }
 
 export interface TrayHandle {
@@ -53,6 +57,10 @@ export interface TrayHandle {
   setLastPoll: (r: LastPollResult) => void;
   /** Show (or clear, with null) a warning for one source; Plaud and Ollama warnings are independent. */
   setWarning: (source: 'plaud' | 'ollama', m: string | null) => void;
+  /** Epoch ms the current call recording began, or null when not recording. */
+  setRecording: (startedAt: number | null) => void;
+  /** Version of a newer release that is waiting, or null. */
+  setUpdateAvailable: (version: string | null) => void;
   destroy: () => void;
 }
 
@@ -116,6 +124,18 @@ export function createTray(ctx: TrayContext): TrayHandle {
     return Date.now() - since > STALE_POLL_MS ? `Plaud: no successful check for ${minutes} minutes` : null;
   };
 
+  let recordingStartedAt: number | null = null;
+  let updateVersion: string | null = null;
+  let recordingTimer: NodeJS.Timeout | null = null;
+
+  let baseTitle = '';
+  const applyTitle = () => {
+    if (recordingStartedAt === null) return tray.setTitle(baseTitle);
+    const secs = Math.floor((Date.now() - recordingStartedAt) / 1000);
+    const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+    tray.setTitle(`${baseTitle} ● ${mm}:${String(secs % 60).padStart(2, '0')}`);
+  };
+
   const rebuild = () => {
     const inbox = ctx.state.inboxCount();
     const errors = ctx.state.errorCount();
@@ -150,7 +170,8 @@ export function createTray(ctx: TrayContext): TrayHandle {
     let title = '';
     if (inbox > 0) title += ` ${inbox}`;
     if (errors > 0) title += ' ⚠';
-    tray.setTitle(title);
+    baseTitle = title;
+    applyTitle();
 
     const template: Electron.MenuItemConstructorOptions[] = [
       { label: statusLine(inbox, errors, lastPoll, processing, cfg.paused, scheduleReason), enabled: false },
@@ -188,12 +209,23 @@ export function createTray(ctx: TrayContext): TrayHandle {
     template.push(
       { type: 'separator' },
       {
+        label: recordingStartedAt === null ? 'Record call' : 'Stop recording call',
+        click: () => ctx.onToggleRecording(),
+      },
+    );
+    template.push(
+      { type: 'separator' },
+      {
         label: 'Sync now',
         click: () => {
           void ctx.onSyncNow();
         },
       },
       buildPauseSubmenu(cfg.paused, ctx.onPauseChange),
+      {
+        label: updateVersion === null ? 'Check for updates…' : `Update to v${updateVersion}…`,
+        click: () => ctx.onCheckForUpdates(),
+      },
       { type: 'separator' },
       {
         label: 'Settings…',
@@ -265,8 +297,20 @@ export function createTray(ctx: TrayContext): TrayHandle {
       warnings[source] = m;
       rebuild();
     },
+    setUpdateAvailable: (version) => {
+      updateVersion = version;
+      rebuild();
+    },
+    setRecording: (startedAt) => {
+      recordingStartedAt = startedAt;
+      if (recordingTimer) clearInterval(recordingTimer);
+      // Title only: rebuilding the menu every second would close it under the user.
+      recordingTimer = startedAt === null ? null : setInterval(applyTitle, 1000);
+      rebuild();
+    },
     destroy: () => {
       clearInterval(staleTimer);
+      if (recordingTimer) clearInterval(recordingTimer);
       tray.destroy();
     },
   };

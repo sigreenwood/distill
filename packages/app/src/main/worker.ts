@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { shouldRunStep } from './config.js';
 import { evaluateSchedule } from './processingSchedule.js';
 import { isCancelled } from './cancellation.js';
+import { removeTracks } from './callTracks.js';
 import { prettifyError } from './errorMessages.js';
 import { doDownload, doTranscribe, doSummarise, doWriteOutputs } from './pipelineSteps.js';
 import type { PipelineContext } from './pipelineSteps.js';
@@ -81,6 +82,7 @@ export class Worker {
     if (prevRow.audio_path && fs.existsSync(prevRow.audio_path) && !prevRow.markdown_path) {
       try {
         fs.unlinkSync(prevRow.audio_path);
+        removeTracks(prevRow.audio_path);
         this.ctx.state.setStatus(id, 'cancelled', { audio_path: null });
         this.ctx.logger.info({ id, path: prevRow.audio_path }, 'removed audio on cancel');
       } catch (e) {

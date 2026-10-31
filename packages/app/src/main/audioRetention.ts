@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import type { Logger } from './logger.js';
+import { removeTracks } from './callTracks.js';
 import type { RecordingRow, State } from './state.js';
 
 /**
@@ -122,6 +123,7 @@ export function runSweep(
     }
     const p = row.audio_path!;
     if (!fsImpl.existsSync(p)) {
+      removeTracks(p, fsImpl);
       state.updateRecording(row.id, { audio_path: null });
       result.alreadyMissing.push({ id: row.id, path: p });
       logger.debug(
@@ -132,6 +134,8 @@ export function runSweep(
     }
     try {
       fsImpl.unlinkSync(p);
+      // A call's separate mic/others tracks are the same meeting's audio.
+      removeTracks(p, fsImpl);
       state.updateRecording(row.id, { audio_path: null });
       result.deleted.push({ id: row.id, path: p });
       logger.info({ recordingId: row.id, path: p, reason: decision.reason }, 'audio retention: deleted');

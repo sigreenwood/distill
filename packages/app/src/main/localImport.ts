@@ -381,7 +381,7 @@ export function probeDurationSeconds(p: string): number | null {
   return Number.isFinite(parsed) ? Math.round(parsed) : null;
 }
 
-function isOnPath(binary: string): boolean {
+export function isOnPath(binary: string): boolean {
   const result = spawnSync('which', [binary], { encoding: 'utf8' });
   return result.status === 0 && result.stdout.trim().length > 0;
 }

@@ -1,5 +1,6 @@
 import path from 'node:path';
-import { BrowserWindow, screen, type Rectangle } from 'electron';
+import { BrowserWindow, screen, shell, type Rectangle } from 'electron';
+import { choiceFromUrl, type UpdateChoice } from './updateNotes.js';
 import { Channels } from '../shared/ipcChannels.js';
 import type { SearchScope } from '../shared/search.js';
 
@@ -21,6 +22,7 @@ let setupWin: BrowserWindow | null = null;
 let historyWin: BrowserWindow | null = null;
 let briefWin: BrowserWindow | null = null;
 let registerWin: BrowserWindow | null = null;
+let updateWin: BrowserWindow | null = null;
 let pendingFocusId: string | null = null;
 const readerWindows = new Map<string, BrowserWindow>();
 let lastInboxSize = { width: 480, height: 640 };
@@ -125,6 +127,76 @@ export function openTagSheet(recordingId: string): void {
   });
 }
 
+/**
+ * Show the "What's new" page for an available update and resolve with what the
+ * user chose. Closing the window counts as "later".
+ *
+ * The page is built from network-sourced release notes, so the window is
+ * locked down: sandboxed, no preload, no IPC, and the page's CSP
+ * (default-src 'none') stops any script from running, inline included. Its
+ * buttons are links on a private scheme, caught here before any navigation
+ * happens; https links in the notes open in the user's browser. (Electron's
+ * `javascript: false` preference is not used: with it set, loadURL fails even
+ * for a trivial page.)
+ */
+export function showUpdateWindow(html: string, title: string): Promise<UpdateChoice> {
+  return new Promise((resolve) => {
+    if (updateWin && !updateWin.isDestroyed()) {
+      updateWin.show();
+      updateWin.focus();
+      resolve('later'); // already on screen; this request changes nothing
+      return;
+    }
+    const win = new BrowserWindow({
+      width: 560,
+      height: 640,
+      minWidth: 420,
+      minHeight: 360,
+      show: false,
+      minimizable: false,
+      fullscreenable: false,
+      title,
+      webPreferences: {
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        webSecurity: true,
+      },
+    });
+    updateWin = win;
+    let settled = false;
+    const settle = (choice: UpdateChoice) => {
+      if (settled) return;
+      settled = true;
+      resolve(choice);
+      if (!win.isDestroyed()) win.close();
+    };
+    const openExternal = (url: string) => {
+      if (/^https:\/\//i.test(url)) void shell.openExternal(url);
+    };
+    win.webContents.on('will-navigate', (event, url) => {
+      event.preventDefault();
+      const choice = choiceFromUrl(url);
+      if (choice) settle(choice);
+      else openExternal(url);
+    });
+    win.webContents.setWindowOpenHandler(({ url }) => {
+      openExternal(url);
+      return { action: 'deny' };
+    });
+    win.on('closed', () => {
+      updateWin = null;
+      settle('later');
+    });
+    centreOnCursorDisplay(win);
+    void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    win.once('ready-to-show', () => {
+      win.show();
+      win.focus();
+    });
+  });
+}
+
 export function closeAll(): void {
   for (const win of readerWindows.values()) if (!win.isDestroyed()) win.close();
   readerWindows.clear();
@@ -137,6 +209,7 @@ export function closeAll(): void {
   if (registerWin && !registerWin.isDestroyed()) registerWin.close();
   briefWin = null;
   registerWin = null;
+  if (updateWin && !updateWin.isDestroyed()) updateWin.close();
   inboxWin = null;
   tagWin = null;
   settingsWin = null;

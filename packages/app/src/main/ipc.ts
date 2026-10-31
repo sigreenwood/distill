@@ -112,6 +112,11 @@ export interface IpcContext {
   onPlaudSignedIn?: () => void;
   onStateChanged?: () => void;
   onSetupComplete?: () => void;
+  /** Start or stop recording a call. Errors are surfaced by the callee. */
+  toggleRecording?: () => Promise<void>;
+  getRecordingStartedAt?: () => number | null;
+  /** The "offer to record when a call starts" setting changed; start or stop the watcher. */
+  onDetectCallsChanged?: (enabled: boolean) => void;
 }
 
 /** In-flight client briefs, one per brief window (keyed by webContents id). */
@@ -1201,6 +1206,11 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     }
   });
 
+  ipcMain.handle(Channels.RecorderToggle, async () => {
+    await ctx.toggleRecording?.();
+  });
+  ipcMain.handle(Channels.RecorderStartedAt, () => ctx.getRecordingStartedAt?.() ?? null);
+
   ipcMain.handle(Channels.LocalImportPickFiles, async () => {
     const result = await dialog.showOpenDialog({
       title: 'Import audio, video, or an existing transcript',
@@ -1614,14 +1624,18 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     ) {
       throw new Error(`The minimum length must be a whole number of minutes from 0 to ${MAX_MIN_RECORDING_MINUTES}.`);
     }
+    const previousDetectCalls = ctx.getConfig().detectCalls;
     const updated = ctx.applyConfigUpdate({
       audioRetentionDays: general.audioRetentionDays,
       autoDismissCompleteMinutes: general.autoDismissCompleteMinutes,
       processingSchedule: general.processingSchedule,
       autoFileHighConfidence: autoFile ?? ctx.getConfig().autoFileHighConfidence,
       minRecordingMinutes: (minMinutes as number | undefined) ?? ctx.getConfig().minRecordingMinutes,
+      detectCalls: general.detectCalls,
+      checkForUpdates: general.checkForUpdates,
     });
     saveConfig(updated);
+    if (updated.detectCalls !== previousDetectCalls) ctx.onDetectCallsChanged?.(updated.detectCalls);
     // Only touch the login item when it can mean something, and only when
     // it actually differs — setLoginItemSettings prompts for approval on
     // recent macOS, so no-op saves should stay silent.
@@ -1653,6 +1667,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       {
         audioRetentionDays: updated.audioRetentionDays,
         autoDismissCompleteMinutes: updated.autoDismissCompleteMinutes,
+        detectCalls: updated.detectCalls,
+        checkForUpdates: updated.checkForUpdates,
         launchAtLogin,
         processingSchedule: updated.processingSchedule,
         autoFileHighConfidence: updated.autoFileHighConfidence,
@@ -1910,6 +1926,12 @@ export function broadcastFocusRecording(recordingId: string): void {
   }
 }
 
+export function broadcastRecording(startedAt: number | null): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(Channels.PushRecording, startedAt);
+  }
+}
+
 export function broadcastLocalImportProgress(p: LocalImportProgress): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(Channels.PushLocalImportProgress, p);
@@ -2102,6 +2124,9 @@ function toGeneralDTO(cfg: AppConfig) {
   return {
     audioRetentionDays: cfg.audioRetentionDays,
     autoDismissCompleteMinutes: cfg.autoDismissCompleteMinutes,
+    detectCalls: cfg.detectCalls,
+    checkForUpdates: cfg.checkForUpdates,
+    appVersion: app.getVersion(),
     launchAtLogin: launchAtLoginAvailable() ? app.getLoginItemSettings().openAtLogin : false,
     launchAtLoginAvailable: launchAtLoginAvailable(),
     processingSchedule: cfg.processingSchedule,
@@ -2539,6 +2564,8 @@ function assertProcessingSchedule(v: unknown): ProcessingSchedule {
 function assertGeneralDTO(v: unknown): {
   audioRetentionDays: number | null;
   autoDismissCompleteMinutes: number;
+  detectCalls: boolean;
+  checkForUpdates: boolean;
   launchAtLogin: boolean;
   processingSchedule: ProcessingSchedule;
 } {
@@ -2550,6 +2577,16 @@ function assertGeneralDTO(v: unknown): {
   }
   const launchAtLogin = o.launchAtLogin;
 
+  if (typeof o.detectCalls !== 'boolean') {
+    throw new Error('detectCalls must be a boolean');
+  }
+  const detectCalls = o.detectCalls;
+
+  if (typeof o.checkForUpdates !== 'boolean') {
+    throw new Error('checkForUpdates must be a boolean');
+  }
+  const checkForUpdates = o.checkForUpdates;
+
   const dismiss = o.autoDismissCompleteMinutes;
   if (typeof dismiss !== 'number' || !Number.isInteger(dismiss) || dismiss < 0) {
     throw new Error('autoDismissCompleteMinutes must be a non-negative integer (0 disables auto-hide)');
@@ -2559,7 +2596,7 @@ function assertGeneralDTO(v: unknown): {
 
   const raw = o.audioRetentionDays;
   if (raw === null) {
-    return { audioRetentionDays: null, autoDismissCompleteMinutes: dismiss, launchAtLogin, processingSchedule };
+    return { audioRetentionDays: null, autoDismissCompleteMinutes: dismiss, detectCalls, checkForUpdates, launchAtLogin, processingSchedule };
   }
   if (typeof raw !== 'number' || !Number.isFinite(raw)) {
     throw new Error('audioRetentionDays must be null or a non-negative integer');
@@ -2570,7 +2607,7 @@ function assertGeneralDTO(v: unknown): {
   if (raw < 0) {
     throw new Error('audioRetentionDays must be ≥ 0 (use null to disable the sweep)');
   }
-  return { audioRetentionDays: raw, autoDismissCompleteMinutes: dismiss, launchAtLogin, processingSchedule };
+  return { audioRetentionDays: raw, autoDismissCompleteMinutes: dismiss, detectCalls, checkForUpdates, launchAtLogin, processingSchedule };
 }
 
 function assertPerformanceDTO(v: unknown): {

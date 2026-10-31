@@ -29,4 +29,18 @@ describe('buildSummaryUserContent', () => {
     const block = buildAccountContext('Acme', long);
     expect(block.length).toBeLessThan(MAX_ACCOUNT_CONTEXT_CHARS + 300);
   });
+
+  it('explains You/Others for a call recording, between the roster and the transcript', () => {
+    const transcript = 'Others: Hello.\n\nYou: Hi.';
+    const out = buildSummaryUserContent({ transcript, attendeesJson: attendees });
+    const roster = out.indexOf('Meeting attendees');
+    const legend = out.indexOf('"Others" is every other participant');
+    expect(legend).toBeGreaterThan(roster);
+    expect(out.indexOf('Others: Hello.')).toBeGreaterThan(legend);
+  });
+
+  it('adds no legend to an ordinary transcript, even one containing the word', () => {
+    const out = buildSummaryUserContent({ transcript: 'Sam said the Others: group agreed.', attendeesJson: null });
+    expect(out).toBe('Sam said the Others: group agreed.');
+  });
 });
