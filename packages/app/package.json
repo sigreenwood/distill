@@ -1,6 +1,6 @@
 {
   "name": "@distill/app",
-  "version": "0.0.20",
+  "version": "0.0.21",
   "private": true,
   "description": "distill: local-first business meeting summarisation. Transcribes recordings on-device, summarises via Ollama, writes Markdown / HTML / Apple Notes. Supports Plaud as one source.",
   "author": "Si Greenwood",
@@ -15,6 +15,7 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "build:capture": "./scripts/build-capture.sh",
+    "release": "./scripts/release.sh",
     "rebuild": "electron-rebuild -f -w better-sqlite3,keytar",
     "prepackage": "npm run rebuild && npm run build:capture && npm run build",
     "package": "electron-builder --mac --config electron-builder.yml"
